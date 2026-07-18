@@ -109,6 +109,14 @@ class RecommendationRepository:
     def list_daily_portfolio_snapshots(self, user_sub: str, start_at: str | None = None) -> list[dict[str, Any]]:
         raise NotImplementedError
 
+    def list_daily_portfolio_snapshots_for_sources(
+        self,
+        user_sub: str,
+        start_at: str | None,
+        sources: tuple[str, ...],
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
     def latest_run(self, user_sub: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
@@ -631,6 +639,14 @@ class PostgresRecommendationRepository(RecommendationRepository):
             raise RecommendationSchemaUnavailable("recommendation database migration required") from exc
 
     def list_daily_portfolio_snapshots(self, user_sub: str, start_at: str | None = None) -> list[dict[str, Any]]:
+        return self.list_daily_portfolio_snapshots_for_sources(user_sub, start_at, ())
+
+    def list_daily_portfolio_snapshots_for_sources(
+        self,
+        user_sub: str,
+        start_at: str | None,
+        sources: tuple[str, ...],
+    ) -> list[dict[str, Any]]:
         try:
             with self._connect() as conn:
                 rows = conn.execute(
@@ -643,11 +659,12 @@ class PostgresRecommendationRepository(RecommendationRepository):
                         FROM user_portfolio_snapshot_history
                         WHERE user_sub = %s
                           AND (%s::timestamptz IS NULL OR source_as_of >= %s::timestamptz)
+                          AND (%s::text[] = '{}'::text[] OR payload->>'source' = ANY(%s::text[]))
                         ORDER BY (source_as_of AT TIME ZONE 'UTC')::date, source_as_of DESC
                     ) AS daily
                     ORDER BY source_as_of ASC
                     """,
-                    (user_sub, start_at, start_at),
+                    (user_sub, start_at, start_at, list(sources), list(sources)),
                 ).fetchall()
                 return [_json_ready(dict(row)) for row in rows]
         except UndefinedTable as exc:
@@ -1104,10 +1121,25 @@ class InMemoryRecommendationRepository(RecommendationRepository):
         return _json_ready(row)
 
     def list_daily_portfolio_snapshots(self, user_sub: str, start_at: str | None = None) -> list[dict[str, Any]]:
+        return self.list_daily_portfolio_snapshots_for_sources(user_sub, start_at, ())
+
+    def list_daily_portfolio_snapshots_for_sources(
+        self,
+        user_sub: str,
+        start_at: str | None,
+        sources: tuple[str, ...],
+    ) -> list[dict[str, Any]]:
         start = _history_datetime(start_at)
+        allowed_sources = set(sources)
         daily: dict[str, tuple[datetime, dict[str, Any]]] = {}
         for row in self.portfolio_snapshot_history:
             if row.get("user_sub") != user_sub:
+                continue
+            payload = row.get("payload")
+            if allowed_sources and (
+                not isinstance(payload, dict)
+                or payload.get("source") not in allowed_sources
+            ):
                 continue
             source_as_of = _history_datetime(row.get("source_as_of"))
             if source_as_of is None or (start is not None and source_as_of < start):

@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import unittest
@@ -53,6 +54,12 @@ class PaperTradingRoutesTest(unittest.TestCase):
         self.subscription_syncs = []
         self.app = create_app()
         self.app.state.paper_trading_repository = self.repository
+        self.persisted_portfolio_snapshots = []
+        self.app.state.recommendation_repository = SimpleNamespace(
+            upsert_portfolio_snapshot=lambda user_sub, payload: self.persisted_portfolio_snapshots.append(
+                (user_sub, payload)
+            ),
+        )
         self.app.state.paper_symbol_validator = lambda symbol: {
             "symbol": symbol,
             "assetClass": "us_equity",
@@ -82,6 +89,17 @@ class PaperTradingRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["account"]["cash_balance"], 100000.0)
         self.assertEqual(response.json()["execution_mode"], "paper")
+
+    def test_account_refresh_persists_json_ready_paper_portfolio_snapshot(self):
+        response = self.client.get("/api/paper/account")
+
+        self.assertEqual(response.status_code, 200)
+        user_sub, snapshot = self.persisted_portfolio_snapshots[-1]
+        self.assertEqual(user_sub, "dev-auth-disabled")
+        self.assertEqual(snapshot["source"], "paper-shared")
+        self.assertEqual(snapshot["account"]["cashForeign"], 100000.0)
+        self.assertEqual(snapshot["positions"], [])
+        json.dumps(snapshot)
 
     def test_paper_symbol_search_only_returns_active_tradable_us_assets(self):
         response = self.client.get("/api/paper/symbols/search?q=ap&limit=20")
