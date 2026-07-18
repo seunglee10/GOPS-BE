@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
@@ -21,9 +21,19 @@ from .repository import (
     InvestmentProfileUpsert,
     PostgresRecommendationRepository,
     RecommendationSchemaUnavailable,
+    ScoreProfileUpsert,
+)
+from .score_profiles import (
+    MAX_CUSTOM_SCORE_PROFILES,
+    SCORE_PROFILE_SCHEMA_VERSION,
+    ScoreProfileValidationError,
+    normalize_score_profile_payload,
+    public_score_profile,
+    system_score_profile,
 )
 from .fixed_replay import FixedReplayProviderError, decision_v1_enabled, fixed_replay_provider
-from .service import RecommendationDataSource, RecommendationService
+from .profile_suggestions import suggest_score_profile
+from .service import RecommendationDataSource, RecommendationService, active_score_profile
 
 
 router = APIRouter(tags=["recommendations"])
@@ -41,13 +51,34 @@ class InvestmentProfileBody(BaseModel):
 
 class RefreshBody(BaseModel):
     activeSymbol: str | None = Field(default=None, max_length=12)
-    sessionMode: str = Field(default="regular", pattern="^(pre|regular)$")
+
+
+class ScoreProfileBody(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    blockWeights: dict[str, float]
+    factorWeights: dict[str, dict[str, float]]
+    portfolioWeight: float
+    portfolioFactorWeights: dict[str, float]
+
+
+class ActiveScoreProfileBody(BaseModel):
+    type: str = Field(pattern="^(preset|custom)$")
+    presetStyle: str | None = None
+    profileId: int | None = Field(default=None, gt=0)
+
+
+class ScoreProfileSuggestionBody(BaseModel):
+    query: str = Field(min_length=2, max_length=500)
 
 
 @router.get("/api/recommendations/profile")
 def get_recommendation_profile(request: Request, user: AuthenticatedUser = Depends(require_current_user)) -> dict[str, Any]:
-    profile = _call_recommendation_storage(lambda: _repository_from_app(request.app).get_profile(user.sub))
-    return {"status": "ready" if profile else "profile_required", "profile": _public_profile(profile) if profile else None}
+    repository = _repository_from_app(request.app)
+    profile = _call_recommendation_storage(lambda: repository.get_profile(user.sub))
+    return {
+        "status": "ready" if profile else "profile_required",
+        "profile": _public_profile(_profile_with_active_score(repository, profile)) if profile else None,
+    }
 
 
 @router.put("/api/recommendations/profile")
@@ -79,19 +110,138 @@ def upsert_recommendation_profile(
             )
         )
     )
-    return {"status": "ready", "profile": _public_profile(profile)}
+    return {
+        "status": "ready",
+        "profile": _public_profile(_profile_with_active_score(_repository_from_app(request.app), profile)),
+    }
+
+
+@router.get("/api/recommendations/score-profiles")
+def list_recommendation_score_profiles(
+    request: Request,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    repository = _repository_from_app(request.app)
+    profile = _call_recommendation_storage(lambda: repository.get_profile(user.sub))
+    risk_level = str((profile or {}).get("risk_level") or "balanced")
+    custom = _call_recommendation_storage(lambda: repository.list_score_profiles(user.sub))
+    active_id = (profile or {}).get("active_score_profile_id")
+    active = next((public_score_profile(row) for row in custom if row.get("id") == active_id), None)
+    if active is None:
+        active = system_score_profile(str((profile or {}).get("recommendation_style") or "balanced"), risk_level)
+    return {
+        "schemaVersion": SCORE_PROFILE_SCHEMA_VERSION,
+        "maxCustomProfiles": MAX_CUSTOM_SCORE_PROFILES,
+        "presets": [system_score_profile(style, risk_level) for style in ("momentum", "balanced", "stable")],
+        "customProfiles": [public_score_profile(row) for row in custom],
+        "active": active,
+    }
+
+
+@router.post("/api/recommendations/score-profiles")
+def create_recommendation_score_profile(
+    body: ScoreProfileBody,
+    request: Request,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    repository = _repository_from_app(request.app)
+    normalized = _validated_score_profile_body(body)
+    try:
+        row = _call_recommendation_storage(lambda: repository.create_score_profile(
+            ScoreProfileUpsert(user_sub=user.sub, name=body.name.strip(), **normalized),
+            max_profiles=MAX_CUSTOM_SCORE_PROFILES,
+        ))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "created", "profile": public_score_profile(row)}
+
+
+@router.post("/api/recommendations/score-profiles/suggestions")
+def suggest_recommendation_score_profile(
+    body: ScoreProfileSuggestionBody,
+    request: Request,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    repository = _repository_from_app(request.app)
+    try:
+        suggestion = _call_recommendation_storage(
+            lambda: suggest_score_profile(request.app, repository, user.sub, body.query.strip())
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="추천 로직 AI 제안을 생성하지 못했습니다.") from exc
+    return {"status": "ready", "suggestion": suggestion}
+
+
+@router.put("/api/recommendations/score-profiles/{profile_id:int}")
+def update_recommendation_score_profile(
+    profile_id: int,
+    body: ScoreProfileBody,
+    request: Request,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    repository = _repository_from_app(request.app)
+    normalized = _validated_score_profile_body(body)
+    try:
+        row = _call_recommendation_storage(lambda: repository.update_score_profile(
+            profile_id, ScoreProfileUpsert(user_sub=user.sub, name=body.name.strip(), **normalized)
+        ))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not row:
+        raise HTTPException(status_code=404, detail="score profile not found")
+    return {"status": "updated", "profile": public_score_profile(row)}
+
+
+@router.delete("/api/recommendations/score-profiles/{profile_id:int}")
+def delete_recommendation_score_profile(
+    profile_id: int,
+    request: Request,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    repository = _repository_from_app(request.app)
+    deleted = _call_recommendation_storage(lambda: repository.delete_score_profile(user.sub, profile_id))
+    if not deleted:
+        raise HTTPException(status_code=404, detail="score profile not found")
+    return {"status": "deleted", "activeFallback": "balanced"}
+
+
+@router.put("/api/recommendations/score-profiles/active")
+def activate_recommendation_score_profile(
+    body: ActiveScoreProfileBody,
+    request: Request,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    if body.type == "preset":
+        style = str(body.presetStyle or "").strip().lower()
+        if style not in RECOMMENDATION_STYLES:
+            raise HTTPException(status_code=422, detail="presetStyle must be momentum, balanced, or stable")
+        profile_id = None
+    else:
+        if body.profileId is None:
+            raise HTTPException(status_code=422, detail="profileId is required for a custom score profile")
+        profile_id = body.profileId
+        style = "balanced"
+    repository = _repository_from_app(request.app)
+    profile = _call_recommendation_storage(
+        lambda: repository.activate_score_profile(user.sub, profile_id, preset_style=style)
+    )
+    if not profile:
+        raise HTTPException(status_code=404, detail="investment or score profile not found")
+    enriched = _profile_with_active_score(repository, profile)
+    return {"status": "active", "profile": _public_profile(enriched)}
 
 
 @router.get("/api/recommendations/stocks/latest")
 def latest_stock_recommendations(
     request: Request,
-    sessionMode: str = Query(default="regular", pattern="^(pre|regular)$"),
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     provider = _fixed_replay_from_app(request.app)
     if provider is not None:
         return jsonable_encoder(_fixed_replay_response(request.app, provider, user.sub))
-    return jsonable_encoder(_call_recommendation_storage(lambda: _service_from_app(request.app).latest(user.sub, session_mode=sessionMode)))
+    return jsonable_encoder(_call_recommendation_storage(lambda: _service_from_app(request.app).latest(user.sub)))
 
 
 @router.post("/api/recommendations/stocks/refresh")
@@ -111,7 +261,6 @@ def refresh_stock_recommendations(
                 user.sub,
                 now=now,
                 active_symbol=body.activeSymbol if body else None,
-                session_mode=body.sessionMode if body else "regular",
             )
         )
     )
@@ -134,13 +283,25 @@ def _fixed_replay_from_app(app: Any):
 def _fixed_replay_response(app: Any, provider: Any, user_sub: str) -> dict[str, Any]:
     if not decision_v1_enabled():
         return provider.response()
-    cutoff = datetime.fromisoformat(str(provider.payload["evidenceAsOf"]))
     repository = _repository_from_app(app)
+    cutoff = datetime.fromisoformat(str(provider.payload["evidenceAsOf"]))
+    get_profile = getattr(repository, "get_profile", None)
+    current_profile = get_profile(user_sub) if callable(get_profile) else None
+    historical_profile = repository.get_profile_at(user_sub, cutoff)
+    profile = historical_profile or current_profile
+    score_profile = (
+        active_score_profile(repository, current_profile)
+        if current_profile and callable(getattr(repository, "list_score_profiles", None))
+        else system_score_profile(
+            str((profile or {}).get("recommendation_style") or "balanced"),
+            str((profile or {}).get("risk_level") or "balanced"),
+        )
+    )
     return _call_recommendation_storage(
         lambda: provider.response(
-            profile=repository.get_profile_at(user_sub, cutoff),
+            profile=profile,
             portfolio_snapshot=repository.get_portfolio_snapshot_at(user_sub, cutoff),
-            preference_state=repository.get_preference_state_at(user_sub, cutoff),
+            score_profile=score_profile,
         )
     )
 
@@ -233,6 +394,36 @@ def _public_profile(profile: dict[str, Any] | None) -> dict[str, Any] | None:
         "excludedSectors": normalize_sector_list(profile.get("excluded_sectors") or []),
         "excludedSymbols": profile.get("excluded_symbols") or [],
         "updatedAt": profile.get("updated_at"),
+        "profileRevision": profile.get("profile_revision") or 1,
+        "activeScoreProfile": profile.get("active_score_profile"),
+    }
+
+
+def _profile_with_active_score(repository: Any, profile: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not profile:
+        return None
+    payload = dict(profile)
+    active_id = profile.get("active_score_profile_id")
+    rows = repository.list_score_profiles(str(profile.get("user_sub") or "")) if active_id else []
+    active = next((public_score_profile(row) for row in rows if row.get("id") == active_id), None)
+    payload["active_score_profile"] = active or system_score_profile(
+        str(profile.get("recommendation_style") or "balanced"),
+        str(profile.get("risk_level") or "balanced"),
+    )
+    return payload
+
+
+def _validated_score_profile_body(body: ScoreProfileBody) -> dict[str, Any]:
+    try:
+        normalized = normalize_score_profile_payload(body.model_dump())
+    except ScoreProfileValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "schema_version": normalized["schemaVersion"],
+        "block_weights": normalized["blockWeights"],
+        "factor_weights": normalized["factorWeights"],
+        "portfolio_weight": normalized["portfolioWeight"],
+        "portfolio_factor_weights": normalized["portfolioFactorWeights"],
     }
 
 

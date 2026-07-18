@@ -182,6 +182,9 @@ def build_heatmap_item(
 
     public_fundamentals = fundamentals.to_public_dict() if fundamentals else {}
     sector_fields = sector_payload_fields(public_fundamentals.get("sector") or seed_item.get("sector") or "Unclassified")
+    rsi14 = read_float(quote_row.get("rsi14"))
+    if rsi14 is None:
+        rsi14 = read_float(previous_item.get("rsi14"))
     return {
         "symbol": symbol,
         "companyName": public_fundamentals.get("companyName") or seed_item.get("companyName") or symbol,
@@ -216,6 +219,7 @@ def build_heatmap_item(
         "currency": public_fundamentals.get("currency") or "USD",
         "volume": read_float(quote_row.get("volume")) or read_float(previous_item.get("volume")),
         "sessionDollarVolume": read_float(quote_row.get("sessionDollarVolume")) or read_float(previous_item.get("sessionDollarVolume")),
+        "rsi14": rsi14,
         "priceSource": price_source,
         "priceUpdatedAt": price_updated_at,
     }
@@ -284,6 +288,15 @@ def quote_rows_by_symbol(provider: Any, symbols: list[str]) -> dict[str, dict[st
         for row in rows or []
         if isinstance(row, dict) and isinstance(row.get("symbol"), str)
     }
+    latest_daily_rsi14 = getattr(clickhouse_provider, "latest_daily_rsi14", None)
+    if callable(latest_daily_rsi14):
+        try:
+            rsi_by_symbol = latest_daily_rsi14(symbols)
+        except Exception:
+            rsi_by_symbol = {}
+        for symbol, rsi14 in (rsi_by_symbol or {}).items():
+            normalized = normalize_market_symbol(symbol)
+            by_symbol.setdefault(normalized, {"symbol": normalized})["rsi14"] = rsi14
     overlay_redis_latest_prices(provider, symbols, by_symbol)
     return by_symbol
 

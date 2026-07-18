@@ -5,6 +5,22 @@
 `AGENT_FRONTEND_INTEGRATION.md`, AWS 빌드와 배포는 `AGENT_AWS_BUILD.md`를
 따른다.
 
+## 추천 점수 프로필 경계 (현재 계약)
+
+추천 런타임은 공통 immutable evidence snapshot을 만들고, 사용자가 저장·활성화한
+`recommendation-score-profile.v1` 가중치로 블록 점수와 최종 순위만 다시 계산한다.
+체결 이력은 AI 코치 근거로만 보존되며 추천 선호나 위험 상태를 자동 학습하지 않는다.
+hard gate, Evidence Reliability, soft risk penalty와 직접 매수 확인 조건은 사용자 프로필
+밖의 고정 정책이다. run identity에는 투자 프로필 revision과 활성 점수 프로필
+ID/revision/schema/digest가 포함된다.
+
+자연어 점수 프로필 제안은 `gops_agents.recommendation_profiles`가 소유한다. 기존 한국어
+query normalizer가 입력을 형태소 유사 fragment로 정규화하고, 고정된 추천 신호 문서를
+검색한 뒤 최신 immutable evidence snapshot 집계와 관련 뉴스 snapshot을 bounded context로
+LLM에 전달한다. LLM은 허용된 블록·세부 key의 가중치와 근거만 구조화해 반환하며 서버가
+각 그룹 합계 100과 값 범위를 다시 검증한다. 제안은 저장되지 않은 초안이고 hard gate,
+Evidence Reliability, soft penalty와 직접 매수 조건을 변경할 수 없다.
+
 ## 목적
 
 GOPS 에이전트는 사용자 질의를 받아 시장 데이터, 뉴스, 온톨로지 관계, SEC 재무
@@ -264,7 +280,9 @@ Interactive chart/news/recommendation 질문은 shortcut router가 최종 판단
 보낸 `references`와 `uiContext`를 먼저 `OperationIR` 후보로 모으고, 날짜·캔들·가격·
 레이어·뉴스·선택 추천 종목 anchor 계산은 deterministic resolver가 처리한다. 추천 행은
 `recommendation.stock` reference로 전달되며 추천 당시 순위·점수·신뢰도·근거를
-market snapshot evidence에 포함한다. 현재 v1은
+market snapshot evidence에 포함한다. 추천 목록·해설의 기업별 문장은 recommendation API가
+cutoff-safe `recommendation-narrative-context.v1`과 v8 renderer로 확정하며 Agent가 다시
+생성하거나 추천 action·가격을 변경하지 않는다. 현재 v1은
 `systems/agent-orchestration/shared/gops_agents/operations`에서 analysis/chart
 operation 후보와 `contextWindow` spec을 만들고, `agentTrace.operationIR`에 남긴다.
 LLM은 confidence가 낮거나 required slot이 비어 있는 복합 요청의 structured planner

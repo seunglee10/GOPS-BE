@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -10,27 +10,23 @@ from app.core.sectors import normalize_sector, sector_payload_fields
 
 from .professional import close_returns, completed_daily, parse_datetime, position_value
 from .professional_v2 import RISK_PRESETS, stable_digest
+from .narrative_context import build_narrative_context
+from .score_profiles import (
+    BLOCK_KEYS,
+    DEFAULT_FACTOR_WEIGHTS,
+    DEFAULT_PORTFOLIO_FACTOR_WEIGHTS,
+    SCORE_PROFILE_SCHEMA_VERSION,
+    SYSTEM_BLOCK_WEIGHTS,
+    score_profile_digest,
+    system_score_profile,
+)
 from .scoring import filter_candles_for_session, min_candle_count, normalize_symbol
 
 
 ALGORITHM_VERSION = "deterministic-evidence-v3"
 RULE_SET_VERSION = "deterministic-evidence-v3.1"
 FACTOR_SCHEMA_VERSION = "recommendation-evidence-blocks.v3"
-PREFERENCE_MODEL_VERSION = "continuous-preference-v3"
-EVENT_SCHEMA_VERSION = "recommendation-preference-event.v3"
-BLOCK_KEYS = (
-    "trendStrength",
-    "participationConfirmation",
-    "priceStructure",
-    "catalystQuality",
-    "executionQuality",
-    "qualityStability",
-)
-STYLE_BLOCK_WEIGHTS: dict[str, dict[str, float]] = {
-    "momentum": dict(zip(BLOCK_KEYS, (35, 25, 20, 10, 10, 0), strict=True)),
-    "balanced": dict(zip(BLOCK_KEYS, (25, 20, 15, 10, 15, 15), strict=True)),
-    "stable": dict(zip(BLOCK_KEYS, (15, 10, 10, 5, 25, 35), strict=True)),
-}
+STYLE_BLOCK_WEIGHTS = SYSTEM_BLOCK_WEIGHTS
 RISK_WEIGHTS = {"conservative": 0.35, "balanced": 0.25, "aggressive": 0.15}
 SPREAD_CAPS_BPS = {"conservative": 25.0, "balanced": 40.0, "aggressive": 75.0}
 RELIABILITY_MINIMUM = 70.0
@@ -77,6 +73,7 @@ class EvidenceContext:
     news_by_symbol: dict[str, list[dict[str, Any]]]
     fundamentals_by_symbol: dict[str, dict[str, Any]]
     fundamental_provenance: dict[str, Any]
+    company_profiles_by_symbol: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -90,7 +87,6 @@ class EvidenceSnapshotResult:
 @dataclass(frozen=True)
 class EvidenceRankingResult:
     items: list[dict[str, Any]]
-    candidate_features: list[dict[str, Any]]
     qualified_count: int
     rejected_by_reason: dict[str, int]
 
@@ -161,12 +157,6 @@ def rules_snapshot() -> dict[str, Any]:
             "agreement": 0.15,
             "confirmation": 0.10,
         },
-        "preference": {
-            "maximumWeight": 0.15,
-            "confidenceFloor": 0.20,
-            "longHalfLifeDays": 60,
-            "sessionHalfLifeDays": 3,
-        },
         "portfolio": {
             "maximumTestWeightPct": 5.0,
             "returnWindowDays": 60,
@@ -223,6 +213,14 @@ def build_evidence_snapshot(context: EvidenceContext) -> EvidenceSnapshotResult:
         raw = row["rawFactors"]
         payload = {
             **row,
+            "narrativeContext": build_narrative_context(
+                symbol=symbol,
+                market_item=item_by_symbol[symbol],
+                company_profile=context.company_profiles_by_symbol.get(symbol),
+                news=context.news_by_symbol.get(symbol) or [],
+                raw_factors=raw,
+                cutoff=context.now,
+            ),
             "normalizedFactors": factors,
             "blockScores": blocks,
             "availableBlocks": available_blocks(raw),
@@ -237,6 +235,14 @@ def build_evidence_snapshot(context: EvidenceContext) -> EvidenceSnapshotResult:
                 "cutoff": context.now,
                 "raw": raw,
                 "normalized": factors,
+                "narrativeContext": build_narrative_context(
+                    symbol=symbol,
+                    market_item=item_by_symbol[symbol],
+                    company_profile=context.company_profiles_by_symbol.get(symbol),
+                    news=context.news_by_symbol.get(symbol) or [],
+                    raw_factors=raw,
+                    cutoff=context.now,
+                ),
             }),
         }
         candidates.append(payload)
@@ -250,6 +256,14 @@ def build_evidence_snapshot(context: EvidenceContext) -> EvidenceSnapshotResult:
             "changePercent": _finite(item.get("changePercent")),
             "rawFactors": {},
             "marketItem": _bounded_market_item(item),
+            "narrativeContext": build_narrative_context(
+                symbol=symbol,
+                market_item=item,
+                company_profile=context.company_profiles_by_symbol.get(symbol),
+                news=context.news_by_symbol.get(symbol) or [],
+                raw_factors={},
+                cutoff=context.now,
+            ),
             "normalizedFactors": {},
             "blockScores": {},
             "availableBlocks": [],
@@ -277,6 +291,10 @@ def build_evidence_snapshot(context: EvidenceContext) -> EvidenceSnapshotResult:
         "fundamentals": stable_digest({
             "rows": context.fundamentals_by_symbol,
             "provenance": context.fundamental_provenance,
+        }),
+        "companyProfiles": stable_digest({
+            row["symbol"]: row.get("narrativeContext") or {}
+            for row in candidates
         }),
     }
     input_digest = stable_digest({
@@ -414,6 +432,7 @@ def raw_factors(
         "oneDayRelativeStrength": one_day_strength,
         "fiveDayRelativeStrength": five_day_strength,
         "high52WeekProximity": close / high52 if high52 else None,
+        "rsi14": _rsi14(daily_closes),
         "clockAdjustedVolumeRatio": clock_volume_ratio,
         "abnormalDollarVolume": math.log(
             max(current_elapsed_dollar_volume, 1.0)
@@ -509,57 +528,50 @@ def average_rank_percentiles(rows: list[dict[str, Any]], key: str, *, inverse: b
     return result
 
 
-def block_scores(factors: dict[str, float], raw: dict[str, Any]) -> dict[str, float]:
-    trend = weighted_sum(factors, {
-        "currentSessionRelativeStrength": 0.35,
-        "last60MinuteRelativeStrength": 0.25,
-        "oneDayRelativeStrength": 0.15,
-        "fiveDayRelativeStrength": 0.15,
-        "high52WeekProximity": 0.10,
-    })
-    participation = weighted_sum(factors, {
-        "clockAdjustedVolumeRatio": 0.40,
-        "abnormalDollarVolume": 0.30,
-        "closingLocationValue": 0.15,
-        "participationPersistence": 0.15,
-    })
-    structure = weighted_sum(factors, {
-        "confirmedBreakoutSupport": 0.40,
-        "vwapHoldQuality": 0.30,
-        "higherLowQuality": 0.20,
-        "gapAcceptance": 0.10,
-    })
-    execution = weighted_sum(factors, {
-        "medianDollarVolume": 0.50,
-        "quotedSpreadBps": 0.30,
-        "freshnessScore": 0.20,
-    })
-    inverse_volatility = statistics.mean([factors["realizedVolatility"], factors["downsideVolatility"]])
-    quality_components: list[tuple[float, float]] = []
-    if not raw or _finite(raw.get("realizedVolatility")) is not None or _finite(raw.get("downsideVolatility")) is not None:
-        quality_components.append((inverse_volatility, 0.30))
-    for key, weight in (
-        ("valueQuality", 0.25),
-        ("companyQuality", 0.25),
-        ("growthQuality", 0.10),
-        ("earningsRevisionQuality", 0.10),
-    ):
-        if not raw or _optional_available(raw, key):
-            quality_components.append((factors[key], weight))
-    quality_weight = sum(weight for _value, weight in quality_components)
-    quality = (
-        sum(value * weight for value, weight in quality_components) / quality_weight
-        if quality_weight > 0
-        else 50.0
-    )
+def block_scores(
+    factors: dict[str, float],
+    raw: dict[str, Any],
+    *,
+    factor_weights: dict[str, dict[str, float]] | None = None,
+) -> dict[str, float]:
+    configured = factor_weights or DEFAULT_FACTOR_WEIGHTS
+    trend = _available_weighted_score(factors, configured["trendStrength"])
+    participation = _available_weighted_score(factors, configured["participationConfirmation"])
+    structure = _available_weighted_score(factors, configured["priceStructure"])
+    execution = _available_weighted_score(factors, configured["executionQuality"])
+    quality_weights = {
+        key: value for key, value in configured["qualityStability"].items()
+        if (
+            key in {"realizedVolatility", "downsideVolatility"}
+            and _finite(raw.get(key)) is not None
+        ) or (
+            key not in {"realizedVolatility", "downsideVolatility"}
+            and _optional_available(raw, key)
+        )
+    }
+    quality = _available_weighted_score(factors, quality_weights, default=50.0)
     return {
         "trendStrength": round(_clamp(trend), 4),
         "participationConfirmation": round(_clamp(participation), 4),
         "priceStructure": round(_clamp(structure), 4),
-        "catalystQuality": round(_clamp(factors["catalystQuality"]), 4),
+        "catalystQuality": round(_clamp(factors.get("catalystQuality", 50.0)), 4),
         "executionQuality": round(_clamp(execution), 4),
         "qualityStability": round(_clamp(quality), 4),
     }
+
+
+def _available_weighted_score(
+    values: dict[str, float], weights: dict[str, float], *, default: float = 0.0
+) -> float:
+    available = {
+        key: float(weight)
+        for key, weight in weights.items()
+        if key in values and float(weight) > 0
+    }
+    total = sum(available.values())
+    if total <= 0:
+        return default
+    return sum(float(values[key]) * weight / total for key, weight in available.items())
 
 
 def available_blocks(raw: dict[str, Any]) -> list[str]:
@@ -627,8 +639,7 @@ def rank_evidence_candidates(
     candidates: list[dict[str, Any]],
     *,
     profile: Any,
-    preference_state: dict[str, Any],
-    risk_state: dict[str, Any],
+    score_profile: dict[str, Any] | None,
     watchlist_symbols: list[str],
     portfolio_positions: list[dict[str, Any]],
     portfolio_snapshot: dict[str, Any] | None,
@@ -677,26 +688,31 @@ def rank_evidence_candidates(
                 rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
             continue
         eligible.append(row)
-    block_means = {
-        key: statistics.mean([float(row["blockScores"][key]) for row in eligible])
-        for key in BLOCK_KEYS
-    } if eligible else {key: 50.0 for key in BLOCK_KEYS}
-    preference_weights = _number_map(preference_state.get("effectiveWeights"))
-    preference_confidence = float(preference_state.get("preferenceConfidence") or 0.2)
-    preference_weight = 0.15 * _clamp((preference_confidence - 0.20) / 0.80, 0.0, 1.0)
+    configured_profile = score_profile or system_score_profile(profile.recommendation_style, profile.risk_level)
+    canonical_profile = system_score_profile(profile.recommendation_style, profile.risk_level)
+    configured_block_weights = _number_map(configured_profile.get("blockWeights")) or STYLE_BLOCK_WEIGHTS["balanced"]
+    configured_factor_weights = configured_profile.get("factorWeights") or DEFAULT_FACTOR_WEIGHTS
+    configured_portfolio_factors = (
+        _number_map(configured_profile.get("portfolioFactorWeights"))
+        or DEFAULT_PORTFOLIO_FACTOR_WEIGHTS
+    )
     portfolio_reliable = _portfolio_snapshot_fresh(portfolio_snapshot, now)
-    risk_weight = RISK_WEIGHTS.get(profile.risk_level, RISK_WEIGHTS["balanced"]) if portfolio_reliable else 0.0
+    portfolio_weight = (
+        _clamp(float(configured_profile.get("portfolioWeight") or 0.0), 0.0, 100.0) / 100.0
+        if portfolio_reliable else 0.0
+    )
     output: list[dict[str, Any]] = []
-    features: list[dict[str, Any]] = []
     for row in eligible:
-        blocks = row["blockScores"]
-        available = [key for key in row.get("availableBlocks") or BLOCK_KEYS if key in blocks]
-        configured_style_weights = STYLE_BLOCK_WEIGHTS.get(
-            profile.recommendation_style, STYLE_BLOCK_WEIGHTS["balanced"]
+        canonical_blocks = row["blockScores"]
+        blocks = block_scores(
+            row.get("normalizedFactors") or {},
+            row.get("rawFactors") or {},
+            factor_weights=configured_factor_weights,
         )
-        available_weight = sum(float(configured_style_weights[key]) for key in available) or 1.0
+        available = [key for key in row.get("availableBlocks") or BLOCK_KEYS if key in blocks]
+        available_weight = sum(float(configured_block_weights.get(key, 0.0)) for key in available) or 1.0
         style_weights = {
-            key: (float(configured_style_weights[key]) / available_weight * 100.0 if key in available else 0.0)
+            key: (float(configured_block_weights.get(key, 0.0)) / available_weight * 100.0 if key in available else 0.0)
             for key in BLOCK_KEYS
         }
         contributions = {
@@ -710,6 +726,38 @@ def rank_evidence_candidates(
             position_daily_candles,
             now=now,
             risk_level=profile.risk_level,
+            component_weights=configured_portfolio_factors,
+        )
+        canonical_weights = _number_map(canonical_profile.get("blockWeights"))
+        canonical_available_weight = sum(float(canonical_weights.get(key, 0.0)) for key in available) or 1.0
+        canonical_base = sum(
+            float(canonical_blocks[key]) * float(canonical_weights.get(key, 0.0)) / canonical_available_weight
+            for key in available
+        )
+        canonical_portfolio = portfolio_compatibility(
+            row,
+            portfolio_snapshot,
+            position_daily_candles,
+            now=now,
+            risk_level=profile.risk_level,
+            component_weights=DEFAULT_PORTFOLIO_FACTOR_WEIGHTS,
+        )
+        canonical_penalties, _canonical_warnings = soft_penalties(
+            row,
+            portfolio=canonical_portfolio,
+            portfolio_reliable=portfolio_reliable,
+            risk_level=profile.risk_level,
+            penalize_missing_portfolio=penalize_missing_portfolio,
+        )
+        canonical_adjusted = _clamp(canonical_base - sum(canonical_penalties.values()))
+        canonical_portfolio_weight = (
+            float(canonical_profile.get("portfolioWeight") or 0.0) / 100.0
+            if portfolio_reliable else 0.0
+        )
+        canonical_final = round(
+            (1.0 - canonical_portfolio_weight) * canonical_adjusted
+            + canonical_portfolio_weight * canonical_portfolio["score"],
+            4,
         )
         penalties, warnings = soft_penalties(
             row,
@@ -726,21 +774,9 @@ def rank_evidence_candidates(
         if median_dollar_volume < 1.25 * preset["minimumMedianDollarVolume"]:
             warnings.append("중앙값 거래대금이 현재 위험성향의 유동성 하한에 근접합니다.")
         adjusted = round(_clamp(base - sum(penalties.values())), 4)
-        active_preference = {
-            key: preference_weights.get(key, 0.0) if key in available else 0.0
-            for key in BLOCK_KEYS
-        }
-        preference_total = sum(active_preference.values()) or 1.0
-        preference_fit = sum(float(blocks[key]) * active_preference[key] / preference_total for key in BLOCK_KEYS)
-        adjusted_contribution = round(
-            (1.0 - preference_weight - risk_weight) * adjusted, 8
-        )
-        preference_contribution = round(preference_weight * preference_fit, 8)
-        portfolio_contribution = round(risk_weight * portfolio["score"], 8)
-        final = round(
-            adjusted_contribution + preference_contribution + portfolio_contribution,
-            4,
-        )
+        adjusted_contribution = round((1.0 - portfolio_weight) * adjusted, 8)
+        portfolio_contribution = round(portfolio_weight * portfolio["score"], 8)
+        final = round(adjusted_contribution + portfolio_contribution, 4)
         reasons = evidence_reasons(contributions, blocks)
         metrics = {
             "algorithmVersion": ALGORITHM_VERSION,
@@ -752,6 +788,8 @@ def rank_evidence_candidates(
             "inputDigest": row.get("inputDigest"),
             "rawFactors": row.get("rawFactors") or {},
             "normalizedFactors": row.get("normalizedFactors") or {},
+            "canonicalBlockScores": canonical_blocks,
+            "effectiveBlockScores": blocks,
             "blockScores": blocks,
             "blockContributions": contributions,
             "availableBlocks": available,
@@ -763,15 +801,24 @@ def rank_evidence_candidates(
             "missingOptionalFactors": missing_optional,
             "stale": False,
             "reliabilityComponents": row.get("reliabilityComponents") or {},
-            "preferenceFitScore": round(preference_fit, 4),
-            "preferenceConfidence": round(preference_confidence, 8),
-            "preferenceWeight": round(preference_weight, 8),
             "adjustedSetupContribution": adjusted_contribution,
-            "preferenceContribution": preference_contribution,
             "portfolioCompatibility": portfolio,
-            "portfolioWeight": round(risk_weight, 8),
+            "portfolioWeight": round(portfolio_weight, 8),
             "portfolioContribution": portfolio_contribution,
-            "personalScore": final,
+            "canonicalRankScore": canonical_final,
+            "effectiveRankScore": final,
+            "customRankScore": final,
+            "scoreProfile": {
+                "type": configured_profile.get("type") or "preset",
+                "id": configured_profile.get("id"),
+                "name": configured_profile.get("name"),
+                "revision": configured_profile.get("revision") or 1,
+                "schemaVersion": configured_profile.get("schemaVersion") or SCORE_PROFILE_SCHEMA_VERSION,
+                "digest": configured_profile.get("digest") or score_profile_digest(configured_profile),
+            },
+            "effectiveBlockWeights": {key: round(value, 4) for key, value in style_weights.items()},
+            "effectiveFactorWeights": configured_factor_weights,
+            "effectivePortfolioFactorWeights": configured_portfolio_factors,
             "confidenceMeaning": "evidence_reliability_not_success_probability",
             "changePercent": row.get("changePercent"),
         }
@@ -780,107 +827,20 @@ def rank_evidence_candidates(
             "action": "buy",
             "rank": 0,
             "score": final,
+            "canonicalScore": canonical_final,
             "confidence": round(float(row.get("evidenceReliability") or 0.0) / 100.0, 4),
             "changePercent": row.get("changePercent"),
             **sector_payload_fields(row.get("sector")),
             "reasons": reasons,
             "riskWarnings": warnings,
+            "narrativeContext": row.get("narrativeContext") or {},
             "metricsSnapshot": metrics,
         })
-        features.append({
-            "symbol": row["symbol"],
-            "evaluated_at": row.get("evaluatedAt") or now,
-            "market_factor_scores": row.get("normalizedFactors") or {},
-            "fundamental_factor_scores": {
-                key: value for key, value in (row.get("normalizedFactors") or {}).items()
-                if key in {"valueQuality", "companyQuality", "growthQuality", "earningsRevisionQuality"}
-            },
-            "available_factor_scores": blocks,
-            "candidate_mean_scores": block_means,
-            "base_alpha_score": base,
-            "fundamental_score": blocks.get("qualityStability"),
-            "fundamental_weight": 0.0,
-            "fundamental_status": "ready" if (row.get("rawFactors") or {}).get("fundamentalAvailable") else "missing",
-            "feature_snapshot_id": str(snapshot_id) if snapshot_id is not None else None,
-            "feature_schema_version": FACTOR_SCHEMA_VERSION,
-            "feature_version": RULE_SET_VERSION,
-            "input_digest": row.get("inputDigest"),
-        })
     output.sort(key=lambda item: (-float(item["score"]), str(item["symbol"])))
-    selected = output[:15]
+    selected = output
     for index, item in enumerate(selected, start=1):
         item["rank"] = index
-    return EvidenceRankingResult(selected, features, len(eligible), rejection_counts)
-
-
-def process_evidence_preference_events(
-    previous: dict[str, Any] | None,
-    fills: list[dict[str, Any]],
-    *,
-    style: str,
-    cutoff: datetime,
-    existing_order_strengths: dict[str, float] | None = None,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    state = _preference_state(previous, style, cutoff)
-    events: list[dict[str, Any]] = []
-    strengths = dict(existing_order_strengths or {})
-    for fill in sorted(fills, key=lambda row: (_aware_datetime(row.get("decision_at"), cutoff), int(row.get("id") or 0))):
-        event_time = min(cutoff, _aware_datetime(fill.get("decision_at"), cutoff))
-        _decay_preference_state(state, event_time)
-        event = _preference_event(fill)
-        if str(fill.get("side") or "").lower() != "buy":
-            event.update(event_status="skipped", skip_reason="sell_excluded")
-            events.append(event)
-            continue
-        scores = _to_block_scores(_number_map(fill.get("feature_scores")))
-        means = _to_block_scores(_number_map(fill.get("candidate_mean_scores")))
-        if not scores or not means:
-            event.update(event_status="skipped", skip_reason="missing_point_in_time_feature")
-            events.append(event)
-            continue
-        quantity = _positive(fill.get("incremental_filled_qty") or fill.get("cumulative_filled_qty"))
-        price = _positive(fill.get("average_fill_price"))
-        if quantity <= 0 or price <= 0:
-            event.update(event_status="skipped", skip_reason="invalid_fill_notional")
-            events.append(event)
-            continue
-        notional = quantity * price
-        equity = _positive(fill.get("portfolio_equity"))
-        raw_strength = max(0.25, min(1.0, (notional / equity) / 0.05)) if equity else 0.25
-        order_id = str(fill.get("order_id") or "")
-        remaining = max(0.0, 1.0 - strengths.get(order_id, 0.0))
-        strength = min(raw_strength, remaining)
-        if strength <= 0:
-            event.update(event_status="skipped", skip_reason="order_strength_cap_reached")
-            events.append(event)
-            continue
-        relative = {
-            key: _clamp((scores[key] - means[key]) / 50.0, -1.0, 1.0)
-            for key in BLOCK_KEYS if key in scores and key in means
-        }
-        if not relative:
-            event.update(event_status="skipped", skip_reason="missing_point_in_time_feature")
-            events.append(event)
-            continue
-        for key, exposure in relative.items():
-            delta = 0.20 * strength * exposure
-            state["longTermLogits"][key] = _clamp(state["longTermLogits"].get(key, 0.0) + delta, -2.0, 2.0)
-            state["sessionLogits"][key] = _clamp(state["sessionLogits"].get(key, 0.0) + delta, -2.0, 2.0)
-        state["longSampleCount"] += strength
-        state["sessionSampleCount"] += strength
-        strengths[order_id] = strengths.get(order_id, 0.0) + strength
-        event.update(
-            event_status="applied",
-            skip_reason=None,
-            relative_exposure=relative,
-            event_strength=strength,
-            incremental_notional=notional,
-            portfolio_equity=equity or None,
-            order_cumulative_strength=strengths[order_id],
-        )
-        events.append(event)
-    _decay_preference_state(state, cutoff)
-    return _finalize_preference_state(state, cutoff), events
+    return EvidenceRankingResult(selected, len(eligible), rejection_counts)
 
 
 def standardized_test_weight(
@@ -916,6 +876,7 @@ def portfolio_compatibility(
     *,
     now: datetime,
     risk_level: str,
+    component_weights: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     if not _portfolio_snapshot_fresh(snapshot, now):
         return {"score": 50.0, "status": "unavailable", "testWeightPct": None, "components": {}}
@@ -975,12 +936,11 @@ def portfolio_compatibility(
         "marginalVariance": marginal_score,
         "liquidityCashCompatibility": liquidity_cash,
     }
-    score = weighted_sum(components, {
-        "sectorDiversification": 0.30,
-        "correlationBenefit": 0.30,
-        "marginalVariance": 0.25,
-        "liquidityCashCompatibility": 0.15,
-    })
+    score = _available_weighted_score(
+        components,
+        component_weights or DEFAULT_PORTFOLIO_FACTOR_WEIGHTS,
+        default=50.0,
+    )
     return {
         "score": round(score, 4),
         "status": "ready",
@@ -1126,123 +1086,6 @@ def weighted_sum(values: dict[str, float], weights: dict[str, float]) -> float:
     return sum(float(values.get(key, 0.0)) * weight for key, weight in weights.items())
 
 
-def _preference_state(previous: dict[str, Any] | None, style: str, cutoff: datetime) -> dict[str, Any]:
-    prior = dict(STYLE_BLOCK_WEIGHTS.get(style, STYLE_BLOCK_WEIGHTS["balanced"]))
-    previous = previous or {}
-    long_logits = _to_block_logits(_number_map(previous.get("longTermLogits")))
-    session_logits = _to_block_logits(_number_map(previous.get("sessionLogits")))
-    return {
-        "priorStyle": style if style in STYLE_BLOCK_WEIGHTS else "balanced",
-        "priorWeights": prior,
-        "longTermLogits": {key: long_logits.get(key, 0.0) for key in BLOCK_KEYS},
-        "sessionLogits": {key: session_logits.get(key, 0.0) for key in BLOCK_KEYS},
-        "longSampleCount": float(previous.get("longSampleCount") or 0.0),
-        "sessionSampleCount": float(previous.get("sessionSampleCount") or 0.0),
-        "asOf": _aware_datetime(previous.get("asOf"), cutoff),
-    }
-
-
-def _finalize_preference_state(state: dict[str, Any], cutoff: datetime) -> dict[str, Any]:
-    n_session = max(0.0, float(state.get("sessionSampleCount") or 0.0))
-    gamma = min(0.5, n_session / (n_session + 3.0))
-    logits = {
-        key: math.log(max(float(state["priorWeights"].get(key, 0.1)), 0.1) / 100.0)
-        + float(state["longTermLogits"].get(key, 0.0))
-        + gamma * float(state["sessionLogits"].get(key, 0.0))
-        for key in BLOCK_KEYS
-    }
-    largest = max(logits.values(), default=0.0)
-    exponentials = {key: math.exp(value - largest) for key, value in logits.items()}
-    total = sum(exponentials.values()) or 1.0
-    effective = {key: value / total * 100.0 for key, value in exponentials.items()}
-    n_long = max(0.0, float(state.get("longSampleCount") or 0.0))
-    confidence = (5.0 + n_long) / (25.0 + n_long)
-    result = {
-        **state,
-        "gamma": gamma,
-        "effectiveWeights": effective,
-        "preferenceConfidence": confidence,
-        "asOf": cutoff,
-        "preferenceModelVersion": PREFERENCE_MODEL_VERSION,
-        "factorSchemaVersion": FACTOR_SCHEMA_VERSION,
-    }
-    result["inputDigest"] = stable_digest(result)
-    return result
-
-
-def _decay_preference_state(state: dict[str, Any], target: datetime) -> None:
-    previous = _aware_datetime(state.get("asOf"), target)
-    if target <= previous:
-        return
-    days = (target - previous).total_seconds() / 86_400.0
-    for key in BLOCK_KEYS:
-        state["longTermLogits"][key] *= 0.5 ** (days / 60.0)
-        state["sessionLogits"][key] *= 0.5 ** (days / 3.0)
-    state["longSampleCount"] *= 0.5 ** (days / 60.0)
-    state["sessionSampleCount"] *= 0.5 ** (days / 3.0)
-    state["asOf"] = target
-
-
-def _preference_event(fill: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "fill_history_id": fill.get("id"),
-        "user_sub": fill.get("user_sub"),
-        "order_id": fill.get("order_id"),
-        "symbol": fill.get("symbol"),
-        "side": str(fill.get("side") or "").lower(),
-        "decision_at": fill.get("decision_at"),
-        "candidate_run_id": fill.get("candidate_run_id"),
-        "candidate_feature_id": fill.get("candidate_feature_id"),
-        "evidence_candidate_id": fill.get("evidence_candidate_id"),
-        "event_status": "skipped",
-        "skip_reason": None,
-        "relative_exposure": {},
-        "event_strength": 0.0,
-        "incremental_notional": None,
-        "portfolio_equity": None,
-        "order_cumulative_strength": 0.0,
-        "provenance": {"source": "evidence_candidate"},
-        "event_schema_version": EVENT_SCHEMA_VERSION,
-        "processing_version": PREFERENCE_MODEL_VERSION,
-    }
-
-
-def _to_block_scores(values: dict[str, float]) -> dict[str, float]:
-    if all(key in values for key in BLOCK_KEYS):
-        return {key: values[key] for key in BLOCK_KEYS}
-    mapping = {
-        "trendStrength": ("oneDayRelativeStrength", "previousSessionStrength", "lastHourRelativeStrength", "high52WeekProximity"),
-        "participationConfirmation": ("abnormalDollarVolume", "closingLocationValue"),
-        "priceStructure": (),
-        "catalystQuality": ("newsImpact",),
-        "executionQuality": ("liquidityQuality",),
-        "qualityStability": ("lowVolatilityQuality",),
-    }
-    result = {}
-    for block, keys in mapping.items():
-        available = [values[key] for key in keys if key in values]
-        result[block] = statistics.mean(available) if available else 50.0
-    return result if any(key in values for keys in mapping.values() for key in keys) else {}
-
-
-def _to_block_logits(values: dict[str, float]) -> dict[str, float]:
-    if all(key in values for key in BLOCK_KEYS):
-        return {key: _clamp(values[key], -2.0, 2.0) for key in BLOCK_KEYS}
-    mapping = {
-        "trendStrength": ("oneDayRelativeStrength", "previousSessionStrength", "lastHourRelativeStrength", "high52WeekProximity"),
-        "participationConfirmation": ("abnormalDollarVolume", "closingLocationValue"),
-        "priceStructure": (),
-        "catalystQuality": ("newsImpact",),
-        "executionQuality": ("liquidityQuality",),
-        "qualityStability": ("lowVolatilityQuality",),
-    }
-    result: dict[str, float] = {}
-    for block, keys in mapping.items():
-        available = [values[key] for key in keys if key in values]
-        result[block] = _clamp(statistics.mean(available), -2.0, 2.0) if available else 0.0
-    return result if any(key in values for keys in mapping.values() for key in keys) else {}
-
-
 def _portfolio_asset_returns(
     positions: list[dict[str, Any]],
     daily_by_symbol: dict[str, list[dict[str, Any]]],
@@ -1325,6 +1168,19 @@ def _atr(rows: list[dict[str, Any]]) -> float:
             values.append(max(high - low, abs(high - previous_close) if previous_close else 0.0, abs(low - previous_close) if previous_close else 0.0))
         previous_close = close or previous_close
     return statistics.mean(values) if values else 0.0
+
+
+def _rsi14(closes: list[float]) -> float | None:
+    if len(closes) < 15 or not all(value > 0 for value in closes[-15:]):
+        return None
+    changes = [current - previous for previous, current in zip(closes[-15:-1], closes[-14:], strict=True)]
+    average_gain = sum(max(change, 0.0) for change in changes) / 14.0
+    average_loss = sum(max(-change, 0.0) for change in changes) / 14.0
+    if average_gain == 0 and average_loss == 0:
+        return 50.0
+    if average_loss == 0:
+        return 100.0
+    return round(100.0 - 100.0 / (1.0 + average_gain / average_loss), 4)
 
 
 def _window_return(rows: list[dict[str, Any]], length: int) -> float:

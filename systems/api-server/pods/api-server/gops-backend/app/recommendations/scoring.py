@@ -91,7 +91,7 @@ def recommendation_slot(now: datetime, session_mode: str = "regular") -> dict[st
     }
 
 
-def score_recommendations(payload: RecommendationInput, *, limit: int = 15, allow_fallback: bool = True) -> list[dict[str, Any]]:
+def score_recommendations(payload: RecommendationInput, *, limit: int | None = None, allow_fallback: bool = True) -> list[dict[str, Any]]:
     session_mode = normalize_session_mode(payload.session_mode)
     candidates = build_candidates(
         watchlist_symbols=payload.watchlist_symbols,
@@ -109,7 +109,8 @@ def score_recommendations(payload: RecommendationInput, *, limit: int = 15, allo
         if item is not None:
             scored.append(item)
             scored_symbols.add(candidate.symbol)
-    if allow_fallback and len(scored) < limit:
+    target_count = limit if limit is not None else len(candidates)
+    if allow_fallback and len(scored) < target_count:
         for candidate in candidates:
             if candidate.symbol in scored_symbols:
                 continue
@@ -118,7 +119,7 @@ def score_recommendations(payload: RecommendationInput, *, limit: int = 15, allo
                 scored.append(item)
                 scored_symbols.add(candidate.symbol)
     scored.sort(key=lambda item: (item["score"], item["confidence"]), reverse=True)
-    selected = scored[:limit]
+    selected = scored if limit is None else scored[:limit]
     for index, item in enumerate(selected, start=1):
         item["rank"] = index
     return selected
@@ -130,7 +131,7 @@ def build_candidates(
     portfolio_positions: list[dict[str, Any]],
     preferred_sectors: list[str],
     market_items: list[dict[str, Any]],
-    max_candidates: int = 50,
+    max_candidates: int = 500,
 ) -> list[Candidate]:
     by_symbol: dict[str, Candidate] = {}
     priority = {"related_sector": 2, "market_rank": 1}

@@ -94,13 +94,13 @@ def apply_professional_personalization(
         if freshness in {"missing", "stale"}:
             alpha_weight, portfolio_weight = 1.0, 0.0
         hard_penalty, hard_warnings = hard_penalty_for(item, raw, context)
-        personal_score = max(0.0, min(100.0, style_score * alpha_weight + portfolio_fit * portfolio_weight - hard_penalty))
+        custom_rank_score = max(0.0, min(100.0, style_score * alpha_weight + portfolio_fit * portfolio_weight - hard_penalty))
         metrics = dict(item.get("metricsSnapshot") or {})
         metrics.update({
             "baseAlphaScore": round(balanced_score, 4),
             "styleSignalScore": round(style_score, 4),
             "portfolioFitScore": round(portfolio_fit, 4),
-            "personalScore": round(personal_score, 4),
+            "customRankScore": round(custom_rank_score, 4),
             "predictedExcessReturnPct": round(predicted_excess, 6),
             "professionalFactorRaw": {key: round(value, 8) for key, value in raw.items()},
             "professionalFactorScores": {key: round(value, 4) for key, value in factors.items()},
@@ -109,7 +109,7 @@ def apply_professional_personalization(
                 "style": style_contributions,
                 "portfolio": portfolio_components,
             },
-            "personalization": {
+            "scoring": {
                 "enabled": True,
                 "shadow": shadow,
                 "recommendationStyle": style,
@@ -130,21 +130,21 @@ def apply_professional_personalization(
             })
         output.append({
             **item,
-            "score": item.get("score") if shadow else round(personal_score, 2),
+            "score": item.get("score") if shadow else round(custom_rank_score, 2),
             "reasons": reasons[:5],
             "riskWarnings": [*(item.get("riskWarnings") or []), *hard_warnings],
             "metricsSnapshot": metrics,
         })
     output.sort(
         key=lambda row: (
-            float(row.get("score") or 0) if shadow else float((row.get("metricsSnapshot") or {}).get("personalScore") or 0),
+            float(row.get("score") or 0) if shadow else float((row.get("metricsSnapshot") or {}).get("customRankScore") or 0),
             float(row.get("confidence") or 0),
         ),
         reverse=True,
     )
-    for rank, item in enumerate(output[:15], start=1):
+    for rank, item in enumerate(output, start=1):
         item["rank"] = rank
-    return output[:15]
+    return output
 
 
 def personalization_digest(

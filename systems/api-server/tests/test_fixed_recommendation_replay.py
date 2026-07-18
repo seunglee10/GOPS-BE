@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -61,9 +62,9 @@ def test_latest_and_refresh_return_identical_common_artifact_without_db_writes(m
     assert payload["status"] == "completed"
     assert payload["marketDate"] == "2026-07-15"
     assert payload["sourceMode"] == "historical_reconstruction"
-    assert payload["personalizationMode"] == "cutoff_user_context"
+    assert payload["scoringMode"] == "canonical_fixed_replay"
     assert payload["evidencePoolDigest"]
-    assert payload["narrativeMode"] == "deterministic_grounded"
+    assert payload["narrativeMode"] == "company_grounded"
     assert len(payload["items"]) == 15
     assert min(item["confidence"] for item in payload["items"]) >= 0.70
     assert all(item["explanation"]["primary"]["status"] == "ready" for item in payload["items"])
@@ -87,9 +88,6 @@ def test_decision_v1_returns_fixed_direct_actions_and_no_dummy_missing_evidence(
         def get_portfolio_snapshot_at(self, _user_sub, _cutoff):
             return None
 
-        def get_preference_state_at(self, _user_sub, _cutoff):
-            return None
-
     app = configured_app(monkeypatch)
     monkeypatch.setenv("RECOMMENDATION_DECISION_V1_ENABLED", "true")
     app.state.recommendation_repository = CutoffRepository()
@@ -101,14 +99,17 @@ def test_decision_v1_returns_fixed_direct_actions_and_no_dummy_missing_evidence(
     assert latest.status_code == 200
     assert latest.json() == refresh.json()
     payload = latest.json()
-    assert payload["personalizationMode"] == "cutoff_user_context"
+    assert payload["scoringMode"] == "cutoff_user_profile"
     actions = {item["symbol"]: item["action"] for item in payload["items"]}
     assert {symbol for symbol, action in actions.items() if action == "buy"} == {"JPM", "AMZN"}
     assert {symbol for symbol, action in actions.items() if action == "conditional_buy"} == {
         "NVDA", "GOOGL", "PANW", "PLTR"
     }
     assert all(4 <= len(item["keyEvidence"]) <= 6 for item in payload["items"])
-    assert all(item["explanation"]["primary"]["promptVersion"] == "recommendation-decision-renderer.ko.v7" for item in payload["items"])
+    assert all(item["explanation"]["primary"]["promptVersion"] == "recommendation-decision-renderer.ko.v8" for item in payload["items"])
+    assert len({item["explanation"]["primary"]["listSummary"] for item in payload["items"]}) == len(payload["items"])
+    assert len({item["explanation"]["primary"]["headline"] for item in payload["items"]}) == len(payload["items"])
+    assert all(3 <= len(re.findall(r"니다[.!?]", item["explanation"]["primary"]["body"])) <= 5 for item in payload["items"])
     assert all(
         not any(character.isdigit() for character in evidence["interpretation"])
         and not any(token in evidence["interpretation"] for token in ("%p", "bp", "/100"))
@@ -178,16 +179,15 @@ def test_personalized_replay_excludes_existing_holdings_and_has_user_digest(monk
         },
     }
 
-    balanced = provider.response(profile=None, portfolio_snapshot=snapshot, preference_state=None)
+    balanced = provider.response(profile=None, portfolio_snapshot=snapshot)
     aggressive = provider.response(
         profile={"risk_level": "aggressive", "recommendation_style": "momentum"},
         portfolio_snapshot=snapshot,
-        preference_state=None,
     )
 
     assert "JPM" not in [item["symbol"] for item in balanced["items"]]
     assert balanced["evidencePoolDigest"] == aggressive["evidencePoolDigest"]
-    assert balanced["personalizationDigest"] != aggressive["personalizationDigest"]
+    assert balanced["scoringDigest"] != aggressive["scoringDigest"]
     assert balanced["recommendationDigest"] != aggressive["recommendationDigest"]
 
 

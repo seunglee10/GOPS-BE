@@ -3,6 +3,16 @@
 이 문서는 AWS/EKS에서 GOPS agent runtime을 빌드하고 배포할 때 필요한 image,
 Kafka, Redis/Valkey, ClickHouse, GraphDB, S3, Secret 계약을 정리한다.
 
+## 추천 배포·migration 현재 계약
+
+운영 추천 알고리즘 값은 `deterministic-evidence-v3`이며 `continuous-v2`는 유효한 실행
+옵션이 아니다. order migration `0017_recommendation_score_profiles.sql`은 이름 있는 점수
+프로필과 활성 프로필 revision, run scoring digest/snapshot을 추가한다. 동시에 자동
+개인화 파생 preference/risk/event/candidate-feature 테이블과 관련 run 컬럼을 제거한다.
+`orders`, `executions`, `order_coach_fill_history`, portfolio/evidence snapshot,
+recommendation run/item/outcome은 보존 대상이다. 배포 전후 이 테이블들의 행 수와 FK
+무결성을 확인해야 한다.
+
 ## Deployment Spine
 
 배포 순서는 고정한다.
@@ -451,15 +461,17 @@ The app overlay declaratively keeps `alert-evaluator` and
 rewrite desired replicas; Git is the source of truth for both workers.
 
 Recommendation rollout accepts the explicit selector
-`RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2|deterministic-evidence-v3`.
+`RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|deterministic-evidence-v3`.
 When it is absent,
 the existing `RECOMMENDATION_PERSONALIZATION_ENABLED` and
-`RECOMMENDATION_PERSONALIZATION_SHADOW` behavior remains unchanged. `continuous-v2`
-ignores the shadow flag and publishes `algorithmVersion="continuous-personalization-v2"`.
-API and recommendation-worker must receive the same selector.
+`RECOMMENDATION_PERSONALIZATION_SHADOW` behavior remains unchanged for professional-v1.
+`continuous-v2` is invalid. API and recommendation-worker must receive the same selector.
+The public recommendation routes do not accept a premarket/regular selector; keep both API
+and worker clocks configured consistently because the server resolves the active scoring
+session internally.
 
 `deterministic-evidence-v3` is non-predictive and ignores the shadow flag. Before activating
-direct recommendation v1, apply migrations `0013`, `0014`, and `0015` after `0012`; verify canonical cutoff-safe candles, quotes/spreads,
+direct recommendation v1 and company-grounded narrative, apply migrations `0013` through `0016` after `0012`; verify canonical cutoff-safe candles, quotes/spreads,
 tradability, news metadata, fundamentals, benchmark data, universe membership, and exchange
 calendar inputs for the complete prepared S&P 500 universe. The API and worker must be able to
 read and write the shared evidence snapshot tables. Rollback only changes the selector; the
@@ -473,6 +485,12 @@ minutes, fresh current data matching in Redis and ClickHouse, and 15 reliability
 candidates. Failure is `data_not_ready`, never a legacy recommendation. Narrative rollout uses
 `RECOMMENDATION_NARRATIVE_PROVIDER=openai` and optional
 `RECOMMENDATION_NARRATIVE_MODEL`; it falls back to deterministic Korean text without changing rank.
+Natural-language score-profile proposals use the same `OPENAI_API_KEY` secret with optional
+`RECOMMENDATION_PROFILE_SUGGESTION_MODEL` and
+`RECOMMENDATION_PROFILE_SUGGESTION_TIMEOUT_SECONDS`. Set
+`RECOMMENDATION_PROFILE_SUGGESTION_LLM_REQUIRED=true` only when a provider failure should reject
+the request instead of returning the validated deterministic retrieval draft. The API pod needs
+the key because this proposal endpoint is synchronous; it never writes or activates a profile.
 
 The fixed historical recommendation override is separate from live narrative generation. Both AWS
 app overlays set `RECOMMENDATION_FIXED_REPLAY_ENABLED=true` and
@@ -492,17 +510,19 @@ recommendation contract without disabling the historical replay provider.
 The artifact uses `sourceMode=historical_reconstruction`: candle and quote eligibility is based on
 `event_time <= 2026-07-14 16:00 ET`, while later insertion timestamps are preserved in manifest
 provenance. The pool stores the full 30-candidate V3 evidence set and fixed entry-plan inputs; raw
-ClickHouse rows remain outside git. Its natural-language layer is `deterministic_grounded`; it renders
-the frozen V3 decision values without an external request and is not labeled as OpenAI output.
+ClickHouse rows remain outside git. Its natural-language layer is `company_grounded`; artifact 생성
+시 Redis 10-K 프로필과 cutoff-safe 뉴스가 있으면 검증된 AI 문장 재료를 동결하고, 없으면
+회사명·업종 기반 결정론적 재료를 동결한다. 요청 시에는 외부 요청 없이 frozen context와
+개인화 action만 조합한다.
 
 For the staged deploy, keep an explicit container env override at `legacy` while applying the
 image and migrations, replace it with `deterministic-evidence-v3` only after the gates and offline
 replay pass, and validate a newly created 30-minute slot. Rollback sets the same explicit override
-back to `legacy`; migrations `0013`/`0014` and evidence rows remain intact.
+back to `legacy`; migrations `0013` through `0016` and evidence rows remain intact.
 
 A Git merge or push does not deploy this selector, application image, or database migration.
 Use the manual dev/test deploy workflow and treat the following as hard activation gates:
-the backend and recommendation-worker run the merged image, migrations `0011` through `0014`
+the backend and recommendation-worker run the merged image, migrations `0011` through `0016`
 are present, and SPY plus the candidate universe have the required completed daily and prior
 regular-session minute candles. The timestamped live AWS audit, measured gaps, backfill
 commands, portfolio/fill requirements, and verification order are maintained in

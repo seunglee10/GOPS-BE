@@ -58,7 +58,7 @@ from alfaka.backfill.runner import (
 )
 from alfaka.backfill.gapfill import TradingCalendar, detect_gapfill_ranges
 from alfaka.backfill.status import RedisBackfillStore, default_backfill_range, redis_response_error_type
-from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider, clickhouse_param_value, merge_candle_rows
+from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider, _rsi14_from_closes, clickhouse_param_value, merge_candle_rows
 from alfaka.serving.cursors import timestamp_from_cursor
 from alfaka.serving.dto import cursor_for, market_status_event, snapshot, websocket_event
 from alfaka.serving.hot_symbols import build_hot_symbols_payload, dollar_volume_from_candle
@@ -5442,6 +5442,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("market_session = 'regular'", query)
         self.assertNotIn("argMin(c.open, c.event_time)", query)
         self.assertEqual(rows[0]["previousClose"], 100)
+
+    def test_heatmap_rsi14_uses_fourteen_daily_changes(self):
+        self.assertEqual(_rsi14_from_closes(range(100, 115)), 100.0)
+        self.assertEqual(_rsi14_from_closes([100] * 15), 50.0)
+        self.assertIsNone(_rsi14_from_closes(range(100, 114)))
 
     def test_clickhouse_intraday_aggregation_includes_live_minute_source(self):
         provider = RecordingClickHouseProviderForAggregation([])

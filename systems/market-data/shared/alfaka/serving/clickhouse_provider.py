@@ -25,6 +25,20 @@ def _legacy_sort_key_extension_error(exc):
     return "Existing column" in message and "sorting key" in message
 
 
+def _rsi14_from_closes(closes):
+    values = [float(value) for value in closes if value is not None]
+    if len(values) < 15 or any(value <= 0 for value in values[-15:]):
+        return None
+    changes = [current - previous for previous, current in zip(values[-15:-1], values[-14:])]
+    average_gain = sum(max(change, 0.0) for change in changes) / 14.0
+    average_loss = sum(max(-change, 0.0) for change in changes) / 14.0
+    if average_gain == 0 and average_loss == 0:
+        return 50.0
+    if average_loss == 0:
+        return 100.0
+    return round(100.0 - 100.0 / (1.0 + average_gain / average_loss), 4)
+
+
 class ClickHouseMarketDataProvider:
     def __init__(self, url=None, database=None, user=None, password=None, now_provider=None):
         """ClickHouse HTTP API 접속 정보를 환경변수 또는 인자로 초기화합니다."""
@@ -754,6 +768,41 @@ class ClickHouseMarketDataProvider:
                 if symbol and symbol not in by_symbol:
                     by_symbol[symbol] = row
         return [by_symbol[symbol.strip().upper()] for symbol in symbols if symbol.strip().upper() in by_symbol][:limit]
+
+    def latest_daily_rsi14(self, symbols):
+        """S&P 탐색기용 RSI(14)를 종목별 N+1 조회 없이 한 번에 계산합니다."""
+        symbols = list(dict.fromkeys(symbol for symbol in symbols if isinstance(symbol, str) and symbol.strip()))
+        if not symbols:
+            return {}
+        source_query = self.latest_chart_candles_source(f"""
+            symbol IN {{symbols:Array(String)}}
+            AND interval IN ('1D', '1d')
+            AND is_closed = true
+            AND event_time >= subtractDays(now(), 120)
+            AND toDayOfWeek(event_time) BETWEEN 1 AND 5
+        """)
+        query = f"""
+        SELECT
+          symbol,
+          formatDateTime(event_time, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS timestamp,
+          close
+        FROM ({source_query})
+        ORDER BY symbol ASC, event_time DESC
+        LIMIT 15 BY symbol
+        FORMAT JSONEachRow
+        """
+        rows = self.query_json_each_row(query, {"symbols": symbols})
+        closes_by_symbol = {}
+        for row in rows:
+            symbol = str(row.get("symbol") or "").strip().upper()
+            if not symbol:
+                continue
+            closes_by_symbol.setdefault(symbol, []).append((str(row.get("timestamp") or ""), row.get("close")))
+        return {
+            symbol: rsi
+            for symbol, points in closes_by_symbol.items()
+            if (rsi := _rsi14_from_closes([value for _, value in sorted(points)])) is not None
+        }
 
     def _hot_symbols_by_interval_dollar_volume(self, symbols, limit=20, interval="1m"):
         normalized_interval = "1D" if interval in {"1D", "1d"} else "1m"

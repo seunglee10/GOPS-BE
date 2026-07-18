@@ -3,6 +3,32 @@
 이 문서는 백엔드가 GOPS 에이전트 런타임을 붙일 때 지켜야 하는 계약을
 정리한다. 에이전트 내부 구조는 `AGENT_ARCHITECTURE.md`를 기준으로 한다.
 
+## 추천 API 현재 계약
+
+```text
+GET    /api/recommendations/score-profiles
+POST   /api/recommendations/score-profiles
+POST   /api/recommendations/score-profiles/suggestions
+PUT    /api/recommendations/score-profiles/{id}
+DELETE /api/recommendations/score-profiles/{id}
+PUT    /api/recommendations/score-profiles/active
+```
+
+기본 모멘텀·균형·안정 프로필은 immutable이고 custom 프로필은 사용자별 최대 20개다.
+이름은 대소문자 무시 고유값이며 모든 블록·세부 그룹 합계가 100이어야 한다.
+추천 응답은 `customRankScore`, canonical/effective block score, portfolio 반영률과
+score-profile provenance를 반환한다. `preference*`, `personalizationDelta`,
+`personalScore`는 새 응답 계약이 아니다. `continuous-v2` 실행 옵션과 fill 기반 preference
+처리는 제거됐다. 아래 V2 설명은 migration 이전 역사적 맥락으로만 읽는다.
+
+`POST /api/recommendations/score-profiles/suggestions`는 2~500자의 `query`를 받는다.
+최신 사용자 run과 그 run이 참조한 immutable evidence snapshot 전체 후보 집계, 현재 시장
+분포, 관련 최신 뉴스·저장 촉매를 retrieval context로 사용한다. 응답은
+`recommendation-score-suggestion.v1` 초안, 검색된 intent 문서, 한국어 근거, evidence/news
+provenance를 반환한다. OpenAI structured output을 사용할 수 없으면 같은 검색 결과로 만든
+결정론적 초안을 반환하지만 프로필을 저장·활성화하지 않는다. 최종 프로필 생성과 활성화는
+기존 CRUD/active API를 통한 사용자의 명시적 적용 뒤에만 일어난다.
+
 ## Backend Role
 
 AI coach remains on the existing analyze/report contract. `POST /api/agents/analyze`
@@ -315,10 +341,12 @@ Finance snapshot을 Redis에 fresh/stale 캐시한다. 백엔드는 fresh 캐시
 조회한다. refresh 중이거나 Yahoo Finance가 timeout/rate-limit/failure를 반환하면
 마지막 성공 snapshot을 `cacheStatus="stale"`로 반환할 수 있다.
 
-장중 매수 추천 패널은 recommendation API를 사용한다. `PUT /api/recommendations/profile`은
-추천목록 패널의 추천 설정 dialog에서 필수 투자 설정을 저장하고, `GET
-/api/recommendations/stocks/latest`와 `POST /api/recommendations/stocks/refresh`는
-정규장 장중 추천만 반환한다. 추천 worker는 프로필이 있는 사용자 목록을 순회하고,
+통합 추천 패널은 recommendation API를 사용한다. `PUT /api/recommendations/profile`은
+필수 투자 설정을 저장하고, score-profile CRUD/active API는 사용자 가중치를 저장한다.
+`GET /api/recommendations/stocks/latest`와 `POST /api/recommendations/stocks/refresh`의
+공개 계약에는 `sessionMode`가 없다. refresh는 요청 시각이 장전 또는 본장이면 해당
+활성 세션을, 그 밖의 시간에는 정규장 기준을 내부 선택하고 latest는 가장 최근 run을
+반환한다. 추천 worker는 프로필이 있는 사용자 목록을 순회하고,
 09:45/12:45/15:45 ET 슬롯 run key로 멱등 실행한다. 종목 선정은 결정론적 점수화
 로직이 담당하며, 알림은 기존 notifications 저장소와 `WS /ws/notifications`
 브로커만 재사용한다. 추천 profile, heatmap item, recommendation item, holdings
@@ -326,26 +354,18 @@ snapshot의 `sector`는 GraphDB `gops:sector` canonical 값을 사용하고, 화
 한글 라벨은 `sectorLabelKo`로 함께 내려준다.
 
 추천 profile의 `recommendationStyle`은 `momentum`, `balanced`, `stable` 중 하나이며
-`riskLevel`과 독립적이다. personalization 활성화 시 backend는 완료 1D history,
-직전 정규장 1분봉, SPY, cutoff-safe 뉴스와 추천 시점 이전
-`user_portfolio_snapshot_history`를 결합한다. run에는 snapshot history ID,
-`weights_version`, `personalization_input_digest`, bounded personalization metadata만
-저장하고 전체 계좌 payload를 복제하지 않는다. 같은 slot의 기존 run은 digest까지
-같을 때만 replay한다. item별 전문 점수와 팩터 기여도는 기존
-`metrics_snapshot` JSONB에 저장해 API shape를 확장하되 기존 필드를 제거하지 않는다.
-자동 주문과 시뮬레이터 경로는 이 계산에 연결하지 않는다.
+custom profile FK가 없을 때만 기본 점수 프로필 선택에 사용한다. run에는 투자 프로필
+revision, 활성 점수 프로필 ID/revision/schema/digest가 반영된 `run_key`와
+`scoring_input_digest`를 저장한다. 동일 slot이라도 설정이 바뀌면 새 run을 계산하고,
+동일 설정이면 기존 run을 replay한다. 주문·fill은 점수 입력이 아니다.
 
-명시적 `RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2|deterministic-evidence-v3`가 있으면
-기존 flag보다 우선한다. `continuous-v2`는 shadow 여부와 무관하게 실제 최종 점수로
-정렬하고 공개 `algorithmVersion`은 `continuous-personalization-v2`다. 추천 cutoff까지의
-canonical real fill만 시간순으로 처리하며, `order_coach_fill_history`의 매수 체결을
-24시간 이내 동일 종목 candidate feature와 연결한다. 매도와 match 실패도 skip reason이
-있는 event로 남지만 선호 state를 바꾸지 않는다. paper/simulator activity는 포함하지
-않는다.
+명시적 `RECOMMENDATION_ALGORITHM_VERSION`은 `legacy`, `professional-v1`,
+`deterministic-evidence-v3`만 허용한다. `continuous-v2`와 관련 preference/risk state,
+candidate feature 생성 경로는 제거됐다.
 
 `deterministic-evidence-v3`는 가격·수익률·성공확률을 예측하지 않는다. 같은 세션 슬롯의
 전체 준비 유니버스에서 immutable evidence snapshot을 한 번 만들고, 사용자별 제외·스타일,
-실제 매수 체결 기반 선호, 최신 포트폴리오 적합성만 후처리한다. 공개 `score`는
+사용자 저장 가중치와 최신 포트폴리오 적합성만 후처리한다. 공개 `score`는
 `FinalRankScore`, `confidence`는 성공확률이 아닌 `EvidenceReliability / 100`이다. 신뢰도
 70 미만과 hard gate 실패 종목은 개인화로 복구할 수 없다. run은 evidence snapshot ID와
 `deterministic-evidence-v3.1`의 전체 규칙 snapshot을 저장한다.
@@ -360,6 +380,13 @@ Redis/ClickHouse 최신 candle 일치, 신뢰도 70 이상 후보 15개를 activ
 직접 추천 v1은 migration `0015_direct_recommendation_v1.sql`의 profile history,
 확장 action check와 `decision_json`을 사용한다.
 
+S&P 500 heatmap은 상세 탐색 필터를 위해 기존 공시 재무 필드와 함께 `rsi14`를
+반환한다. ClickHouse provider는 완료 일봉 15개를 symbol 전체에 대해 단일 batch로
+읽어 RSI를 계산한다. 데이터가 부족하면 null을 유지하며 중립값으로 채우지 않는다.
+`0016_recommendation_narrative_context.sql`은 동일 evidence slot에서 회사 설명이 바뀌지 않도록
+cutoff 이하 10-K·뉴스·기업 품질 context를 candidate별 JSONB로 저장한다. 10-K가 없거나 미래
+filing이면 업종 기반 `partial` context로 degrade하며 추천 계산은 계속한다.
+
 AWS의 `recommendation-v3-2026-07-15` fixed replay override는 일반 장중 run과 분리된다.
 `RECOMMENDATION_FIXED_REPLAY_ENABLED=true`이면 7월 14일 16:00 ET 근거로 만든 30개
 candidate pool을 검증하고, `RECOMMENDATION_DECISION_V1_ENABLED=true`일 때 cutoff 이하의
@@ -367,13 +394,16 @@ candidate pool을 검증하고, `RECOMMENDATION_DECISION_V1_ENABLED=true`일 때
 active symbol과 세션 선택은 순위에 영향을 주지 않는다. 응답은 공통
 `evidencePoolDigest`, 사용자별 `personalizationDigest`·`recommendationDigest`,
 `personalizationMode=cutoff_user_context`와 action/decision/sizing/keyEvidence/cautions를 포함한다.
-직접 추천 문장은 `recommendation-decision-renderer.ko.v7`가 실제 관측된 V3 값과
+직접 추천 문장은 `recommendation-decision-renderer.ko.v8`이 실제 관측된 V3 값과
 우선순위가 지정된 실패 조건으로 만든다. `keyEvidence`는 시장 흐름·거래 참여·가격 구조를
 기본으로 하고 `availableBlocks`에 있는 뉴스·촉매, 체결 여건, 안정성·품질만 추가한다.
 각 근거는 수치 문장과 함께 `metrics[]`의 표시값, 비교 기준, 0~100 그래프 위치, 방향을 제공한다.
 `interpretation`은 수치를 반복하지 않고 해당 비교가 왜 판단에 유효한지 설명한다. 큰 headline은
 사용자 결론을 우선하고 숫자는 근거 그래프에 보조 정보로 남긴다. 그래프 위치는 백엔드가 확정하고
 프런트는 투자 판단을 재계산하지 않는다.
+`recommendation-explanation.v1.primary.listSummary`는 목록용 한 줄이며 `headline`과 `body`는
+상세 패널용 종목별 결론과 3~5문장 본문이다. 선택적 OpenAI batch는 기업·근거 ref가 검증된
+문장 재료만 만들며 종목 하나가 실패하면 그 종목만 결정론적 기업 문장으로 fallback한다.
 `cautions[]`는 실패 조건, 알려진 soft penalty·실행 경고와 추격 상한·무효화 기준에서
 계산한 주당 하락 폭을
 `code`, `label`, `severity`, `sentence`로 제공한다. 이 문장 계약은 가격·점수 계산을 변경하지 않는다.
