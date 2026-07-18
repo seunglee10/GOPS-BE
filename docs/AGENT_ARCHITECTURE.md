@@ -545,8 +545,9 @@ bounded source bundle로 읽고 서버가
 API 요청은 저장된 최신 검증본을 읽고 stale 생성 event만 남기며 OpenAI를 직접 호출하지 않는다.
 기존 이름을 유지한 `gops-company-journal-worker` CronJob은 경량 Dispatcher로만 동작한다.
 항상 켜진 `general-purpose` 노드에서 ClickHouse pending 존재 여부만 확인하고, 요청이 있을
-때만 중지된 `gops-company-journal-process-template`을 실제 batch Job으로 복제한다. OpenAI와
-원천 bundle 처리는 동적 `batch` NodePool의 처리 Job이 담당하며, 같은 역할의 Job이 이미
+때만 중지된 `gops-company-journal-process-template`을 실제 처리 Job으로 복제한다. 짧은
+요청 기반 OpenAI·원천 bundle 처리는 상시 `app-agent` 여유 용량을 재사용하며, 무거운
+post-market·migration·backfill만 동적 `batch` NodePool을 사용한다. 같은 역할의 Job이 이미
 활성 상태이면 새 Job을 만들지 않는다.
 `company-journal.v2`의 화면/문장 축은 매출·수익, 실적, 안정성, 가치이며 뉴스는 입력 근거로만
 사용하고 독립 화면 탭으로 노출하지 않는다.

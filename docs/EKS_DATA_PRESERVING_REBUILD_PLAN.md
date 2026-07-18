@@ -49,12 +49,12 @@ Default-preserve 대상:
 
 | NodePool | EC2 class | Workload |
 | --- | --- | --- |
-| `app-agent` | 5 x `m5a.large` or `m6a.large`, 2 vCPU / 8 GiB | backend, frontend, AI agent, market/news workers |
+| `app-agent` | 5 x `m5a.large` or `m6a.large`, 2 vCPU / 8 GiB | backend, frontend, AI agent, market/news workers, interactive company-journal processor |
 | `cache-db` | 1 x `r5a.large`, 2 vCPU / 16 GiB | Redis, Postgres |
 | `streaming` | 1 x `m5a.large` or `m6a.large`, 2 vCPU / 8 GiB | Kafka only |
 | `graphdb` | 1 x `r5a.large`, 2 vCPU / 16 GiB | GraphDB only |
 | `clickhouse` | 1 x `m5a.xlarge` or `m6a.xlarge`, 4 vCPU / 16 GiB | ClickHouse only |
-| `batch` | 0->1 x `m5a.xlarge` or `m6a.xlarge`, 4 vCPU / 16 GiB | backfill, eval, smoke, rebuild Jobs |
+| `batch` | 0->1 x `m5a.xlarge` or `m6a.xlarge`, 4 vCPU / 16 GiB | post-market, migration, backfill, eval, smoke, rebuild Jobs |
 
 Expected vCPU:
 
@@ -90,8 +90,8 @@ Placement policy:
 - Kafka -> `streaming`
 - GraphDB -> `graphdb`
 - Redis/Postgres -> `cache-db`
-- backend/frontend/agent/market/news workers -> `app-agent`
-- smoke/eval/benchmark/backfill/rebuild Jobs -> `batch`
+- backend/frontend/agent/market/news workers and interactive company-journal processing -> `app-agent`
+- post-market/migration/smoke/eval/benchmark/backfill/rebuild Jobs -> `batch`
 
 Resource and PVC targets:
 

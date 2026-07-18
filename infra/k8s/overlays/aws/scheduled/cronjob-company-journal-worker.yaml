@@ -1,4 +1,4 @@
-# 역할: ClickHouse에 pending 기업저널 요청이 있을 때만 실제 batch 처리 Job을 생성합니다.
+# 역할: ClickHouse에 pending 기업저널 요청이 있을 때만 실제 처리 Job을 생성합니다.
 # 기존 CronJob 이름을 유지해 apply 시 10분 주기의 구 worker가 클러스터에 남지 않게 합니다.
 apiVersion: v1
 kind: ServiceAccount
@@ -63,11 +63,11 @@ spec:
         spec:
           restartPolicy: Never
           nodeSelector:
-            karpenter.sh/nodepool: batch
+            karpenter.sh/nodepool: app-agent
           tolerations:
             - key: gops.io/dedicated
               operator: Equal
-              value: batch
+              value: app-agent
               effect: NoSchedule
           serviceAccountName: alfaka-market-data-sa
           containers:
