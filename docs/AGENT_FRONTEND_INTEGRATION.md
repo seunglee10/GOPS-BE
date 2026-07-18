@@ -620,7 +620,10 @@ panel uses the matching `diversified-us-v3` portfolio report instead of a stale 
 The first real user order disables that exception and restores the authenticated archive path.
 Simulator mode does not clear, refetch, or replace the resolved coach report. The same report and
 current internal page remain visible when switching between LIVE and SIM; account and order panels
-may continue refreshing independently from the common paper ledger.
+may continue refreshing independently from the common paper ledger. A runtime provider above the
+workspace owns the in-memory report and panel-page state, so the TreeMap transition may unmount the
+panel without losing either value. Loading paper account/orders is an unknown seed state and cannot
+replace the current report; only a completed non-seed order/account-generation decision may do so.
 The seeded report's entry charts embed the stored AAPL/AMZN/WMT fixed-replay daily OHLCV window at
 build time. Prices are rebased to the paper fill only because the chart is a fill-relative percent
 view; candle returns, volume, RSI(14), MACD, signal, and relative volume come from those stored rows.
@@ -629,9 +632,9 @@ a flat to-do list with status boxes and inline evidence, not as nested cards or 
 Its typography uses the shared `title-sm`, `label-md`, `body-md`, `caption`, and `button` roles from
 `DESIGN.md`, without local fluid sizes or custom heavy weights.
 
-When the workspace does not already supply a `coachReport`, the panel makes one top-level
-authenticated request to `GET /api/ai-coach/reports/latest`. Child pages never fetch their
-own data. A stored report renders immediately; no stored report renders a clear waiting
+When the runtime does not already hold a `coachReport`, the provider makes one authenticated
+request to `GET /api/ai-coach/reports/latest` for the current user/account generation. Panel
+remounts and child pages never fetch their own data. A stored report renders immediately; no stored report renders a clear waiting
 state. This keeps the post-market coach independent of Redis report delivery while
 preserving the existing polling/SSE contract for interactive agent analysis.
 
