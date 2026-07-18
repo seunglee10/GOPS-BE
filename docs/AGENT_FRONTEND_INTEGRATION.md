@@ -88,7 +88,9 @@ action, decision, sizing, key evidence, 점수와 설명을 읽는다. 별도 re
 배속과 `재생/일시정지/재시작`을 표시한다. 배속은 `1·5·20·60·300×`이고 서버 status를
 진실의 원천으로 사용한다. 진행 중인 차트 봉의 남은 시간도 LIVE에서는 실제 시각,
 SIM에서는 status의 `virtualTime`과 `effectiveSpeed`를 사용하며 일시정지 중에는 함께
-멈춘다. phase, 합성 news, basket UI는 없다.
+멈춘다. LIVE에서 SIM으로 처음 전환되면 메인 화면은 증시지도(TreeMap)로 이동하고,
+status의 replay 가격과 등락률을 해당 종목 타일에 반영한다. 일시정지·재개·같은 모드의
+run 갱신은 사용자가 보고 있는 화면을 강제로 바꾸지 않는다. phase, 합성 news, basket UI는 없다.
 
 상태는 실행 중 1초, LIVE·ready·paused·completed·연결 불가에서는 30초 간격으로
 확인한다. 이전 요청이 끝난 뒤 다음 요청을 예약하고 숨겨진 브라우저 탭에서는 polling을
