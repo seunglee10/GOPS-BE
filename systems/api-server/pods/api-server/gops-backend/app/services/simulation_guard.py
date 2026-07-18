@@ -21,6 +21,7 @@ UNSAFE_SIMULATION_PREFIXES = (
 )
 
 SAFE_SIMULATION_READ_PATHS = frozenset({
+    "/api/ai-coach/reports/latest",
     "/api/market/news/latest",
     "/api/market/news/daily",
     "/api/charts/analysis-assets",

@@ -664,6 +664,22 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"], "simulation_data_unavailable")
 
+    def test_ai_coach_latest_report_remains_available_in_simulation(self):
+        self.gateway.mode = "simulation"
+        expected = {
+            "contractVersion": "coach-report.v2",
+            "analysisId": "analysis-1",
+            "page1": None,
+        }
+
+        with patch("app.routes.agents.CoachReportArchive") as archive_type:
+            archive_type.return_value.get_latest.return_value = expected
+            response = self.client.get("/api/ai-coach/reports/latest")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ready", "report": expected})
+        archive_type.return_value.get_latest.assert_called_once_with(user_id="dev-auth-disabled")
+
     def test_company_journal_is_blocked_until_point_in_time_provider_exists(self):
         self.gateway.mode = "simulation"
         service = SimpleNamespace(
