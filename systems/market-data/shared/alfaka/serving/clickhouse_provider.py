@@ -1610,6 +1610,98 @@ class ClickHouseMarketDataProvider:
             parameters,
         )
 
+    def company_daily_news_summaries_reconstructed_between(
+        self,
+        symbol,
+        from_date,
+        to_date,
+        limit=370,
+        locale="ko-KR",
+        as_of=None,
+    ):
+        """원문 전체가 cutoff 전에 공개된 최신 v2 일별 요약만 재구성 후보로 읽습니다."""
+        if not as_of:
+            return []
+        query = f"""
+        SELECT
+          date,
+          symbol,
+          locale,
+          summary,
+          keyPoints,
+          positivePoints,
+          concerns,
+          impactDirection,
+          sentiment,
+          articleIds,
+          articleIdsHash,
+          articleCount,
+          mentionCount,
+          status,
+          model,
+          generatedAt,
+          version,
+          raw,
+          'historical_reconstruction' AS sourceMode,
+          {{asOf:String}} AS sourceCutoff
+        FROM
+        (
+          SELECT
+            toString(summaries.date) AS date,
+            summaries.symbol AS symbol,
+            summaries.locale AS locale,
+            argMax(summaries.summary, summaries.generated_at) AS summary,
+            argMax(summaries.key_points, summaries.generated_at) AS keyPoints,
+            argMax(summaries.positive_points, summaries.generated_at) AS positivePoints,
+            argMax(summaries.concerns, summaries.generated_at) AS concerns,
+            argMax(summaries.impact_direction, summaries.generated_at) AS impactDirection,
+            argMax(summaries.sentiment, summaries.generated_at) AS sentiment,
+            argMax(summaries.article_ids, summaries.generated_at) AS articleIds,
+            argMax(summaries.article_ids_hash, summaries.generated_at) AS articleIdsHash,
+            argMax(summaries.article_count, summaries.generated_at) AS articleCount,
+            argMax(summaries.mention_count, summaries.generated_at) AS mentionCount,
+            argMax(summaries.status, summaries.generated_at) AS status,
+            argMax(summaries.model, summaries.generated_at) AS model,
+            formatDateTime(max(summaries.generated_at), '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS generatedAt,
+            argMax(summaries.version, summaries.generated_at) AS version,
+            argMax(summaries.raw, summaries.generated_at) AS raw
+          FROM {self.table('news_company_daily_summaries')} AS summaries
+          WHERE summaries.symbol = {{symbol:String}}
+            AND summaries.locale = {{locale:String}}
+            AND summaries.version = 'v2'
+            AND summaries.date >= toDate({{fromDate:String}})
+            AND summaries.date <= toDate({{toDate:String}})
+          GROUP BY summaries.date, summaries.symbol, summaries.locale
+          HAVING max(summaries.generated_at) > parseDateTime64BestEffort({{asOf:String}})
+        ) AS latest
+        WHERE notEmpty(articleIds)
+          AND arrayAll(
+            articleId -> articleId IN
+            (
+              SELECT localizations.article_id
+              FROM {self.table('news_article_localizations')} AS localizations
+              WHERE localizations.target_symbol = {{symbol:String}}
+                AND localizations.locale = {{locale:String}}
+                AND localizations.published_at <= parseDateTime64BestEffort({{asOf:String}})
+            ),
+            articleIds
+          )
+        ORDER BY date ASC
+        LIMIT {{limit:UInt32}}
+        FORMAT JSONEachRow
+        """
+        return self.query_json_each_row(
+            query,
+            {
+                "symbol": str(symbol or "").strip().upper(),
+                "locale": locale,
+                "fromDate": str(from_date)[:10],
+                "toDate": str(to_date)[:10],
+                "limit": int(limit),
+                "asOf": str(as_of),
+            },
+        )
+
     def earnings_events(self, symbol, from_time, to_time):
         """수집 시각이 가장 최신인 Yahoo 실적 이벤트 행만 반환합니다."""
         query = f"""

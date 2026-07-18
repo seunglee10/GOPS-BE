@@ -85,7 +85,7 @@ def daily_summary_to_clickhouse_row(record):
 
 def clickhouse_row_to_daily_summary(row):
     raw = parse_raw_json(row.get("raw"))
-    return {
+    result = {
         "date": str(row.get("date") or ""),
         "symbol": str(row.get("symbol") or "").upper(),
         "locale": row.get("locale") or "ko-KR",
@@ -106,6 +106,13 @@ def clickhouse_row_to_daily_summary(row):
         "sources": normalize_source_links(row.get("sources") or raw.get("sources")),
         "priceChange": normalize_price_change(row.get("priceChange") or row.get("price_change") or raw.get("priceChange")),
     }
+    source_mode = row.get("sourceMode") or row.get("source_mode") or raw.get("sourceMode")
+    source_cutoff = row.get("sourceCutoff") or row.get("source_cutoff") or raw.get("sourceCutoff")
+    if source_mode:
+        result["sourceMode"] = str(source_mode)
+    if source_cutoff:
+        result["sourceCutoff"] = str(source_cutoff)
+    return result
 
 
 def daily_summary_cache_item(record):

@@ -997,6 +997,35 @@ class MarketDataQueryService:
         except Exception:
             rows = []
         normalized = [row for row in rows or [] if isinstance(row, dict)]
+        reconstruction_method = getattr(
+            clickhouse_provider,
+            "company_daily_news_summaries_reconstructed_between",
+            None,
+        )
+        if callable(reconstruction_method):
+            try:
+                reconstructed_rows = reconstruction_method(
+                    symbol,
+                    from_date.isoformat(),
+                    to_date.isoformat(),
+                    limit=max(30, limit),
+                    locale=locale,
+                    as_of=chart_event_iso(reference),
+                )
+            except Exception:
+                reconstructed_rows = []
+            rows_by_date = {
+                str(row.get("date") or ""): row
+                for row in normalized
+                if str(row.get("date") or "")
+            }
+            for row in reconstructed_rows or []:
+                if not isinstance(row, dict):
+                    continue
+                date = str(row.get("date") or "")
+                if date:
+                    rows_by_date[date] = row
+            normalized = list(rows_by_date.values())
         normalized.sort(key=lambda row: str(row.get("date") or ""), reverse=True)
         return normalized[:limit]
 

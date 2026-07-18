@@ -161,10 +161,16 @@ asset identity, commentary, 최종 drawing ID만 PostgreSQL JSONB projection으�
 이 safe-read도 `asOf <= virtualTime`인 저장 자산만 반환하며 replay 중 해설을 동적으로 생성하지 않는다.
 예외적으로 `GET /api/market/news/latest`는 live Redis를 건너뛰고 ClickHouse의
 `published_at <= virtualTime AND localized_at <= virtualTime`인 저장 기사만 읽는다.
-`GET /api/market/news/daily`와 `GET /api/charts/events`는 SIM `virtualTime`을 cutoff로
-전달해 `news_company_daily_summaries.generated_at`이 cutoff 이하인 저장 스냅샷만
-읽는다. SIM daily 응답에는 미래 종가 노출을 막기 위해 최신 일봉 가격 변화를 붙이지
-않는다. 이 경로들은 외부 뉴스 API를 호출하거나 live Redis 캐시를 갱신하지 않는다.
+`GET /api/charts/events`는 SIM `virtualTime`을 cutoff로 전달해
+`news_company_daily_summaries.generated_at`이 cutoff 이하인 저장 스냅샷만 읽는다.
+`GET /api/market/news/daily`도 이 저장 스냅샷을 기본값으로 사용한다. 단, 키워드 형식의
+최신 v2 요약이 cutoff 뒤에 생성됐더라도 그 요약의 `articleIds` 전체가 같은 종목·locale의
+`published_at <= virtualTime` 원문으로 확인되면 결정론적 historical reconstruction으로
+해당 날짜를 대체할 수 있다. 기사 하나라도 미래이거나 원문 ID를 확인할 수 없으면 요약
+전체를 재구성하지 않는다. 재구성 summary는 `sourceMode=historical_reconstruction`과
+`sourceCutoff=virtualTime`을 포함한다. SIM daily 응답에는 미래 종가 노출을 막기 위해
+최신 일봉 가격 변화를 붙이지 않는다. 이 경로들은 외부 뉴스 API를 호출하거나 live Redis
+캐시를 갱신하지 않는다.
 
 SIM의 `POST /api/orders`는 기존 `Idempotency-Key`와 리스크 검사를 유지한다.
 `order_type=market`은 price를 생략할 수 있고 현재 ask/bid로 즉시 전량 체결한다.
@@ -365,7 +371,8 @@ news 패널과 news agent가 일자별 요약을 렌더링할 때 market-data qu
 가진다. 가능한 경우 각 summary에는 같은 날짜의 1D 종가와 직전 거래일 1D 종가
 차이를 나타내는 `priceChange`를 포함한다. 이 public payload에는
 `source="redis"` 또는 `source="clickhouse"` 같은 내부 저장소 provenance를 넣지
-않는다.
+않는다. SIM에서 원문 시각 검증을 통과한 v2 요약을 재구성한 경우에만 해당 summary에
+`sourceMode="historical_reconstruction"`과 `sourceCutoff`를 추가한다.
 읽기 경로는 Redis 30일 article/daily hot cache를 먼저 사용하고, Redis coverage
 metadata가 최근 30일 요청을 보장하지 못할 때만 ClickHouse에서 보강한 뒤 Redis를
 다시 warm-up한다.
