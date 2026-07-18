@@ -1,7 +1,9 @@
 import sys
+import types
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,16 +11,21 @@ sys.path.insert(0, str(ROOT / "shared"))
 
 from fundamentals.yahoo_estimates import (
     YahooEstimatesConfig,
+    build_analyst_summary_row,
     dedupe_rows,
     earnings_event_datetime,
     estimate_row,
+    fetch_yfinance_analyst_summary,
+    fetch_yfinance_estimate_rows,
     period_from_yahoo_label,
     rows_from_analyst_consensus,
     rows_from_earnings_dates,
     rows_from_upgrades_downgrades,
     run_yahoo_estimates_sync,
     safe_call,
+    yahoo_provider_symbol,
 )
+from fundamentals.schema import CLICKHOUSE_TABLES
 
 
 class FakeClickHouseClient:
@@ -42,6 +49,69 @@ class FakeFrame:
 
 
 class YahooEstimatesTests(unittest.TestCase):
+    def test_analyst_summary_schema_has_one_day_ttl_and_no_raw_payload(self):
+        ddl = CLICKHOUSE_TABLES["yahoo_analyst_summaries"]
+
+        self.assertIn("ORDER BY symbol", ddl)
+        self.assertIn("TTL collected_at + INTERVAL 1 DAY DELETE", ddl)
+        self.assertNotIn("raw String", ddl)
+
+    def test_estimate_fetcher_uses_yahoo_class_share_alias_and_preserves_canonical_symbol(self):
+        requested_symbols = []
+
+        class FakeTicker:
+            def __init__(self, symbol):
+                requested_symbols.append(symbol)
+
+            def get_earnings_estimate(self):
+                return FakeFrame([("0q", {"avg": 2.5, "low": 2.0, "high": 3.0})])
+
+            def get_revenue_estimate(self):
+                return None
+
+            def get_earnings_dates(self, **_kwargs):
+                return None
+
+        collected_at = datetime(2026, 7, 18, tzinfo=timezone.utc)
+        with patch.dict(sys.modules, {"yfinance": types.SimpleNamespace(Ticker=FakeTicker)}):
+            class_share_rows = fetch_yfinance_estimate_rows("BRK.B", collected_at=collected_at)
+            ordinary_rows = fetch_yfinance_estimate_rows("AAPL", collected_at=collected_at)
+
+        self.assertEqual(requested_symbols, ["BRK-B", "AAPL"])
+        self.assertEqual(class_share_rows[0]["symbol"], "BRK.B")
+        self.assertEqual(ordinary_rows[0]["symbol"], "AAPL")
+
+    def test_analyst_fetcher_uses_yahoo_class_share_alias_and_preserves_canonical_symbol(self):
+        requested_symbols = []
+
+        class FakeTicker:
+            def __init__(self, symbol):
+                requested_symbols.append(symbol)
+
+            def get_upgrades_downgrades(self):
+                return FakeFrame([(
+                    datetime(2026, 7, 17, tzinfo=timezone.utc),
+                    {"Firm": "JPMorgan", "Action": "main", "ToGrade": "Overweight"},
+                )])
+
+            def get_analyst_price_targets(self):
+                return {"current": 190, "mean": 210}
+
+            def get_recommendations_summary(self):
+                return FakeFrame([("0m", {"strongBuy": 2, "buy": 3, "hold": 1})])
+
+        collected_at = datetime(2026, 7, 18, tzinfo=timezone.utc)
+        with patch.dict(sys.modules, {"yfinance": types.SimpleNamespace(Ticker=FakeTicker)}):
+            class_share_summary = fetch_yfinance_analyst_summary("BF.B", collected_at=collected_at)
+            ordinary_summary = fetch_yfinance_analyst_summary("AAPL", collected_at=collected_at)
+
+        self.assertEqual(requested_symbols, ["BF-B", "AAPL"])
+        self.assertEqual(class_share_summary["symbol"], "BF.B")
+        self.assertIn("JPMorgan", class_share_summary["statement"])
+        self.assertIn("$210", class_share_summary["statement"])
+        self.assertEqual(ordinary_summary["symbol"], "AAPL")
+        self.assertEqual(yahoo_provider_symbol(" brk.b "), "BRK-B")
+
     def test_safe_call_isolates_optional_yahoo_endpoint_failure(self):
         class PartialTicker:
             def get_earnings_dates(self, **_kwargs):
@@ -88,7 +158,7 @@ class YahooEstimatesTests(unittest.TestCase):
             YahooEstimatesConfig(dry_run=False, symbols=["NVDA"], batch_size=10),
             clickhouse_client=client,
             fetcher=fetcher,
-            analyst_fetcher=lambda symbol, collected_at: ([], []),
+            analyst_fetcher=lambda symbol, collected_at: None,
         )
 
         self.assertEqual(stats.rows, 1)
@@ -96,8 +166,9 @@ class YahooEstimatesTests(unittest.TestCase):
         self.assertEqual(client.inserted[0][1][0]["symbol"], "NVDA")
         self.assertEqual(client.inserted[0][1][0]["average"], 1.23)
         self.assertTrue(any("ADD COLUMN IF NOT EXISTS event_at" in query for query in client.executed))
+        self.assertTrue(any("DROP TABLE IF EXISTS market_data.yahoo_analyst_actions" in query for query in client.executed))
 
-    def test_yahoo_analyst_rows_preserve_verified_firm_action_targets_and_consensus(self):
+    def test_yahoo_analyst_payload_is_compacted_without_raw_columns(self):
         collected_at = datetime(2026, 7, 18, tzinfo=timezone.utc)
         actions = rows_from_upgrades_downgrades(
             "NVDA",
@@ -109,7 +180,7 @@ class YahooEstimatesTests(unittest.TestCase):
                     "FromGrade": "Overweight",
                     "ToGrade": "Overweight",
                     "PriorPriceTarget": 180,
-                    "PriceTarget": 200,
+                    "CurrentPriceTarget": 200,
                 },
             )]),
             collected_at=collected_at,
@@ -127,8 +198,18 @@ class YahooEstimatesTests(unittest.TestCase):
         self.assertEqual(consensus[0]["target_mean"], 210)
         self.assertEqual(consensus[0]["strong_buy"], 12)
         self.assertEqual(consensus[0]["source"], "yahoo-finance")
+        self.assertNotIn("raw", actions[0])
+        self.assertNotIn("raw", consensus[0])
 
-    def test_run_sync_inserts_analyst_actions_and_daily_consensus_separately(self):
+        summary = build_analyst_summary_row("NVDA", actions, consensus, collected_at=collected_at)
+        self.assertEqual(summary["symbol"], "NVDA")
+        self.assertEqual(summary["tone"], "neutral")
+        self.assertIn("Morgan Stanley", summary["statement"])
+        self.assertIn("$180에서 $200로 상향", summary["statement"])
+        self.assertIn("시장 평균 목표주가는 $210", summary["statement"])
+        self.assertNotIn("raw", summary)
+
+    def test_run_sync_inserts_one_analyst_summary_and_removes_legacy_tables(self):
         client = FakeClickHouseClient()
         collected_at = datetime(2026, 7, 18, tzinfo=timezone.utc)
         estimate = estimate_row(
@@ -142,31 +223,30 @@ class YahooEstimatesTests(unittest.TestCase):
             collected_at=collected_at,
             raw={},
         )
-        action = {
-            "symbol": "NVDA", "action_at": "2026-07-17 00:00:00.000", "firm": "JPMorgan",
-            "action": "main", "from_grade": "Overweight", "to_grade": "Overweight",
-            "prior_price_target": None, "price_target": 210, "source": "yahoo-finance",
-            "collected_at": "2026-07-18 00:00:00.000", "raw": "{}",
-        }
-        consensus = {
-            "symbol": "NVDA", "snapshot_date": "2026-07-18", "current_price": 190,
-            "target_low": 150, "target_high": 250, "target_mean": 210, "target_median": 205,
-            "strong_buy": 12, "buy": 20, "hold": 5, "sell": 1, "strong_sell": 0,
-            "source": "yahoo-finance", "collected_at": "2026-07-18 00:00:00.000", "raw": "{}",
+        summary = {
+            "symbol": "NVDA",
+            "statement": "JPMorgan은 NVDA의 투자의견 Overweight를 유지했습니다.",
+            "tone": "neutral",
+            "source_as_of": "2026-07-17 00:00:00.000",
+            "source": "yahoo-finance",
+            "collected_at": "2026-07-18 00:00:00.000",
         }
 
         stats = run_yahoo_estimates_sync(
             YahooEstimatesConfig(dry_run=False, symbols=["NVDA"], batch_size=10),
             clickhouse_client=client,
             fetcher=lambda symbol, collected_at: [estimate],
-            analyst_fetcher=lambda symbol, collected_at: ([action], [consensus]),
+            analyst_fetcher=lambda symbol, collected_at: summary,
         )
 
-        self.assertEqual(stats.analyst_action_rows, 1)
-        self.assertEqual(stats.analyst_consensus_rows, 1)
+        self.assertEqual(stats.analyst_symbols_loaded, 1)
+        self.assertEqual(stats.analyst_summary_rows, 1)
         self.assertEqual([table for table, _ in client.inserted], [
-            "yahoo_earnings_estimates", "yahoo_analyst_actions", "yahoo_analyst_consensus",
+            "yahoo_earnings_estimates", "yahoo_analyst_summaries",
         ])
+        self.assertTrue(any("DROP TABLE IF EXISTS market_data.yahoo_analyst_actions" in query for query in client.executed))
+        self.assertTrue(any("DROP TABLE IF EXISTS market_data.yahoo_analyst_consensus" in query for query in client.executed))
+        self.assertTrue(any("OPTIMIZE TABLE market_data.yahoo_analyst_summaries FINAL" in query for query in client.executed))
 
     def test_dedupe_rows_keeps_one_row_per_clickhouse_replacing_key(self):
         first = {
@@ -238,7 +318,7 @@ class YahooEstimatesTests(unittest.TestCase):
                 YahooEstimatesConfig(dry_run=False, symbols=["AMD"]),
                 clickhouse_client=FakeClickHouseClient(),
                 fetcher=lambda symbol, collected_at: [],
-                analyst_fetcher=lambda symbol, collected_at: ([], []),
+                analyst_fetcher=lambda symbol, collected_at: None,
             )
 
 

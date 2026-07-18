@@ -552,8 +552,14 @@ post-market·migration·backfill만 동적 `batch` NodePool을 사용한다. 같
 `company-journal.v2`의 화면/문장 축은 매출·수익, 실적, 안정성, 가치이며 뉴스는 입력 근거로만
 사용하고 독립 화면 탭으로 노출하지 않는다.
 replay simulation에서 일반 시장/agent의 point-in-time 차단은 유지한다. 기업저널 panel만
-`/api/company-journal/{symbol}/evidence`로 저장된 SEC/Yahoo/일봉 근거를 읽으며, 이 자료는
-주문·추천·agent snapshot 입력으로 전달하지 않는다.
+`GET /api/company-journal/{symbol}/evidence`로 저장된 SEC/Yahoo/일봉 근거를 읽는다. middleware가
+simulator `virtualTime`을 cutoff로 전달하고 SEC facts/derived는 `filed_at`과
+`version_filed_at`, Yahoo 실적은 `collected_at`, 일봉은 `event_time`이 cutoff 이하인 행만 선택한다.
+Yahoo 기관 event·목표가·추천 분포는 수집기 메모리에서 기업별 한 문장으로 조합한 뒤 원본을
+폐기한다. `yahoo_analyst_summaries`에는 현재 문장만 24시간 보관하며 report에는 복제하지 않는다.
+SIM은 이 문장이 24시간 안이고 `collected_at <= virtualTime`일 때만 표시하며 과거 이력을 재구성하지
+않는다. 저장된 자연어 report route는 SIM에서 계속 차단하며, cutoff evidence는 결정론적 화면
+설명에만 사용하고 주문·추천·agent snapshot 입력으로 전달하지 않는다.
 
 Snapshot bundle additions:
 

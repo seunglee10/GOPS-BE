@@ -155,47 +155,20 @@ CREATE TABLE IF NOT EXISTS market_data.yahoo_earnings_estimates
 ENGINE = ReplacingMergeTree(collected_at)
 ORDER BY (symbol, metric, fiscal_year, fiscal_period, period_end)
 """,
-    "yahoo_analyst_actions": """
-CREATE TABLE IF NOT EXISTS market_data.yahoo_analyst_actions
+    "yahoo_analyst_summaries": """
+CREATE TABLE IF NOT EXISTS market_data.yahoo_analyst_summaries
 (
     symbol LowCardinality(String),
-    action_at DateTime64(3, 'UTC'),
-    firm String,
-    action LowCardinality(String),
-    from_grade String,
-    to_grade String,
-    prior_price_target Nullable(Float64),
-    price_target Nullable(Float64),
+    statement String,
+    tone LowCardinality(String),
+    source_as_of Nullable(DateTime64(3, 'UTC')),
     source LowCardinality(String),
     collected_at DateTime64(3, 'UTC'),
-    raw String,
     inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(collected_at)
-ORDER BY (symbol, action_at, firm, action)
-""",
-    "yahoo_analyst_consensus": """
-CREATE TABLE IF NOT EXISTS market_data.yahoo_analyst_consensus
-(
-    symbol LowCardinality(String),
-    snapshot_date Date,
-    current_price Nullable(Float64),
-    target_low Nullable(Float64),
-    target_high Nullable(Float64),
-    target_mean Nullable(Float64),
-    target_median Nullable(Float64),
-    strong_buy Nullable(UInt16),
-    buy Nullable(UInt16),
-    hold Nullable(UInt16),
-    sell Nullable(UInt16),
-    strong_sell Nullable(UInt16),
-    source LowCardinality(String),
-    collected_at DateTime64(3, 'UTC'),
-    raw String,
-    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
-)
-ENGINE = ReplacingMergeTree(collected_at)
-ORDER BY (symbol, snapshot_date)
+ORDER BY symbol
+TTL collected_at + INTERVAL 1 DAY DELETE
 """,
 }
 

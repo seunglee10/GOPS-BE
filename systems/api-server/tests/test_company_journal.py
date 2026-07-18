@@ -10,12 +10,12 @@ from app.company_journal.repository import CompanyJournalRepository, compact_gra
 from app.company_journal.routes import get_company_journal_service, router
 from app.company_journal.service import (
     CompanyJournalService,
-    calculate_analyst_outlook,
     calculate_server_metrics,
     company_journal_history_years,
+    compact_analyst_summary,
     source_receipt,
 )
-from app.services.simulation_guard import requires_point_in_time_data
+from app.services.simulation_guard import requires_point_in_time_data, supports_cutoff_safe_simulation_read
 
 
 def source_bundle() -> dict:
@@ -36,25 +36,6 @@ def source_bundle() -> dict:
         "earningsEstimates": [
             {"metric": "eps", "average": 2.18, "fiscal_year": 2026, "fiscal_period": "Q2", "collected_at": "2026-07-14 21:15:00.000"},
             {"metric": "revenue", "average": 94_800_000_000, "fiscal_year": 2026, "fiscal_period": "Q2", "collected_at": "2026-07-14 21:15:00.000"},
-        ],
-        "analystActions": [
-            {
-                "firm": "JPMorgan", "action": "main", "from_grade": "Overweight", "to_grade": "Overweight",
-                "prior_price_target": 180, "price_target": 200, "action_at": "2026-07-15 12:00:00.000",
-                "source": "yahoo-finance", "collected_at": "2026-07-15 21:15:00.000",
-            }
-        ],
-        "analystConsensus": [
-            {
-                "snapshot_date": "2026-07-15", "target_mean": 205, "target_median": 200,
-                "strong_buy": 10, "buy": 20, "hold": 5, "sell": 1, "strong_sell": 0,
-                "source": "yahoo-finance", "collected_at": "2026-07-15 21:15:00.000",
-            },
-            {
-                "snapshot_date": "2026-07-14", "target_mean": 200, "target_median": 198,
-                "strong_buy": 9, "buy": 20, "hold": 6, "sell": 1, "strong_sell": 0,
-                "source": "yahoo-finance", "collected_at": "2026-07-14 21:15:00.000",
-            },
         ],
         "filings": [{"accession": "sec-1", "form": "10-Q"}], "graph": {"relation_version": "graph-7"},
     }
@@ -107,26 +88,25 @@ def test_server_metrics_are_deterministic_and_separate_from_narrative():
     assert first["benchmarkReturnPercent"] == 1.6
     assert first["relativeReturnPercentagePoints"] == 2.6
     assert first["financial"]["liabilitiesToEquity"] == 0.42
-    assert first["analystOutlook"]["recentActions"][0]["firm"] == "JPMorgan"
-    assert first["analystOutlook"]["consensusMeanTargetChangePercent"] == 2.5
-    assert "JPMorgan은 투자의견 Overweight를 유지" in first["analystOutlook"]["summary"]
-    assert "시장 평균 목표주가는 $205" in first["analystOutlook"]["summary"]
+    assert "analystOutlook" not in first
     assert "revenue_growth_yoy" in first_missing
 
 
-def test_analyst_outlook_never_invents_missing_target_change_or_consensus_direction():
-    bundle = source_bundle()
-    bundle["analystActions"][0]["prior_price_target"] = None
-    bundle["analystConsensus"] = bundle["analystConsensus"][:1]
-
-    outlook = calculate_analyst_outlook(bundle)
-
-    assert outlook["recentActions"][0]["priceTarget"] == 200
-    assert outlook["recentActions"][0]["priorPriceTarget"] is None
-    assert outlook["previousConsensus"] is None
-    assert outlook["consensusMeanTargetChangePercent"] is None
-    assert "상향" not in outlook["summary"]
-    assert "시장 평균 목표주가는 현재 $205" in outlook["summary"]
+def test_analyst_summary_projection_is_compact_and_passes_through_without_recomposition():
+    assert compact_analyst_summary({
+        "statement": "  JPMorgan 의견과 시장 평균을 조합한 문장입니다.  ",
+        "tone": "positive",
+        "source_as_of": "2026-07-15 12:00:00.000",
+        "collected_at": "2026-07-15 21:15:00.000",
+        "source": "yahoo-finance",
+    }) == {
+        "statement": "JPMorgan 의견과 시장 평균을 조합한 문장입니다.",
+        "tone": "positive",
+        "sourceAsOf": "2026-07-15 12:00:00.000",
+        "collectedAt": "2026-07-15 21:15:00.000",
+        "source": "yahoo-finance",
+    }
+    assert compact_analyst_summary({"statement": ""}) is None
 
 
 def test_source_receipt_contains_ids_not_duplicated_source_documents():
@@ -134,8 +114,6 @@ def test_source_receipt_contains_ids_not_duplicated_source_documents():
         "newsIds": ["news-1"], "secFilingIds": ["sec-1"], "priceAsOf": "2026-07-15",
         "graphRelationIds": ["graph-7"], "financialAccessions": ["sec-1"],
         "earningsPeriods": ["2026-Q2"], "earningsEstimateAsOf": "2026-07-14 21:15:00.000",
-        "analystActionIds": ["JPMorgan|2026-07-15 12:00:00.000|main"],
-        "analystConsensusAsOf": "2026-07-15 21:15:00.000",
     }
 
 
@@ -189,8 +167,7 @@ def test_company_journal_source_bundle_reads_actual_history_from_2021_without_fa
     assert all("period_end >= toDate('2021-01-01')" in query for query in history_queries)
     assert bundle["earningsActuals"] == []
     assert bundle["earningsEstimates"] == []
-    assert bundle["analystActions"] == []
-    assert bundle["analystConsensus"] == []
+    assert "analystSummary" not in bundle
 
 
 def test_performance_series_deduplicates_candles_before_per_symbol_limit():
@@ -208,11 +185,13 @@ def test_performance_series_deduplicates_candles_before_per_symbol_limit():
             }]
 
     client = ClickHouseClient()
-    result = CompanyJournalRepository(client=client).load_performance_series(["NVDA"])
+    cutoff = datetime.fromisoformat("2026-07-15T00:00:00+09:00")
+    result = CompanyJournalRepository(client=client).load_performance_series(["NVDA"], cutoff=cutoff)
 
     assert result[0]["candles"][0]["close"] == 104.2
     assert "GROUP BY symbol, event_time" in client.query
     assert client.query.index("GROUP BY symbol, event_time") < client.query.index("LIMIT 520 BY symbol")
+    assert "toDate(toTimeZone(event_time, 'America/New_York'))" in client.query
 
 
 def test_point_in_time_queries_bound_every_temporal_company_journal_source():
@@ -313,7 +292,7 @@ def test_worker_persists_only_a_validated_report_then_completes_request():
     assert repository.inserted is not None
     assert [event[1] for event in repository.events] == ["processing", "completed"]
     assert repository.inserted["receipt"]["newsIds"] == ["news-1"]
-    assert repository.inserted["draft"].recent_movement.startswith("JPMorgan은 투자의견 Overweight를 유지")
+    assert repository.inserted["draft"].recent_movement == "최근 3거래일 동안 시장보다 강한 흐름을 보였습니다."
 
 
 def test_missing_market_data_does_not_generate_numbers():
@@ -346,8 +325,8 @@ def test_company_journal_evidence_route_is_read_only_and_simulation_safe():
         def __init__(self):
             self.calls = []
 
-        def panel_evidence(self, symbol, benchmark_symbols):
-            self.calls.append((symbol, benchmark_symbols))
+        def panel_evidence(self, symbol, benchmark_symbols, *, cutoff=None):
+            self.calls.append((symbol, benchmark_symbols, cutoff))
             return {
                 "contractVersion": "company-journal-evidence.v1",
                 "symbol": symbol,
@@ -355,6 +334,7 @@ def test_company_journal_evidence_route_is_read_only_and_simulation_safe():
                 "financialSeries": [{"period": "2026Q2", "revenue": 100}],
                 "earningsSeries": [{"period": "2026Q2", "actualEps": 2.3, "estimatedEps": 2.1}],
                 "performanceSeries": [{"symbol": symbol, "candles": [{"timestamp": "2026-07-15", "close": 104}]}],
+                "analystSummary": None,
                 "missingData": [],
             }
 
@@ -365,7 +345,8 @@ def test_company_journal_evidence_route_is_read_only_and_simulation_safe():
     response = TestClient(app).get("/api/company-journal/googl/evidence?benchmarks=SPY,XLK")
     assert response.status_code == 200
     assert response.json()["contractVersion"] == "company-journal-evidence.v1"
-    assert service.calls == [("GOOGL", ["SPY", "XLK"])]
+    assert response.json()["analystSummary"] is None
+    assert service.calls == [("GOOGL", ["SPY", "XLK"], None)]
 
 
 def test_company_journal_evidence_route_passes_server_owned_simulation_cutoff():
@@ -404,22 +385,28 @@ def test_company_journal_evidence_route_passes_server_owned_simulation_cutoff():
     assert service.cutoff == datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc)
 
 
-def test_company_journal_evidence_requests_history_from_2021(monkeypatch):
+def test_live_company_journal_evidence_requests_history_from_2021(monkeypatch):
     calls = []
 
     class Adapter:
-        def financial_series(self, symbol, years, period):
-            calls.append(("financial", symbol, years, period))
+        def financial_series(self, symbol, years, period, cutoff=None):
+            calls.append(("financial", symbol, years, period, cutoff))
             return []
 
-        def earnings_series(self, symbol, years):
-            calls.append(("earnings", symbol, years))
+        def earnings_series(self, symbol, years, cutoff=None):
+            calls.append(("earnings", symbol, years, cutoff))
             return []
 
     class EvidenceRepository:
-        def load_performance_series(self, symbols):
+        def load_performance_series(self, symbols, cutoff=None):
             assert symbols == ["NVDA", "SPY"]
+            assert cutoff is None
             return []
+
+        def load_analyst_summary(self, symbol, cutoff=None):
+            assert symbol == "NVDA"
+            assert cutoff is None
+            return None
 
     adapter = Adapter()
     monkeypatch.setattr(
@@ -428,14 +415,96 @@ def test_company_journal_evidence_requests_history_from_2021(monkeypatch):
     )
 
     assert company_journal_history_years(2026) == 6
-    result = CompanyJournalService(repository=EvidenceRepository(), writer=FakeWriter()).panel_evidence("NVDA", ["SPY"])
+    result = CompanyJournalService(repository=EvidenceRepository(), writer=FakeWriter()).panel_evidence(
+        "NVDA",
+        ["SPY"],
+    )
 
     assert calls == [
-        ("financial", "NVDA", 6, "quarterly"),
-        ("earnings", "NVDA", 6),
+        ("financial", "NVDA", 6, "quarterly", None),
+        ("earnings", "NVDA", 6, None),
     ]
     assert result["financialSeries"] == []
     assert result["earningsSeries"] == []
+    assert result["analystSummary"] is None
+    assert "yahoo_analyst_summary" in result["missingData"]
+    assert result["sourceAsOf"] is None
+    assert result["cutoff"] is None
+
+
+def test_company_journal_analyst_evidence_is_cutoff_safe_and_compact(monkeypatch):
+    class Adapter:
+        def financial_series(self, symbol, years, period, cutoff=None):
+            return []
+
+        def earnings_series(self, symbol, years, cutoff=None):
+            return []
+
+    class EvidenceRepository:
+        def load_performance_series(self, symbols, cutoff=None):
+            return [{
+                "symbol": "NVDA",
+                "candles": [{"timestamp": "2026-07-15T13:00:00Z", "close": 104}],
+            }]
+
+        def load_analyst_summary(self, symbol, cutoff=None):
+            assert symbol == "NVDA"
+            assert cutoff is None
+            return {
+                "statement": "JPMorgan 의견과 시장 평균을 조합한 문장입니다.",
+                "tone": "positive",
+                "source_as_of": "2026-07-15 12:00:00.000",
+                "collected_at": "2026-07-15 13:30:00.000",
+                "source": "yahoo-finance",
+            }
+
+    monkeypatch.setattr(
+        "app.market_data.fundamentals.service.build_fundamentals_adapter",
+        lambda: Adapter(),
+    )
+    result = CompanyJournalService(repository=EvidenceRepository(), writer=FakeWriter()).panel_evidence(
+        "NVDA",
+        ["SPY"],
+    )
+
+    assert result["analystSummary"] == {
+        "statement": "JPMorgan 의견과 시장 평균을 조합한 문장입니다.",
+        "tone": "positive",
+        "sourceAsOf": "2026-07-15 12:00:00.000",
+        "collectedAt": "2026-07-15 13:30:00.000",
+        "source": "yahoo-finance",
+    }
+    assert result["sourceAsOf"] == "2026-07-15T13:00:00Z"
+    assert "yahoo_analyst_summary" not in result["missingData"]
+
+
+def test_analyst_repository_filters_event_and_collection_times_by_cutoff():
+    class ClickHouseClient:
+        database = "market_data"
+
+        def __init__(self):
+            self.calls = []
+
+        def query_json_each_row(self, query, parameters=None):
+            self.calls.append((query, parameters))
+            return [{
+                "statement": "현재 조합 문장입니다.",
+                "tone": "neutral",
+                "source_as_of": "2026-07-15 12:00:00.000",
+                "collected_at": "2026-07-15 13:30:00.000",
+            }]
+
+    client = ClickHouseClient()
+    cutoff = datetime.fromisoformat("2026-07-15T23:00:00+09:00")
+    result = CompanyJournalRepository(client=client).load_analyst_summary("NVDA", cutoff=cutoff)
+
+    assert result["statement"] == "현재 조합 문장입니다."
+    query, parameters = client.calls[0]
+    assert "yahoo_analyst_summaries FINAL" in query
+    assert "collected_at >= now64(3) - INTERVAL 1 DAY" in query
+    assert "collected_at <= parseDateTime64BestEffort({cutoff:String})" in query
+    assert "LIMIT 1" in query
+    assert parameters["cutoff"] == "2026-07-15T14:00:00+00:00"
 
 
 def test_point_in_time_evidence_uses_cutoff_repository_instead_of_live_fundamentals_adapter(monkeypatch):
@@ -460,6 +529,11 @@ def test_point_in_time_evidence_uses_cutoff_repository_instead_of_live_fundament
             assert symbols == ["NVDA", "SPY"]
             assert cutoff == replay_cutoff
             return [{"symbol": "NVDA", "candles": [{"timestamp": "2026-07-13T04:00:00Z", "close": 104}]}]
+
+        def load_analyst_summary(self, symbol, cutoff=None):
+            assert symbol == "NVDA"
+            assert cutoff == replay_cutoff
+            return None
 
     monkeypatch.setattr(
         "app.market_data.fundamentals.service.build_fundamentals_adapter",
@@ -491,3 +565,6 @@ def test_company_journal_evidence_does_not_remove_other_simulation_guards():
     assert requires_point_in_time_data("/api/company-journal/NVDA/evidence") is False
     assert requires_point_in_time_data("/api/company-journal/NVDA") is False
     assert requires_point_in_time_data("/api/company-journal/NVDA", "POST") is True
+    assert supports_cutoff_safe_simulation_read("/api/company-journal/NVDA/evidence") is True
+    assert supports_cutoff_safe_simulation_read("/api/company-journal/NVDA/evidence", "POST") is False
+    assert supports_cutoff_safe_simulation_read("/api/company-journal/NVDA") is False

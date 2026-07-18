@@ -254,6 +254,7 @@ def seed_snapshots() -> list[dict[str, Any]]:
                 "cashForeign": cash,
                 "stockValueForeign": fill.equity - cash,
                 "totalValueForeign": fill.equity,
+                "netInvestedPrincipal": DEMO_STARTING_CASH,
                 "unrealizedPnlForeign": reported_pnl,
                 "unrealizedPnlRate": (
                     reported_pnl / holdings_cost * Decimal("100")
@@ -307,6 +308,7 @@ def seed_snapshot_history() -> list[tuple[datetime, dict[str, Any]]]:
             "cashForeign": DEMO_STARTING_CASH,
             "stockValueForeign": Decimal("0"),
             "totalValueForeign": DEMO_STARTING_CASH,
+            "netInvestedPrincipal": DEMO_STARTING_CASH,
             "unrealizedPnlForeign": Decimal("0"),
             "unrealizedPnlRate": Decimal("0"),
         },
@@ -365,6 +367,7 @@ def seed_snapshot_history() -> list[tuple[datetime, dict[str, Any]]]:
                 "cashForeign": cash,
                 "stockValueForeign": market_value,
                 "totalValueForeign": equity,
+                "netInvestedPrincipal": DEMO_STARTING_CASH,
                 "unrealizedPnlForeign": unrealized,
                 "unrealizedPnlRate": unrealized / holdings_cost * Decimal("100"),
             },

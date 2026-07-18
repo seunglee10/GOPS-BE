@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 
 UNSAFE_SIMULATION_PREFIXES = (
     "/api/market/",
@@ -34,6 +36,17 @@ SAFE_SIMULATION_READ_PATHS = frozenset({
 SAFE_SIMULATION_READ_PREFIXES = (
     "/api/company-journal/",
 )
+
+
+_CUTOFF_SAFE_COMPANY_JOURNAL_EVIDENCE_PATH = re.compile(
+    r"^/api/company-journal/[A-Za-z0-9.-]{1,15}/evidence/?$"
+)
+
+
+def supports_cutoff_safe_simulation_read(path: str, method: str = "GET") -> bool:
+    """Return whether middleware may attach replay virtualTime and continue safely."""
+
+    return method.upper() == "GET" and bool(_CUTOFF_SAFE_COMPANY_JOURNAL_EVIDENCE_PATH.fullmatch(path))
 
 
 def requires_point_in_time_data(path: str, method: str = "GET") -> bool:

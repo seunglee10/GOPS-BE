@@ -970,14 +970,12 @@ company compare panel은 `panelType="companyCompare"`/`kind="companyCompare"`로
 표시 문자열은 서버가 계산한 값을 그대로 사용하고 브라우저가 margin, growth, EPS
 surprise를 재계산하지 않는다.
 
-기본 `기업분석` 프리셋은 `companyCompare`를 8×4 중심 영역에 두고 차트·기업정보·관심
-뉴스를 하단 보조 영역에 둔다. 저장된 구버전 기본 프리셋에 비교 패널이 없을 때만 새
-구성으로 이행하며 사용자 custom preset은 유지한다. 패널은 상단에서 비교 기업과
-8개 분석축 상태를 보여주고, `01—04` 정량 카드, `05—08` 10-K·관계·뉴스 카드,
-AI 근거 해석 순으로 렌더링한다. 긴 위험 목록은 처음 세 항목 뒤에 접고, 해석 카드도
-제목 전체를 노출한 채 필요한 항목만 펼친다. 모든 정량 카드에는 실제 source와 기준일을
-표시하고 전체 출처·데이터 공백은 별도 details로 제공한다. narrative cache hit는
-`검증된 캐시 응답`으로 표시한다.
+기본 `기업분석` 프리셋은 `company`, `companyJournal`, `newsKeyword`를 사용한다. 프리셋에
+기존 chart 또는 compare panel이 저장되어 있으면 함께 유지하되, 진입 시 현재 보고 있던 차트의
+symbol을 source of truth로 삼아 chart/compare, 기업정보, AI 기업저널의 기준 기업을 모두 같은
+symbol로 덮어쓴다. 저장된 기본 프리셋의 과거 symbol은 복원하지 않는다. 기본 `차트분석`
+프리셋도 NVDA를 강제하지 않고 진입 직전 현재 차트 symbol을 base symbol로 사용한다. 사용자
+custom preset의 일반 배치 계약은 유지한다.
 
 chart analysis asset 운영 패널은 `kind="chartAssetOps"`, 화면 표시는
 `작도 자산(개발)`로 표현한다. 이름의 `(개발)`은 수동 운영 도구임을 나타내는 라벨일
@@ -1174,15 +1172,20 @@ headline, keywords, 탭별 자연어, 최근 움직임과 안정성 문장은 �
 계속 사용하며 ClickHouse를 직접 조회하지
 않는다. report가 pending/unavailable이면 숫자나 문장을 추정하지 않고 생성/연결 상태를
 표시하면서 기존 실제 차트는 유지한다.
-최근 Yahoo 기관 의견이 저장된 report는 실적의 AI 설명에 기관명, 확인된 등급/목표주가와
-시장 컨센서스를 짧게 포함할 수 있다. 프런트는 기관 의견이나 목표가 변화를 계산하지 않으며,
-서버 report에 없는 기관·숫자·변화 방향을 fallback 문장으로 만들지 않는다.
+최근 Yahoo 기관 의견은 저장 report에 포함하지 않는다. 실적 화면은 evidence 응답의 현재
+`analystSummary` 한 문장을 그대로 표시하며 프런트는 기관 의견이나 목표가 변화를 계산하지 않는다.
+projection이 없거나 24시간이 지나면 기존 empty state를 표시한다.
 
 실적 탭은 SEC 실제치/Yahoo 예상치 차트와 `/api/company-journal/{symbol}/evidence`의 최대 2년
 저장 일봉으로 만든
-종목·S&P 500·섹터 ETF 상대수익률/거래량 차트를 함께 제공한다. 기업저널 내부 뉴스 탭은 두지
+종목·S&P 500·섹터 ETF 상대수익률/거래량 차트를 함께 제공하며, 화면에는 `투자사 의견` →
+`시장 대비 주가` → `실적 내역` 순서로 표시한다. 세 섹션은 동일한 왼쪽
+기준선에 맞춘다. 투자사 의견은 읽기 쉬운 큰 본문으로 표시하되 의견 날짜는 숨기고, 시장 대비
+차트와 같은 독립 섹션으로 렌더링해 카드 배경·강조 테두리를 두지 않는다. 시장 대비 차트 제목
+아래의 기간·기준 설명도 표시하지 않는다. 기업저널 내부 뉴스 탭은 두지
 않지만 뉴스는 저장형 문장을 만드는 입력 근거로 계속 사용할 수 있다. 오른쪽 설명의 hover/focus는
-관련 차트 계열을 강조하며 선택된 재무 용어는 공통 사전 tooltip으로 설명한다.
+관련 차트 계열을 강조하며 선택된 재무 용어는 공통 사전 tooltip으로 설명한다. 안정성 탭의
+기간별 수치표는 차트의 실제 높이 바로 다음에 배치하고 고정 카드 높이로 빈 공간을 만들지 않는다.
 replay simulation에서도 report와 evidence route를 모두 다시 조회한다. 서버 응답의
 `sourceMode=historical_reconstruction`과 `cutoff`가 시점 계약의 source of truth이며, 프런트는
 가상시각을 query parameter로 보내거나 LIVE 응답과 합치지 않는다. mode·runId·KST 날짜가 바뀌면
@@ -1191,6 +1194,9 @@ SIM에서는 `CompanySummaryPanel`과 상대수익률 chart의 별도 fundamenta
 `/evidence`가 반환한 시점 재무·실적·완료 일봉만 렌더링한다. 기존 universe item은 회사명·sector·
 industry 같은 식별 정보만 남기고 현재 가격·시가총액·재무·등락률은 제거한 뒤 시점 evidence로
 다시 채운다. 적격 자료가 없으면 최신값이나 preview fixture로 대체하지 않고 자료 부족 상태를 표시한다.
+투자사 의견은 LIVE와 SIM 모두 evidence의 `analystSummary`만 사용한다. 이 projection은
+`collectedAt` 기준 24시간 안이면서 simulator cutoff 이하일 때만 반환되므로 과거 SIM을 위해
+이력을 쌓거나 현재 문장을 과거 사실로 대체하지 않는다. SIM의 결정론적 report에도 복제하지 않는다.
 
 어려운 재무 용어는 공통 `GlossaryText`를 사용하므로 hover, focus, Enter/Space에서 같은
 설명을 제공한다. `companyJournalPreview=1` fixture는 `import.meta.env.DEV`일 때만 활성화된다.
@@ -1223,6 +1229,9 @@ shape, `analysisId` 처리, report delivery, proposal ignore/apply 정책이다.
 ```text
 사용자가 종목 질문을 보낸다.
 회사명/티커 또는 chart-open 명령을 입력하면 entity resolve shortcut으로 차트 symbol만 바뀐다.
+`NVDA 기업분석하자`처럼 기업분석 의도와 티커가 함께 있으면 generic layout resolve보다 먼저
+기업분석 프리셋을 열고, 명시된 티커가 없으면 현재 차트 symbol을 사용한다. 이 경로에서도
+chart/compare·기업정보·AI 기업저널 symbol은 하나로 동기화한다.
 분석 요청이면 POST /api/agents/analyze가 호출된다.
 queued response의 analysisId가 화면 상태에 저장된다.
 SSE 또는 polling으로 completed report를 받는다.

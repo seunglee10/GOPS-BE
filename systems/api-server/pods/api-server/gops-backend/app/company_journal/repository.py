@@ -184,55 +184,6 @@ class CompanyJournalRepository:
             """,
             symbol_parameters,
         )
-        analyst_actions = self._safe_rows(
-            f"""
-            SELECT action_at, firm,
-                   argMax(action, collected_at) AS action,
-                   argMax(from_grade, collected_at) AS from_grade,
-                   argMax(to_grade, collected_at) AS to_grade,
-                   argMax(prior_price_target, collected_at) AS prior_price_target,
-                   argMax(price_target, collected_at) AS price_target,
-                   max(collected_at) AS collected_at,
-                   argMax(source, collected_at) AS source
-            FROM {self.database}.yahoo_analyst_actions
-            WHERE symbol = {{symbol:String}}
-              AND action_at < addDays(toDateTime({{analysis_as_of:String}}, 'UTC'), 1)
-              AND action_at >= subtractDays(toDateTime({{analysis_as_of:String}}, 'UTC'), 120)
-              {collected_source_cutoff}
-              {"AND action_at <= parseDateTime64BestEffort({cutoff:String})" if cutoff else ""}
-            GROUP BY action_at, firm
-            ORDER BY action_at DESC, firm ASC
-            LIMIT 20
-            FORMAT JSONEachRow
-            """,
-            {"symbol": symbol, "analysis_as_of": analysis_as_of, **cutoff_parameters},
-        )
-        analyst_consensus = self._safe_rows(
-            f"""
-            SELECT snapshot_date,
-                   argMax(current_price, collected_at) AS current_price,
-                   argMax(target_low, collected_at) AS target_low,
-                   argMax(target_high, collected_at) AS target_high,
-                   argMax(target_mean, collected_at) AS target_mean,
-                   argMax(target_median, collected_at) AS target_median,
-                   argMax(strong_buy, collected_at) AS strong_buy,
-                   argMax(buy, collected_at) AS buy,
-                   argMax(hold, collected_at) AS hold,
-                   argMax(sell, collected_at) AS sell,
-                   argMax(strong_sell, collected_at) AS strong_sell,
-                   max(collected_at) AS collected_at,
-                   argMax(source, collected_at) AS source
-            FROM {self.database}.yahoo_analyst_consensus
-            WHERE symbol = {{symbol:String}}
-              AND snapshot_date <= toDate({{analysis_as_of:String}})
-              {collected_source_cutoff}
-            GROUP BY snapshot_date
-            ORDER BY snapshot_date DESC
-            LIMIT 30
-            FORMAT JSONEachRow
-            """,
-            {"symbol": symbol, "analysis_as_of": analysis_as_of, **cutoff_parameters},
-        )
         graph = self._safe_one(
             f"""
             SELECT relation_version, generated_at, payload
@@ -253,8 +204,6 @@ class CompanyJournalRepository:
             "financialMetrics": metrics,
             "earningsActuals": earnings_actuals,
             "earningsEstimates": earnings_estimates,
-            "analystActions": analyst_actions,
-            "analystConsensus": analyst_consensus,
             "filings": filings,
             "graph": compact_graph_expansion(graph or {}),
         }
@@ -365,6 +314,29 @@ class CompanyJournalRepository:
             parameters,
         )
         return actuals, estimates
+
+    def load_analyst_summary(
+        self,
+        symbol: str,
+        cutoff: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Read the one-row, 24-hour Yahoo analyst sentence projection."""
+
+        cutoff_parameters = {"cutoff": cutoff.astimezone(timezone.utc).isoformat()} if cutoff else {}
+        cutoff_clause = "AND collected_at <= parseDateTime64BestEffort({cutoff:String})" if cutoff else ""
+        return self._safe_one(
+            f"""
+            SELECT statement, tone, source_as_of, source, collected_at
+            FROM {self.database}.yahoo_analyst_summaries FINAL
+            WHERE symbol = {{symbol:String}}
+              AND collected_at >= now64(3) - INTERVAL 1 DAY
+              {cutoff_clause}
+            ORDER BY collected_at DESC
+            LIMIT 1
+            FORMAT JSONEachRow
+            """,
+            {"symbol": symbol, **cutoff_parameters},
+        )
 
     def load_performance_series(
         self,
