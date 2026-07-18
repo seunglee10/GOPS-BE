@@ -1324,8 +1324,9 @@ Dispatcher는 전용 namespace Role로 processor label의 Job 조회·생성과 
 위함이다. post-market Job은 최근 데이터 기업을 갱신 예약하고 최대 100건을 직접 처리하며,
 같은 processor label을 사용하므로 이후 Dispatcher도 실행 중인 야간 Job을 중복 실행하지 않는다.
 SEC companyfacts CronJob은 매일 20:30 UTC, Yahoo estimates CronJob은 21:15 UTC에 실행되어
-안정성/실적 차트 원천을 먼저 갱신한다. 기업저널 v2 worker는 최대 520개 일봉과 최근 42개월의
-SEC 실제치/Yahoo 예상치를 읽으며 원천 row를 복제하지 않고 receipt에 기간과 기준시각만 남긴다.
+안정성/실적 차트 원천을 먼저 갱신한다. 기업저널 v2 worker는 최대 520개 일봉과 2021년 이후의
+SEC 실제치, ClickHouse에 실제 적재된 Yahoo 예상치를 읽으며 원천 row를 복제하지 않고 receipt에
+기간과 기준시각만 남긴다. Yahoo 수집 전 과거 컨센서스는 추정하지 않는다.
 `company-journal-benchmark-bootstrap` Job은 SPY와 8개 섹터 ETF의 2년 `1D` 누락 timestamp만
 기존 candle-bootstrap 계약으로 추가한다. canonical v2/split 기존 행을 삭제하거나 덮어쓰지 않는다.
 CI/local deploy는 market-processor 이미지가 선택됐을 때 이 Job을 명시적으로 실행하고 완료를

@@ -127,6 +127,29 @@ def test_missing_optional_graph_projection_does_not_block_source_bundle():
     assert bundle["graph"]["keywords"] == []
 
 
+def test_company_journal_source_bundle_reads_actual_history_from_2021_without_fabricating_yahoo_rows():
+    class ClickHouseClient:
+        database = "market_data"
+
+        def __init__(self):
+            self.queries = []
+
+        def query_json_each_row(self, query, parameters=None):
+            self.queries.append(query)
+            if "chart_candles" in query:
+                return [{"date": "2026-07-15", "close": 104.2}]
+            return []
+
+    client = ClickHouseClient()
+    bundle = CompanyJournalRepository(client=client).load_source_bundle("NVDA")
+    history_queries = [query for query in client.queries if "earnings_estimates" in query or "sec_financial_facts" in query]
+
+    assert len(history_queries) == 2
+    assert all("period_end >= toDate('2021-01-01')" in query for query in history_queries)
+    assert bundle["earningsActuals"] == []
+    assert bundle["earningsEstimates"] == []
+
+
 def test_performance_series_deduplicates_candles_before_per_symbol_limit():
     class ClickHouseClient:
         database = "market_data"

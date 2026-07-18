@@ -882,8 +882,9 @@ Kubernetes batch Job에서 수행한다. Dispatcher는 생성 요청이 없으�
 저장 테이블은 `company_journal_reports_v1`과 `company_journal_generation_events_v1`이며,
 기존 원천 테이블의 행을 수정하거나 복제하지 않는다.
 `company-journal.v2` report의 `tabs`는 `current/growth/profitability/earnings/stability/valuation`을
-가진다. 입력 bundle은 ClickHouse의 최대 520개 종목/SPY 일봉과 최근 42개월 SEC 실제 실적,
-Yahoo 예상 실적을 bounded 조회한다. Yahoo table이 아직 비어 있거나 선택적 원천 조회가 실패하면
+가진다. 입력 bundle은 ClickHouse의 최대 520개 종목/SPY 일봉과 2021년 이후 SEC 실제 실적,
+ClickHouse에 실제 적재된 Yahoo 예상 실적을 bounded 조회한다. Yahoo는 과거 실제 실적을 대체하거나
+수집 전 과거 컨센서스를 추정하지 않는다. Yahoo table이 아직 비어 있거나 선택적 원천 조회가 실패하면
 route 자체를 실패시키지 않고 missing data로 남기며, 검증된 문장은 없는 숫자를 만들지 않는다.
 
 `/evidence`는 기업저널 panel 전용 읽기 계약으로 분기 재무, SEC/Yahoo 실적, 최대 520개 일봉을
