@@ -158,6 +158,9 @@ source, capture timestamp를 보내지 않으며 서버가 검증·보강한 fil
 가상계좌 스냅샷과 `/ws/paper/account` 연결은 앱 최상위 `PaperAccountProvider`가 한 번만
 소유한다. 보유종목 표, 듀얼 포트폴리오, 개인 히트맵, 차트 commentary와 가상계좌 패널은
 이 동일한 스냅샷을 변환해 읽으며 프런트 고정 portfolio/performance fixture를 만들지 않는다.
+백엔드는 비억제 legacy 계좌를 첫 조회에서 `diversified-us-v2`로 자동 전환하므로 프런트는
+별도 적용 버튼을 표시하지 않는다. 기본 구성은 10종목·7섹터, 17개 체결과 최근 일별
+평가곡선을 포함한다.
 성과 API의 `dataOrigin=seeded-demo|account-history`로만 `DEMO DATA` 배지를 결정한다.
 현재 차트 종목의 양수
 보유수량과 평균 매입가가 존재하면 가격 pane에 금색 점선을 그리고 오른쪽 가격축의

@@ -210,7 +210,7 @@ def _paper_portfolio_payload(app: Any, repository: Any, user_sub: str, snapshot:
         "simulation": bool(run_id),
         "runId": run_id,
         "account": {
-            "alias": "7섹터 균형형 가상계좌",
+            "alias": "10종목 7섹터 균형형 가상계좌",
             "market": "overseas",
             "currency": "USD",
             "cashForeign": account.get("cash_balance"),

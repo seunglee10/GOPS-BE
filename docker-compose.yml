@@ -1544,7 +1544,7 @@ services:
       AUTH_COOKIE_SAMESITE: "${AUTH_COOKIE_SAMESITE:-lax}"
       GOPS_SIMULATOR_URL: "${GOPS_SIMULATOR_URL:-http://host.docker.internal:8765}"
       PAPER_REPOSITORY: "${PAPER_REPOSITORY:-postgres}"
-      PAPER_ACCOUNT_SEED_PROFILE: "${PAPER_ACCOUNT_SEED_PROFILE:-diversified-us-v1}"
+      PAPER_ACCOUNT_SEED_PROFILE: "${PAPER_ACCOUNT_SEED_PROFILE:-diversified-us-v2}"
       GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
       GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-}"
       GOOGLE_OAUTH_SECRET_NAME: "${GOOGLE_OAUTH_SECRET_NAME:-}"
@@ -1814,7 +1814,7 @@ services:
     environment:
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
       GOPS_SIMULATOR_URL: "${GOPS_SIMULATOR_URL:-http://host.docker.internal:8765}"
-      PAPER_ACCOUNT_SEED_PROFILE: "${PAPER_ACCOUNT_SEED_PROFILE:-diversified-us-v1}"
+      PAPER_ACCOUNT_SEED_PROFILE: "${PAPER_ACCOUNT_SEED_PROFILE:-diversified-us-v2}"
       SIMULATION_MATCHER_IDLE_SECONDS: "${SIMULATION_MATCHER_IDLE_SECONDS:-0.25}"
       SIMULATION_MATCHER_BATCH_SIZE: "${SIMULATION_MATCHER_BATCH_SIZE:-50000}"
     command: ["python", "-u", "systems/order/pods/simulation-paper-matcher/main.py"]

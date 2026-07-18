@@ -392,7 +392,7 @@ lock serializes the compare/upsert operation: poll-only timestamp changes do not
 history, while changed positions, cash, valuations, or transaction states remain durable.
 
 Persistent paper trading requires `0006_paper_trading.sql`; shared SIM ownership and the
-`diversified-us-v1` seed require `0018_shared_paper_simulation_account.sql`. Apply migrations
+`diversified-us-v2` seed requires `0018_shared_paper_simulation_account.sql`. Apply migrations
 before backend, order-worker/simulation matcher, simulator, and frontend in that order.
 `PAPER_ACCOUNT_SEED_PROFILE=none` is reserved for tests and emergency rollback.
 

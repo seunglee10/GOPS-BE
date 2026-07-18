@@ -223,15 +223,21 @@ class PaperTradingRoutesTest(unittest.TestCase):
 
         account_positions = {row["symbol"]: row for row in account["positions"]}
         holding_positions = {row["symbol"]: row for row in holdings["positions"]}
-        self.assertEqual(set(account_positions), {"GOOGL", "MSFT", "JPM", "XOM", "JNJ", "COST", "HD"})
+        self.assertEqual(
+            set(account_positions),
+            {"GOOGL", "MSFT", "JPM", "XOM", "JNJ", "COST", "HD", "NVDA", "AMZN", "WMT"},
+        )
         for symbol in account_positions:
             self.assertEqual(account_positions[symbol]["qty"], holding_positions[symbol]["quantity"])
             self.assertEqual(account_positions[symbol]["average_price"], holding_positions[symbol]["averagePrice"])
             self.assertEqual(account_positions[symbol]["market_value"], holding_positions[symbol]["marketValueForeign"])
-        self.assertEqual(account["account"]["equity"], 104793.52)
+        self.assertEqual(account["account"]["equity"], 105053.52)
         self.assertEqual(performance["dataOrigin"], "seeded-demo")
-        self.assertEqual(performance["portfolio"]["points"][-1]["portfolioValue"], 104793.52)
-        self.assertEqual(performance["portfolio"]["points"][-1]["holdingsCostBasis"], 79183.38)
+        self.assertEqual(performance["portfolio"]["points"][-1]["portfolioValue"], 105053.52)
+        self.assertEqual(performance["portfolio"]["points"][-1]["holdingsCostBasis"], 91203.38)
+        weekly = self.client.get("/api/account/performance?range=1W").json()
+        self.assertEqual(weekly["status"], "ready")
+        self.assertGreaterEqual(len(weekly["portfolio"]["points"]), 2)
 
         submitted = self.submit(payload(symbol="GOOGL", qty="1", price="200"), key="after-seed").json()
         self.repository.match_quote(
@@ -240,6 +246,22 @@ class PaperTradingRoutesTest(unittest.TestCase):
         )
         self.assertEqual(self.client.get(f"/api/paper/orders/{submitted['order_id']}").json()["status"], "filled")
         self.assertEqual(self.client.get("/api/account/performance?range=ALL").json()["dataOrigin"], "account-history")
+
+    def test_default_demo_profile_automatically_replaces_only_current_generation(self):
+        self.submit(payload(symbol="AAPL", qty="1", price="100"), key="legacy-order")
+        before = self.client.get("/api/paper/account").json()
+
+        self.repository.seed_profile = SEED_PROFILE
+        response = self.client.get("/api/paper/account")
+
+        self.assertEqual(response.status_code, 200)
+        applied = response.json()
+        self.assertEqual(applied["account"]["generation"], before["account"]["generation"] + 1)
+        self.assertEqual(applied["account"]["seed_profile"], SEED_PROFILE)
+        self.assertEqual(len(applied["positions"]), 10)
+        all_orders = self.client.get("/api/paper/orders?include_previous=true&limit=500").json()["orders"]
+        self.assertEqual(len(all_orders), len(self.repository.orders))
+        self.assertTrue(any(order["symbol"] == "AAPL" for order in all_orders))
 
 
 if __name__ == "__main__":

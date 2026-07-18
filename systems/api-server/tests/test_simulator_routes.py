@@ -233,7 +233,10 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["source"], "paper-shared")
-        self.assertEqual({item["symbol"] for item in payload["positions"]}, {"GOOGL", "MSFT", "JPM", "XOM", "JNJ", "COST", "HD"})
+        self.assertEqual(
+            {item["symbol"] for item in payload["positions"]},
+            {"GOOGL", "MSFT", "JPM", "XOM", "JNJ", "COST", "HD", "NVDA", "AMZN", "WMT"},
+        )
         self.assertIn("7섹터", payload["account"]["alias"])
         self.assertEqual(payload["asOf"], "2026-07-15T00:00:00+09:00")
 

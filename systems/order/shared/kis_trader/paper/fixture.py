@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any, Final
 
 
-SEED_PROFILE: Final = "diversified-us-v1"
+SEED_PROFILE: Final = "diversified-us-v2"
 DISABLED_SEED_PROFILES: Final = frozenset({"", "none", "off", "disabled"})
 
 
@@ -84,6 +84,24 @@ DEMO_HOLDINGS: Final = (
         Decimal("25.47"), Decimal("14.74"), Decimal("326.31"), Decimal("439.37"),
         Decimal("2.45"), Decimal("9.20"), Decimal("-0.79"),
     ),
+    DemoHolding(
+        "NVDA", "NVIDIA Corporation", "NASDAQ", "Information Technology",
+        "Semiconductors", Decimal("20"), Decimal("175.00"), Decimal("181.50"),
+        Decimal("52.40"), Decimal("3.46"), Decimal("86.62"), Decimal("195.95"),
+        Decimal("0.02"), Decimal("0.04"), Decimal("1.24"),
+    ),
+    DemoHolding(
+        "AMZN", "Amazon.com, Inc.", "NASDAQ", "Consumer Discretionary",
+        "Broadline Retail", Decimal("15"), Decimal("228.00"), Decimal("225.00"),
+        Decimal("35.60"), Decimal("6.32"), Decimal("151.61"), Decimal("242.52"),
+        None, None, Decimal("-0.65"),
+    ),
+    DemoHolding(
+        "WMT", "Walmart Inc.", "NASDAQ", "Consumer Staples",
+        "Consumer Staples Merchandise Retail", Decimal("50"), Decimal("102.00"), Decimal("104.50"),
+        Decimal("40.80"), Decimal("2.56"), Decimal("78.98"), Decimal("106.95"),
+        Decimal("0.90"), Decimal("0.94"), Decimal("0.58"),
+    ),
 )
 
 
@@ -112,15 +130,26 @@ DEMO_FILLS: Final = (
     _fill("2026-06-25T19:30:00Z", "GOOGL", "sell", "12", "190.00", "104520.00"),
     _fill("2026-07-02T19:30:00Z", "XOM", "sell", "15", "118.00", "104300.00"),
     _fill("2026-07-08T19:30:00Z", "HD", "sell", "6", "375.00", "104793.52"),
+    _fill("2026-07-09T19:30:00Z", "NVDA", "buy", "20", "175.00", "104920.00"),
+    _fill("2026-07-10T19:30:00Z", "AMZN", "buy", "20", "228.00", "104780.00"),
+    _fill("2026-07-13T19:30:00Z", "AMZN", "sell", "5", "238.00", "105020.00"),
+    _fill("2026-07-14T19:30:00Z", "WMT", "buy", "50", "102.00", "104870.00"),
 )
 
 DEMO_STARTING_CASH: Final = Decimal("100000.00")
-DEMO_FINAL_CASH: Final = Decimal("21071.32")
-DEMO_HOLDINGS_COST: Final = Decimal("79183.38")
-DEMO_MARKET_VALUE: Final = Decimal("83722.20")
-DEMO_UNREALIZED_PNL: Final = Decimal("4538.82")
-DEMO_REALIZED_PNL: Final = Decimal("254.70")
-DEMO_EQUITY: Final = Decimal("104793.52")
+DEMO_FINAL_CASH: Final = Decimal("9101.32")
+DEMO_HOLDINGS_COST: Final = Decimal("91203.38")
+DEMO_MARKET_VALUE: Final = Decimal("95952.20")
+DEMO_UNREALIZED_PNL: Final = Decimal("4748.82")
+DEMO_REALIZED_PNL: Final = Decimal("304.70")
+DEMO_EQUITY: Final = Decimal("105053.52")
+
+DEMO_DAILY_EQUITY: Final = (
+    (datetime.fromisoformat("2026-07-15T20:00:00+00:00"), Decimal("104980.00")),
+    (datetime.fromisoformat("2026-07-16T20:00:00+00:00"), Decimal("105110.00")),
+    (datetime.fromisoformat("2026-07-17T20:00:00+00:00"), Decimal("104990.00")),
+    (datetime.fromisoformat("2026-07-18T04:00:00+00:00"), DEMO_EQUITY),
+)
 
 HOLDING_BY_SYMBOL: Final = {holding.symbol: holding for holding in DEMO_HOLDINGS}
 
@@ -221,4 +250,35 @@ def seed_snapshot_history() -> list[tuple[datetime, dict[str, Any]]]:
         rendered_after["snapshotPhase"] = "after"
         history.extend(((before_at, before), (fill.filled_at, rendered_after)))
         previous = rendered_after
+    for source_as_of, equity in DEMO_DAILY_EQUITY:
+        market_value = equity - DEMO_FINAL_CASH
+        price_scale = market_value / DEMO_MARKET_VALUE
+        positions = [
+            {
+                "symbol": holding.symbol,
+                "quantity": holding.quantity,
+                "averagePrice": holding.average_price,
+                "currentPrice": holding.fallback_price * price_scale,
+                "marketValueForeign": holding.quantity * holding.fallback_price * price_scale,
+                "purchaseAmountForeign": holding.quantity * holding.average_price,
+                "realizedPnlForeign": Decimal("0"),
+            }
+            for holding in DEMO_HOLDINGS
+        ]
+        unrealized = market_value - DEMO_HOLDINGS_COST
+        history.append((source_as_of, {
+            "asOf": source_as_of.isoformat(),
+            "source": "seeded-demo",
+            "seedProfile": SEED_PROFILE,
+            "valuationBasis": "fixture_mark_to_market",
+            "snapshotPhase": "daily-close",
+            "account": {
+                "cashForeign": DEMO_FINAL_CASH,
+                "stockValueForeign": market_value,
+                "totalValueForeign": equity,
+                "unrealizedPnlForeign": unrealized,
+                "unrealizedPnlRate": unrealized / DEMO_HOLDINGS_COST * Decimal("100"),
+            },
+            "positions": positions,
+        }))
     return history

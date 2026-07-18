@@ -184,10 +184,12 @@ class PaperTradingRepositoryTest(unittest.TestCase):
         self.assertEqual(snapshot["account"]["cash_balance"], DEMO_FINAL_CASH)
         self.assertEqual(snapshot["account"]["realized_pnl"], DEMO_REALIZED_PNL)
         self.assertEqual(snapshot["account"]["seed_profile"], SEED_PROFILE)
-        self.assertEqual(len(positions), 7)
+        self.assertEqual(len(positions), 10)
+        self.assertEqual(len({holding.sector for holding in DEMO_HOLDINGS}), 7)
         self.assertEqual(len(repository.orders), len(DEMO_FILLS))
-        self.assertEqual(len(repository.portfolio_history), len(DEMO_FILLS) * 2)
-        self.assertEqual(repository.portfolio_history[-1]["payload"]["snapshotPhase"], "after")
+        self.assertGreaterEqual(len(repository.portfolio_history), len(DEMO_FILLS) * 2 + 4)
+        self.assertEqual(repository.portfolio_history[-1]["payload"]["snapshotPhase"], "daily-close")
+        self.assertEqual(repository.portfolio_history[-1]["payload"]["account"]["totalValueForeign"], DEMO_EQUITY)
         self.assertEqual(
             sum((position["qty"] * position["average_price"] for position in positions.values()), Decimal("0")),
             DEMO_HOLDINGS_COST,
@@ -225,6 +227,32 @@ class PaperTradingRepositoryTest(unittest.TestCase):
         self.assertIsNone(reopened["account"]["seed_profile"])
         self.assertIsNotNone(reopened["account"]["seed_suppressed_at"])
         self.assertEqual(reopened["positions"], [])
+
+    def test_legacy_account_automatically_moves_to_default_demo_profile(self):
+        repository = InMemoryPaperTradingRepository()
+        original_order = repository.create_order(
+            user_id=self.user_id,
+            idempotency_key_hash="legacy-order",
+            body_hash="legacy-order",
+            request=order_request(symbol="AAPL", qty="1", price="100"),
+        ).order
+        old_generation = repository.account_snapshot(self.user_id)["account"]["generation"]
+        old_order_ids = set(repository.orders)
+
+        repository.seed_profile = SEED_PROFILE
+        applied = repository.ensure_account(self.user_id)
+        reopened = repository.ensure_account(self.user_id)
+
+        self.assertEqual(applied["account"]["generation"], old_generation + 1)
+        self.assertEqual(reopened["account"]["generation"], applied["account"]["generation"])
+        self.assertEqual(applied["account"]["seed_profile"], SEED_PROFILE)
+        self.assertEqual(len(applied["positions"]), 10)
+        self.assertTrue(old_order_ids.issubset(repository.orders))
+        self.assertEqual(repository.get_order(self.user_id, original_order["order_id"])["status"], "cancelled")
+        self.assertEqual(
+            len(repository.list_orders(self.user_id, include_previous=True, limit=500)),
+            len(DEMO_FILLS) + 1,
+        )
 
     def test_simulation_limit_uses_only_future_replay_sequence(self):
         created = self.repository.create_order(

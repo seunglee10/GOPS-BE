@@ -375,72 +375,18 @@ class PostgresPaperTradingRepository:
             raise PaperOrderError("starting_cash must be positive")
         with self._connect() as conn:
             with conn.transaction():
-                account, _run = self._ensure_account(conn, user_id, for_update=True)
-                generation = account["current_generation"]
-                pending = conn.execute(
-                    """
-                    SELECT * FROM paper_orders
-                    WHERE user_id = %s AND generation = %s AND status = 'pending'
-                    FOR UPDATE
-                    """,
-                    (user_id, generation),
-                ).fetchall()
-                for row in pending:
-                    conn.execute(
-                        """
-                        UPDATE paper_orders
-                        SET status = 'cancelled', reason = 'account_reset',
-                            cancelled_at = now(), updated_at = now()
-                        WHERE order_id = %s
-                        """,
-                        (row["order_id"],),
-                    )
-                    cancelled = {**dict(row), "status": CANCELLED_STATUS, "reason": "account_reset"}
-                    self._append_event(conn, cancelled, "order.cancelled", CANCELLED_STATUS, "account_reset")
-                conn.execute(
-                    """
-                    UPDATE paper_positions SET reserved_qty = 0, updated_at = now()
-                    WHERE user_id = %s AND generation = %s
-                    """,
-                    (user_id, generation),
-                )
-                conn.execute(
-                    """
-                    UPDATE paper_account_runs
-                    SET reserved_cash = 0, status = 'archived', ended_at = now()
-                    WHERE user_id = %s AND generation = %s
-                    """,
-                    (user_id, generation),
-                )
-                next_generation = generation + 1
-                conn.execute(
-                    """
-                    INSERT INTO paper_account_runs (
-                        user_id, generation, starting_cash, cash_balance, reserved_cash, status
-                    ) VALUES (%s, %s, %s, %s, 0, 'active')
-                    """,
-                    (user_id, next_generation, starting_cash, starting_cash),
-                )
-                conn.execute(
-                    """
-                    UPDATE paper_accounts
-                    SET current_generation = %s,
-                        seed_profile = NULL,
-                        seeded_at = NULL,
-                        seed_suppressed_at = now(),
-                        updated_at = now()
-                    WHERE user_id = %s
-                    """,
-                    (next_generation, user_id),
-                )
-                new_run = self._run(conn, user_id, next_generation)
-                self._append_ledger(
+                account, run = self._ensure_account(
                     conn,
                     user_id,
-                    next_generation,
-                    new_run,
-                    "account.reset",
-                    cash_delta=starting_cash,
+                    for_update=True,
+                    apply_seed=False,
+                )
+                self._rotate_account(
+                    conn,
+                    user_id,
+                    starting_cash,
+                    suppress_seed=True,
+                    current=(account, run),
                 )
         return self.account_snapshot(user_id)
 
@@ -663,6 +609,7 @@ class PostgresPaperTradingRepository:
         user_id: str,
         *,
         for_update: bool = False,
+        apply_seed: bool = True,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         created = conn.execute(
             """
@@ -695,7 +642,8 @@ class PostgresPaperTradingRepository:
                 "account.opened",
                 cash_delta=self.default_starting_cash,
             )
-        self._maybe_seed_account(conn, dict(account), dict(run))
+        if apply_seed:
+            self._maybe_seed_account(conn, dict(account), dict(run))
         account = conn.execute(
             f"SELECT * FROM paper_accounts WHERE user_id = %s{' FOR UPDATE' if for_update else ''}",
             (user_id,),
@@ -715,17 +663,21 @@ class PostgresPaperTradingRepository:
         account = dict(conn.execute(
             "SELECT * FROM paper_accounts WHERE user_id = %s FOR UPDATE", (account["user_id"],)
         ).fetchone())
-        if account.get("seed_profile") or account.get("seed_suppressed_at"):
+        if account.get("seed_suppressed_at") or account.get("seed_profile") == SEED_PROFILE:
             return
         user_id = account["user_id"]
         generation = account["current_generation"]
         state = conn.execute(
             """
             SELECT
-              EXISTS(SELECT 1 FROM paper_orders WHERE user_id = %s) AS has_orders,
-              EXISTS(SELECT 1 FROM paper_positions WHERE user_id = %s AND qty > 0) AS has_positions
+              EXISTS(
+                SELECT 1 FROM paper_orders WHERE user_id = %s AND generation = %s
+              ) AS has_orders,
+              EXISTS(
+                SELECT 1 FROM paper_positions WHERE user_id = %s AND generation = %s AND qty > 0
+              ) AS has_positions
             """,
-            (user_id, user_id),
+            (user_id, generation, user_id, generation),
         ).fetchone()
         current_run = self._run(conn, user_id, generation, for_update=True)
         if (
@@ -733,7 +685,14 @@ class PostgresPaperTradingRepository:
             or current_run["cash_balance"] != self.default_starting_cash
             or current_run["reserved_cash"] != 0
         ):
-            return
+            account, current_run = self._rotate_account(
+                conn,
+                user_id,
+                self.default_starting_cash,
+                suppress_seed=False,
+                current=(account, current_run),
+            )
+            generation = account["current_generation"]
         conn.execute(
             """
             UPDATE paper_account_runs SET cash_balance = %s, reserved_cash = 0
@@ -741,7 +700,10 @@ class PostgresPaperTradingRepository:
             """,
             (DEMO_FINAL_CASH, user_id, generation),
         )
-        realized_by_symbol = {"GOOGL": Decimal("211.20"), "XOM": Decimal("127.50"), "HD": Decimal("-84.00")}
+        realized_by_symbol = {
+            "GOOGL": Decimal("211.20"), "XOM": Decimal("127.50"),
+            "HD": Decimal("-84.00"), "AMZN": Decimal("50.00"),
+        }
         for holding in DEMO_HOLDINGS:
             conn.execute(
                 """
@@ -759,7 +721,8 @@ class PostgresPaperTradingRepository:
             )
         seed_cash = self.default_starting_cash
         for index, fill in enumerate(DEMO_FILLS, start=1):
-            order_id = f"paper_seed_{uuid5(NAMESPACE_URL, f'{SEED_PROFILE}:{user_id}:{index}').hex}"
+            seed_key = f"{SEED_PROFILE}:{user_id}:{generation}:{index}"
+            order_id = f"paper_seed_{uuid5(NAMESPACE_URL, seed_key).hex}"
             conn.execute(
                 """
                 INSERT INTO paper_orders (
@@ -776,8 +739,8 @@ class PostgresPaperTradingRepository:
                 (
                     order_id, user_id, generation, fill.symbol, fill.side, fill.quantity, fill.price,
                     HOLDING_BY_SYMBOL[fill.symbol].exchange, SEED_PROFILE,
-                    fill.quantity, fill.price, f"seed:{SEED_PROFILE}:{index}", fill.filled_at,
-                    f"seed:{SEED_PROFILE}:{index}", SEED_PROFILE,
+                    fill.quantity, fill.price, f"seed:{SEED_PROFILE}:{generation}:{index}", fill.filled_at,
+                    f"seed:{SEED_PROFILE}:{generation}:{index}", SEED_PROFILE,
                     fill.filled_at, fill.filled_at, fill.filled_at,
                 ),
             )
@@ -798,7 +761,7 @@ class PostgresPaperTradingRepository:
                 ON CONFLICT (entry_id) DO NOTHING
                 """,
                 (
-                    f"paper_seed_led_{uuid5(NAMESPACE_URL, f'{SEED_PROFILE}:{user_id}:ledger:{index}').hex}",
+                    f"paper_seed_led_{uuid5(NAMESPACE_URL, f'{seed_key}:ledger').hex}",
                     user_id, generation, order_id, cash_delta, seed_cash,
                     Jsonb({"seed_profile": SEED_PROFILE}), fill.filled_at,
                 ),
@@ -813,7 +776,8 @@ class PostgresPaperTradingRepository:
             )
         conn.execute(
             """
-            UPDATE paper_accounts SET seed_profile = %s, seeded_at = now(), updated_at = now()
+            UPDATE paper_accounts
+            SET seed_profile = %s, seeded_at = now(), seed_suppressed_at = NULL, updated_at = now()
             WHERE user_id = %s
             """,
             (SEED_PROFILE, user_id),
@@ -825,6 +789,89 @@ class PostgresPaperTradingRepository:
         )
         if seed_cash != DEMO_FINAL_CASH:
             raise AssertionError("demo fixture cash invariant failed")
+
+    def _rotate_account(
+        self,
+        conn: psycopg.Connection,
+        user_id: str,
+        starting_cash: Decimal,
+        *,
+        suppress_seed: bool,
+        current: tuple[dict[str, Any], dict[str, Any]] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        account, _run = current or self._ensure_account(conn, user_id, for_update=True)
+        generation = account["current_generation"]
+        reason = "account_reset" if suppress_seed else "account_demo_profile"
+        pending = conn.execute(
+            """
+            SELECT * FROM paper_orders
+            WHERE user_id = %s AND generation = %s AND status = 'pending'
+            FOR UPDATE
+            """,
+            (user_id, generation),
+        ).fetchall()
+        for row in pending:
+            conn.execute(
+                """
+                UPDATE paper_orders
+                SET status = 'cancelled', reason = %s,
+                    cancelled_at = now(), updated_at = now()
+                WHERE order_id = %s
+                """,
+                (reason, row["order_id"]),
+            )
+            cancelled = {**dict(row), "status": CANCELLED_STATUS, "reason": reason}
+            self._append_event(conn, cancelled, "order.cancelled", CANCELLED_STATUS, reason)
+        conn.execute(
+            """
+            UPDATE paper_positions SET reserved_qty = 0, updated_at = now()
+            WHERE user_id = %s AND generation = %s
+            """,
+            (user_id, generation),
+        )
+        conn.execute(
+            """
+            UPDATE paper_account_runs
+            SET reserved_cash = 0, status = 'archived', ended_at = now()
+            WHERE user_id = %s AND generation = %s
+            """,
+            (user_id, generation),
+        )
+        next_generation = generation + 1
+        conn.execute(
+            """
+            INSERT INTO paper_account_runs (
+                user_id, generation, starting_cash, cash_balance, reserved_cash, status
+            ) VALUES (%s, %s, %s, %s, 0, 'active')
+            """,
+            (user_id, next_generation, starting_cash, starting_cash),
+        )
+        conn.execute(
+            """
+            UPDATE paper_accounts
+            SET current_generation = %s,
+                seed_profile = NULL,
+                seeded_at = NULL,
+                seed_suppressed_at = CASE WHEN %s THEN now() ELSE NULL END,
+                updated_at = now()
+            WHERE user_id = %s
+            """,
+            (next_generation, suppress_seed, user_id),
+        )
+        new_run = self._run(conn, user_id, next_generation)
+        self._append_ledger(
+            conn,
+            user_id,
+            next_generation,
+            new_run,
+            "account.reset" if suppress_seed else "account.seed_profile_upgraded",
+            cash_delta=starting_cash,
+        )
+        updated_account = conn.execute(
+            "SELECT * FROM paper_accounts WHERE user_id = %s FOR UPDATE",
+            (user_id,),
+        ).fetchone()
+        return dict(updated_account), dict(new_run)
 
     def _run(
         self,

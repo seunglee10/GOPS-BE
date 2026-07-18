@@ -274,29 +274,12 @@ class InMemoryPaperTradingRepository:
         if starting_cash <= 0:
             raise PaperOrderError("starting_cash must be positive")
         with self._lock:
-            account, run = self._current(user_id)
-            old_generation = account["current_generation"]
-            for row in list(self.orders.values()):
-                if row["user_id"] != user_id or row["generation"] != old_generation or row["status"] != PENDING_STATUS:
-                    continue
-                self._release_reservation(row, run)
-                now = utc_now()
-                row.update(status=CANCELLED_STATUS, reason="account_reset", cancelled_at=now, updated_at=now)
-                self._append_event(row, "order.cancelled", CANCELLED_STATUS, "account_reset")
-            run.update(status="archived", reserved_cash=Decimal("0"), ended_at=utc_now())
-            next_generation = old_generation + 1
-            account["current_generation"] = next_generation
-            account["updated_at"] = utc_now()
-            account["seed_suppressed_at"] = utc_now()
-            account["seed_profile"] = None
-            account["seeded_at"] = None
-            self.runs[(user_id, next_generation)] = self._new_run(starting_cash)
-            self._append_ledger(
+            account, run = self._ensure_account(user_id, apply_seed=False)
+            self._rotate_account(
                 user_id,
-                next_generation,
-                self.runs[(user_id, next_generation)],
-                "account.reset",
-                cash_delta=starting_cash,
+                starting_cash,
+                suppress_seed=True,
+                current=(account, run),
             )
             return self.account_snapshot(user_id)
 
@@ -431,7 +414,12 @@ class InMemoryPaperTradingRepository:
         with self._lock:
             return sorted({row["symbol"] for row in self.positions.values() if row["qty"] > 0})
 
-    def _ensure_account(self, user_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _ensure_account(
+        self,
+        user_id: str,
+        *,
+        apply_seed: bool = True,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         account = self.accounts.get(user_id)
         if account is None:
             now = utc_now()
@@ -449,28 +437,46 @@ class InMemoryPaperTradingRepository:
             self.accounts[user_id] = account
             self.runs[(user_id, 1)] = run
             self._append_ledger(user_id, 1, run, "account.opened", cash_delta=self.default_starting_cash)
-        self._maybe_seed_account(account, self.runs[(user_id, account["current_generation"])])
+        if apply_seed:
+            self._maybe_seed_account(account, self.runs[(user_id, account["current_generation"])])
         return account, self.runs[(user_id, account["current_generation"])]
 
     def _maybe_seed_account(self, account: dict[str, Any], run: dict[str, Any]) -> None:
         if self.seed_profile != SEED_PROFILE:
             return
-        if account.get("seed_profile") or account.get("seed_suppressed_at"):
+        if account.get("seed_suppressed_at") or account.get("seed_profile") == SEED_PROFILE:
             return
         user_id = account["user_id"]
         generation = account["current_generation"]
-        has_orders = any(row["user_id"] == user_id for row in self.orders.values())
-        has_positions = any(
-            owner == user_id and row["qty"] > 0
-            for (owner, _generation, _symbol), row in self.positions.items()
+        has_orders = any(
+            row["user_id"] == user_id and row["generation"] == generation
+            for row in self.orders.values()
         )
-        if has_orders or has_positions or run["cash_balance"] != self.default_starting_cash or run["reserved_cash"] != 0:
-            return
+        has_positions = any(
+            owner == user_id and row_generation == generation and row["qty"] > 0
+            for (owner, row_generation, _symbol), row in self.positions.items()
+        )
+        if (
+            has_orders or has_positions
+            or run["cash_balance"] != self.default_starting_cash
+            or run["reserved_cash"] != 0
+        ):
+            account, run = self._rotate_account(
+                user_id,
+                self.default_starting_cash,
+                suppress_seed=False,
+                current=(account, run),
+            )
+            generation = account["current_generation"]
         run["cash_balance"] = DEMO_FINAL_CASH
         now = utc_now()
         account["seed_profile"] = SEED_PROFILE
         account["seeded_at"] = now
-        realized_by_symbol = {"GOOGL": Decimal("211.20"), "XOM": Decimal("127.50"), "HD": Decimal("-84.00")}
+        account["seed_suppressed_at"] = None
+        realized_by_symbol = {
+            "GOOGL": Decimal("211.20"), "XOM": Decimal("127.50"),
+            "HD": Decimal("-84.00"), "AMZN": Decimal("50.00"),
+        }
         for holding in DEMO_HOLDINGS:
             position = self._position(user_id, generation, holding.symbol)
             position.update(
@@ -482,7 +488,8 @@ class InMemoryPaperTradingRepository:
             )
         seed_cash = self.default_starting_cash
         for index, fill in enumerate(DEMO_FILLS, start=1):
-            order_id = f"paper_seed_{uuid5(NAMESPACE_URL, f'{SEED_PROFILE}:{user_id}:{index}').hex}"
+            seed_key = f"{SEED_PROFILE}:{user_id}:{generation}:{index}"
+            order_id = f"paper_seed_{uuid5(NAMESPACE_URL, seed_key).hex}"
             row = {
                 "order_id": order_id, "user_id": user_id, "generation": generation,
                 "market": "overseas", "symbol": fill.symbol, "side": fill.side,
@@ -493,7 +500,7 @@ class InMemoryPaperTradingRepository:
                 "seed_profile": SEED_PROFILE, "status": FILLED_STATUS, "filled_qty": fill.quantity,
                 "fill_price": fill.price, "quote_event_id": f"seed:{SEED_PROFILE}:{index}",
                 "quote_timestamp": fill.filled_at.isoformat(), "reason": None,
-                "idempotency_key_hash": f"seed:{SEED_PROFILE}:{index}", "body_hash": SEED_PROFILE,
+                "idempotency_key_hash": f"seed:{SEED_PROFILE}:{generation}:{index}", "body_hash": SEED_PROFILE,
                 "created_at": fill.filled_at, "updated_at": fill.filled_at,
                 "filled_at": fill.filled_at, "cancelled_at": None,
             }
@@ -503,7 +510,7 @@ class InMemoryPaperTradingRepository:
             cash_delta = fill.quantity * fill.price * (Decimal("-1") if fill.side == "buy" else Decimal("1"))
             seed_cash += cash_delta
             self.ledger.append({
-                "entry_id": f"paper_seed_led_{uuid5(NAMESPACE_URL, f'{SEED_PROFILE}:{user_id}:ledger:{index}').hex}",
+                "entry_id": f"paper_seed_led_{uuid5(NAMESPACE_URL, f'{seed_key}:ledger').hex}",
                 "user_id": user_id,
                 "generation": generation,
                 "order_id": order_id,
@@ -524,8 +531,51 @@ class InMemoryPaperTradingRepository:
         )
         if seed_cash != DEMO_FINAL_CASH:
             raise AssertionError("demo fixture cash invariant failed")
-        if sum((row["realized_pnl"] for row in self.positions.values() if row["user_id"] == user_id), Decimal("0")) != DEMO_REALIZED_PNL:
+        if sum(
+            (
+                row["realized_pnl"]
+                for (owner, row_generation, _symbol), row in self.positions.items()
+                if owner == user_id and row_generation == generation
+            ),
+            Decimal("0"),
+        ) != DEMO_REALIZED_PNL:
             raise AssertionError("demo fixture realized P&L invariant failed")
+
+    def _rotate_account(
+        self,
+        user_id: str,
+        starting_cash: Decimal,
+        *,
+        suppress_seed: bool,
+        current: tuple[dict[str, Any], dict[str, Any]] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        account, run = current or self._current(user_id)
+        old_generation = account["current_generation"]
+        reason = "account_reset" if suppress_seed else "account_demo_profile"
+        for row in list(self.orders.values()):
+            if row["user_id"] != user_id or row["generation"] != old_generation or row["status"] != PENDING_STATUS:
+                continue
+            self._release_reservation(row, run)
+            now = utc_now()
+            row.update(status=CANCELLED_STATUS, reason=reason, cancelled_at=now, updated_at=now)
+            self._append_event(row, "order.cancelled", CANCELLED_STATUS, reason)
+        run.update(status="archived", reserved_cash=Decimal("0"), ended_at=utc_now())
+        next_generation = old_generation + 1
+        account["current_generation"] = next_generation
+        account["updated_at"] = utc_now()
+        account["seed_suppressed_at"] = utc_now() if suppress_seed else None
+        account["seed_profile"] = None
+        account["seeded_at"] = None
+        next_run = self._new_run(starting_cash)
+        self.runs[(user_id, next_generation)] = next_run
+        self._append_ledger(
+            user_id,
+            next_generation,
+            next_run,
+            "account.reset" if suppress_seed else "account.seed_profile_upgraded",
+            cash_delta=starting_cash,
+        )
+        return account, next_run
 
     def _current(self, user_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
         return self._ensure_account(user_id)

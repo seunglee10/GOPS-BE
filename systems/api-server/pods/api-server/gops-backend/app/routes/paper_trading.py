@@ -24,7 +24,7 @@ from app.services.portfolio_market_enrichment import enrich_holdings_with_market
 from kis_trader.domain.commands import validate_order_request_payload
 from kis_trader.domain.status import OrderContractError
 from kis_trader.paper import InMemoryPaperTradingRepository, PostgresPaperTradingRepository
-from kis_trader.paper.fixture import HOLDING_BY_SYMBOL, configured_seed_profile, fallback_price
+from kis_trader.paper.fixture import HOLDING_BY_SYMBOL, SEED_PROFILE, configured_seed_profile, fallback_price
 from kis_trader.paper.models import (
     PaperCapacityError,
     PaperIdempotencyConflictError,
@@ -534,7 +534,7 @@ def _fixture_position_fields(symbol: str, quantity: Decimal) -> dict[str, Any]:
         "annual_dividend": holding.dividend_per_share * quantity if holding.dividend_per_share is not None else None,
         "day_pnl_rate": day_pnl_rate,
         "day_pnl": day_pnl,
-        "metadata_source": "diversified-us-v1",
+        "metadata_source": SEED_PROFILE,
     }
 
 
