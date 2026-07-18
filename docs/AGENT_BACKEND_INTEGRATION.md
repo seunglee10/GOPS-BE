@@ -133,6 +133,10 @@ quote replay만 소유하고, 계좌·주문·가격조건은 Postgres paper 원
 시작 스크립트 완료 상태는 `LIVE/idle`이다. 프런트 플레이 버튼의
 `POST /api/simulator/action {"action":"start"}`가 새 `runId` 준비와 `running` 전환을
 한 번에 수행한다. 스크립트나 backend 연결만으로 simulation run을 만들거나 틱을 진행하지 않는다.
+Simulator status의 `symbols[]`는 replay manifest의 23종목을 반환한다. 각 항목의
+`price`는 cursor까지 관측된 마지막 원본 체결가이고, `changePercent`는 같은 run에서
+처음 관측된 원본 체결가 대비 변화율이다. 아직 체결을 관측하지 못한 종목은 둘 다 null이며,
+재시작 시 이전 run의 값은 제거한다.
 
 `GET /api/charts/candles`는 replay 시작 전 정상 과거 봉과 현재 가상시각까지의 replay
 봉만 합친다. `/ws/charts`도 simulator candle snapshot을 묶어서 보내며 실시간 Redis

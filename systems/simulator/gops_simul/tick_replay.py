@@ -107,6 +107,7 @@ class ReplayController:
         self._emitted: deque[ReplayEvent] = deque(maxlen=100_000)
         self._latest_quotes: dict[str, dict[str, object]] = {}
         self._latest_trades: dict[str, float] = {}
+        self._opening_trades: dict[str, float] = {}
         self._daily_candles: dict[str, dict[str, dict[str, object]]] = {}
         self._restore_state()
         self._status_snapshot = self._status()
@@ -241,7 +242,7 @@ class ReplayController:
             self.state_store.delete(self.run_id)
         self.mode, self.state, self.run_id = "simulation", "ready", str(uuid.uuid4())
         self.requested_speed, self.cursor, self.last_sequence = self.default_speed, DATASET_START, 0
-        self._emitted.clear(); self._latest_quotes.clear(); self._latest_trades.clear(); self._daily_candles.clear()
+        self._emitted.clear(); self._latest_quotes.clear(); self._latest_trades.clear(); self._opening_trades.clear(); self._daily_candles.clear()
         self._run_started_wall = None
         self._reset_anchor(); self._persist()
 
@@ -281,6 +282,7 @@ class ReplayController:
             }
         elif payload.get("T") == "t":
             price = _positive_float(payload.get("p"), "price")
+            self._opening_trades.setdefault(symbol, price)
             self._latest_trades[symbol] = price
             self._update_daily_candle(symbol, event, price)
 
@@ -351,6 +353,10 @@ class ReplayController:
         self._latest_quotes = dict(snapshot.get("latestQuotes") or {})
         self._latest_trades = dict(snapshot.get("latestTrades") or {})
         self._daily_candles = normalize_restored_daily_candles(snapshot.get("dailyCandles"))
+        self._opening_trades = normalize_restored_opening_trades(
+            snapshot.get("openingTrades"),
+            self._daily_candles,
+        )
         self._reset_anchor(); self._persist()
 
     def _persist(self) -> None:
@@ -358,7 +364,8 @@ class ReplayController:
             self.state_store.save(self.run_id, {"datasetId": self.source.dataset_id, "mode": self.mode, "state": self.state,
                 "virtualTime": self._format(self.cursor), "requestedSpeed": self.requested_speed,
                 "processedEventCount": self.last_sequence, "latestQuotes": self._latest_quotes,
-                "latestTrades": self._latest_trades, "dailyCandles": self._daily_candles})
+                "latestTrades": self._latest_trades, "openingTrades": self._opening_trades,
+                "dailyCandles": self._daily_candles})
 
     def _reset_anchor(self, *, now: float | None = None) -> None:
         self._anchor_wall = self.clock() if now is None else now; self._anchor_virtual = self.cursor
@@ -372,7 +379,16 @@ class ReplayController:
             "requestedSpeed": self.requested_speed, "effectiveSpeed": round(elapsed / wall if wall > 0 else 0.0, 3),
             "processedEventCount": self.last_sequence, "totalEventCount": self.source.total_events,
             "progress": round(min(1.0, elapsed / duration), 8), "lagMs": round(max(0.0, (target - self.cursor).total_seconds()) * 1000),
-            "symbols": [{"symbol": symbol, "price": self._latest_trades.get(symbol)} for symbol in REPLAY_SYMBOLS]}
+            "symbols": [self._symbol_status(symbol) for symbol in REPLAY_SYMBOLS]}
+
+    def _symbol_status(self, symbol: str) -> dict[str, object]:
+        price = self._latest_trades.get(symbol)
+        opening_price = self._opening_trades.get(symbol)
+        return {
+            "symbol": symbol,
+            "price": price,
+            "changePercent": replay_change_percent(opening_price, price),
+        }
 
     def _capture_status(self) -> dict[str, object]:
         self._status_snapshot = self._status()
@@ -402,6 +418,33 @@ def normalize_restored_daily_candles(value: object) -> dict[str, dict[str, dict[
             if isinstance(candle, dict)
         }
     return restored
+
+
+def normalize_restored_opening_trades(
+    value: object,
+    daily_candles: dict[str, dict[str, dict[str, object]]],
+) -> dict[str, float]:
+    source = value if isinstance(value, dict) else {}
+    restored: dict[str, float] = {}
+    for symbol in REPLAY_SYMBOLS:
+        opening_price = source.get(symbol)
+        if opening_price is None:
+            symbol_candles = daily_candles.get(symbol, {})
+            first_candle = next(iter(sorted(symbol_candles.items())), (None, None))[1]
+            opening_price = first_candle.get("open") if isinstance(first_candle, dict) else None
+        try:
+            numeric = float(opening_price)
+        except (TypeError, ValueError):
+            continue
+        if numeric > 0:
+            restored[symbol] = numeric
+    return restored
+
+
+def replay_change_percent(opening_price: float | None, current_price: float | None) -> float | None:
+    if opening_price is None or current_price is None or opening_price <= 0:
+        return None
+    return round((current_price / opening_price - 1.0) * 100.0, 6)
 
 
 def _positive_float(value: object, field: str) -> float:
