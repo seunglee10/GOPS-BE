@@ -168,10 +168,10 @@ LIVE KIS는 기존 limit-only 계약을 유지한다. 주문 조회·event·WebS
 영구 가상투자는 보유종목·가상계좌·듀얼 포트폴리오·성과·SIM 체결의 단일 진실 원천이며
 사용자 `sub`로 격리한다. `source=active`는 LIVE/SIM 모두 이 원장을 조회하고
 `source=kis`만 기존 KIS 보유종목을 조회한다. `PAPER_ACCOUNT_SEED_PROFILE` 기본값
-`diversified-us-v2`는 untouched 신규/기존 빈 계좌에 17개 체결, 최근 일별 평가곡선과
-10종목·7섹터 포트폴리오를 한 번 시드한다. 기존 비억제 계좌가 다른 profile이거나
+`diversified-us-v3`는 untouched 신규/기존 빈 계좌에 17개 체결, 3개 미체결 주문,
+최근 일별 평가곡선과 10종목·7섹터 포트폴리오를 한 번 시드한다. 기존 비억제 계좌가 다른 profile이거나
 거래·포지션을 가진 legacy 계좌이면 첫 조회에서 이전 generation과 거래내역을 보존하고,
-미체결만 취소한 새 generation에 `diversified-us-v2`를 자동 적용한다. 명시적 reset은 빈
+미체결만 취소한 새 generation에 `diversified-us-v3`를 자동 적용한다. 명시적 reset은 빈
 새 generation을 만들고 자동 재시드를 억제한다.
 `POST /api/paper/orders`는 `Idempotency-Key`를 필수로 받고 Postgres의 가상 현금과
 보유수량만 예약한다. KIS 주문 테이블, Outbox, broker adapter는 호출하지 않는다.

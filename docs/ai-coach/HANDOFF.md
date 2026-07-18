@@ -221,10 +221,12 @@ Null values remain null and render as `데이터 부족`, `표본 부족`, `확�
 `계산되지 않음`, `일정 확인 불가`, `유사 사례 부족`, or `데이터 연결 대기`. The
 engine never fabricates market values.
 
-The fixed UI fixture activates only when both `import.meta.env.DEV` and
-`VITE_AI_COACH_DEV_FIXTURE=true`. It is loaded through a DEV-only dynamic import, carries
-a visible `DEV FIXTURE` label, and is never written to Redis, ClickHouse, Kafka, PostgreSQL,
-or S3. Production has no fixture fallback.
+The fixed UI report activates in development when both `import.meta.env.DEV` and
+`VITE_AI_COACH_DEV_FIXTURE=true`. The same dynamically imported report is also used for an
+untouched `diversified-us-v3` paper account so its 10 holdings, 17 fills, 3 pending orders,
+sector weights, and guardrails remain coherent instead of showing an older archived report.
+Any current-generation order without `seed_profile` disables this seeded-account path. The
+fixed report is never written to Redis, ClickHouse, Kafka, PostgreSQL, or S3.
 
 The AI coach production component is lazy-loaded as its own frontend chunk so the AWS
 quality workflow's 512,000-byte JavaScript chunk budget remains enforced. The panel

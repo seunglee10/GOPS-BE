@@ -32,6 +32,8 @@ try:
     from app.main import create_app
     from app.recommendations.repository import InMemoryRecommendationRepository
     from app.services.portfolio_performance import build_portfolio_performance
+    from kis_trader.paper.fixture import DEMO_EQUITY, SEED_PROFILE
+    from kis_trader.paper.memory import InMemoryPaperTradingRepository
 except Exception as exc:  # pragma: no cover - dependency guard for lean envs
     pytest.skip(f"Portfolio performance tests are unavailable: {exc}", allow_module_level=True)
 
@@ -183,3 +185,39 @@ def test_daily_paper_history_filters_stale_kis_rows_before_selecting_day_latest(
     assert len(rows) == 1
     assert rows[0]["payload"]["source"] == "account-history"
     assert rows[0]["payload"]["account"]["unrealizedPnlRate"] == 5
+
+
+def test_seeded_performance_ignores_live_valuation_outlier_until_user_trades() -> None:
+    os.environ["AUTH_ENABLED"] = "false"
+    app = create_app()
+    paper_repository = InMemoryPaperTradingRepository(seed_profile=SEED_PROFILE)
+    paper_repository.ensure_account("dev-auth-disabled")
+    repository = InMemoryRecommendationRepository()
+    for row in paper_repository.portfolio_history:
+        repository.upsert_portfolio_snapshot("dev-auth-disabled", row["payload"])
+    repository.upsert_portfolio_snapshot(
+        "dev-auth-disabled",
+        {
+            "asOf": "2026-07-17T22:00:00Z",
+            "source": "paper-shared",
+            "account": {
+                "cashForeign": 8401.32,
+                "stockValueForeign": 120000,
+                "totalValueForeign": 128401.32,
+                "unrealizedPnlRate": 30,
+            },
+            "positions": [],
+        },
+    )
+    app.state.paper_trading_repository = paper_repository
+    app.state.recommendation_repository = repository
+    app.state.portfolio_performance_now_provider = lambda: datetime(2026, 7, 18, tzinfo=timezone.utc)
+    app.state.portfolio_benchmark_provider = lambda *_args: None
+
+    response = TestClient(app).get("/api/account/performance?range=1M")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["portfolio"]["points"][-1]["portfolioValue"] == float(DEMO_EQUITY)
+    values = [point["portfolioValue"] for point in payload["portfolio"]["points"]]
+    assert max(values) - min(values) < 1000

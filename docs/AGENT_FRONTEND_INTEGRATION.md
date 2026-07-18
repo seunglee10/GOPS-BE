@@ -19,7 +19,7 @@
 독립적으로 유지한다. 추천 API 실패 시에도 급등주와
 거래대금 목록 및 시장 검색은 유지한다.
 
-패널 상단의 `추천 로직 설정`은 목록과 같은 레벨의 패널 내부 탭이다. overlay, dialog,
+패널 상단의 `추천 로직 설정`은 목록과 같은 레벨의 패널 내부 탭이다. 설정 제목부터 가중치 편집기까지 페이지 전체가 하나의 세로 스크롤 영역을 사용한다. overlay, dialog,
 side rail 또는 장전/본장 selector를 만들지 않는다. 로직 탭은 활성 점수 프로필과 여섯
 근거 블록, 실제 세부 지표 및 포트폴리오 적합도 가중치는 캔버스가 아닌 직접 조작형
 비중 믹서로 표시한다. 상단 누적 바는 전체 100% 배분을 즉시 보여주고, 아래의 모든
@@ -158,10 +158,11 @@ source, capture timestamp를 보내지 않으며 서버가 검증·보강한 fil
 가상계좌 스냅샷과 `/ws/paper/account` 연결은 앱 최상위 `PaperAccountProvider`가 한 번만
 소유한다. 보유종목 표, 듀얼 포트폴리오, 개인 히트맵, 차트 commentary와 가상계좌 패널은
 이 동일한 스냅샷을 변환해 읽으며 프런트 고정 portfolio/performance fixture를 만들지 않는다.
-백엔드는 비억제 legacy 계좌를 첫 조회에서 `diversified-us-v2`로 자동 전환하므로 프런트는
-별도 적용 버튼을 표시하지 않는다. 기본 구성은 10종목·7섹터, 17개 체결과 최근 일별
-평가곡선을 포함한다.
-성과 API의 `dataOrigin=seeded-demo|account-history`로만 `DEMO DATA` 배지를 결정한다.
+백엔드는 비억제 legacy 계좌를 첫 조회에서 `diversified-us-v3`로 자동 전환하므로 프런트는
+별도 적용 버튼을 표시하지 않는다. 기본 구성은 NVDA를 제외한 10종목·7섹터, 17개 체결,
+3개 미체결 주문과 최근 일별 평가곡선을 포함한다. 시드 계좌의 성과 화면에는 별도 데모
+배지를 표시하지 않으며 실제 사용자 주문 전에는 실시간 평가와 섞이지 않은 고정 곡선을 사용한다.
+성과 API의 `dataOrigin=seeded-demo|account-history`는 내부 출처 판별에만 사용하고 화면 배지로 노출하지 않는다.
 현재 차트 종목의 양수
 보유수량과 평균 매입가가 존재하면 가격 pane에 금색 점선을 그리고 오른쪽 가격축의
 동일한 y 좌표에는 가격만 표시한다. 가격 라벨의 hover와 keyboard focus에서 종목,
@@ -570,8 +571,11 @@ On page 1, the selected fill and similar-case index are local UI state. A fill s
 selects one `reviewsByFillId` object so chart, missed checks, outcome, portfolio impact,
 and conditions change atomically. Price, volume, RSI, and MACD share the `T-60..T+20`
 relative axis, and today's path ends at its latest observation without a forecast.
-The dev fixture is loaded only by a DEV-only dynamic import when
-`VITE_AI_COACH_DEV_FIXTURE=true`; production has no fixture fallback.
+The fixed report module is loaded by a dynamic import when
+`VITE_AI_COACH_DEV_FIXTURE=true` in development. A production exception exists only for an
+untouched seeded paper account: while every current-generation order has `seed_profile`, the
+panel uses the matching `diversified-us-v3` portfolio report instead of a stale archived report.
+The first real user order disables that exception and restores the authenticated archive path.
 
 When the workspace does not already supply a `coachReport`, the panel makes one top-level
 authenticated request to `GET /api/ai-coach/reports/latest`. Child pages never fetch their

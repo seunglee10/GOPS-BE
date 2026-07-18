@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any, Final
 
 
-SEED_PROFILE: Final = "diversified-us-v2"
+SEED_PROFILE: Final = "diversified-us-v3"
 DISABLED_SEED_PROFILES: Final = frozenset({"", "none", "off", "disabled"})
 
 
@@ -39,6 +39,15 @@ class DemoFill:
     quantity: Decimal
     price: Decimal
     equity: Decimal
+
+
+@dataclass(frozen=True)
+class DemoPendingOrder:
+    created_at: datetime
+    symbol: str
+    side: str
+    quantity: Decimal
+    limit_price: Decimal
 
 
 DEMO_HOLDINGS: Final = (
@@ -85,10 +94,10 @@ DEMO_HOLDINGS: Final = (
         Decimal("2.45"), Decimal("9.20"), Decimal("-0.79"),
     ),
     DemoHolding(
-        "NVDA", "NVIDIA Corporation", "NASDAQ", "Information Technology",
-        "Semiconductors", Decimal("20"), Decimal("175.00"), Decimal("181.50"),
-        Decimal("52.40"), Decimal("3.46"), Decimal("86.62"), Decimal("195.95"),
-        Decimal("0.02"), Decimal("0.04"), Decimal("1.24"),
+        "AAPL", "Apple Inc.", "NASDAQ", "Information Technology",
+        "Technology Hardware, Storage & Peripherals", Decimal("20"), Decimal("210.00"), Decimal("215.00"),
+        Decimal("31.25"), Decimal("6.88"), Decimal("169.21"), Decimal("260.10"),
+        Decimal("0.48"), Decimal("1.04"), Decimal("0.35"),
     ),
     DemoHolding(
         "AMZN", "Amazon.com, Inc.", "NASDAQ", "Consumer Discretionary",
@@ -126,29 +135,54 @@ DEMO_FILLS: Final = (
     _fill("2026-04-14T19:30:00Z", "HD", "buy", "30", "389.00", "101760.00"),
     _fill("2026-05-06T19:30:00Z", "GOOGL", "buy", "36", "179.80", "103420.00"),
     _fill("2026-05-28T19:30:00Z", "MSFT", "buy", "18", "411.31", "102950.00"),
-    _fill("2026-06-12T19:30:00Z", "XOM", "buy", "30", "115.75", "104180.00"),
-    _fill("2026-06-25T19:30:00Z", "GOOGL", "sell", "12", "190.00", "104520.00"),
-    _fill("2026-07-02T19:30:00Z", "XOM", "sell", "15", "118.00", "104300.00"),
-    _fill("2026-07-08T19:30:00Z", "HD", "sell", "6", "375.00", "104793.52"),
-    _fill("2026-07-09T19:30:00Z", "NVDA", "buy", "20", "175.00", "104920.00"),
-    _fill("2026-07-10T19:30:00Z", "AMZN", "buy", "20", "228.00", "104780.00"),
-    _fill("2026-07-13T19:30:00Z", "AMZN", "sell", "5", "238.00", "105020.00"),
-    _fill("2026-07-14T19:30:00Z", "WMT", "buy", "50", "102.00", "104870.00"),
+    _fill("2026-06-05T19:30:00Z", "XOM", "buy", "30", "115.75", "104180.00"),
+    _fill("2026-06-08T19:30:00Z", "GOOGL", "sell", "12", "190.00", "104520.00"),
+    _fill("2026-06-10T19:30:00Z", "XOM", "sell", "15", "118.00", "104300.00"),
+    _fill("2026-06-11T19:30:00Z", "HD", "sell", "6", "375.00", "104420.00"),
+    _fill("2026-06-12T19:30:00Z", "AAPL", "buy", "20", "210.00", "104500.00"),
+    _fill("2026-06-15T14:30:00Z", "AMZN", "buy", "20", "228.00", "104380.00"),
+    _fill("2026-06-15T19:30:00Z", "AMZN", "sell", "5", "238.00", "104610.00"),
+    _fill("2026-06-16T19:30:00Z", "WMT", "buy", "50", "102.00", "104720.00"),
+)
+
+DEMO_PENDING_ORDERS: Final = (
+    DemoPendingOrder(datetime.fromisoformat("2026-07-17T18:42:00+00:00"), "AAPL", "buy", Decimal("5"), Decimal("198.00")),
+    DemoPendingOrder(datetime.fromisoformat("2026-07-17T18:47:00+00:00"), "JPM", "sell", Decimal("6"), Decimal("340.00")),
+    DemoPendingOrder(datetime.fromisoformat("2026-07-17T18:53:00+00:00"), "WMT", "buy", Decimal("12"), Decimal("99.00")),
 )
 
 DEMO_STARTING_CASH: Final = Decimal("100000.00")
-DEMO_FINAL_CASH: Final = Decimal("9101.32")
-DEMO_HOLDINGS_COST: Final = Decimal("91203.38")
-DEMO_MARKET_VALUE: Final = Decimal("95952.20")
-DEMO_UNREALIZED_PNL: Final = Decimal("4748.82")
+DEMO_FINAL_CASH: Final = Decimal("8401.32")
+DEMO_RESERVED_CASH: Final = Decimal("2178.00")
+DEMO_HOLDINGS_COST: Final = Decimal("91903.38")
+DEMO_MARKET_VALUE: Final = Decimal("96622.20")
+DEMO_UNREALIZED_PNL: Final = Decimal("4718.82")
 DEMO_REALIZED_PNL: Final = Decimal("304.70")
-DEMO_EQUITY: Final = Decimal("105053.52")
+DEMO_EQUITY: Final = Decimal("105023.52")
 
 DEMO_DAILY_EQUITY: Final = (
-    (datetime.fromisoformat("2026-07-15T20:00:00+00:00"), Decimal("104980.00")),
-    (datetime.fromisoformat("2026-07-16T20:00:00+00:00"), Decimal("105110.00")),
-    (datetime.fromisoformat("2026-07-17T20:00:00+00:00"), Decimal("104990.00")),
-    (datetime.fromisoformat("2026-07-18T04:00:00+00:00"), DEMO_EQUITY),
+    (datetime.fromisoformat("2026-06-17T21:00:00+00:00"), Decimal("104720.00")),
+    (datetime.fromisoformat("2026-06-18T21:00:00+00:00"), Decimal("104810.00")),
+    (datetime.fromisoformat("2026-06-19T21:00:00+00:00"), Decimal("104760.00")),
+    (datetime.fromisoformat("2026-06-22T21:00:00+00:00"), Decimal("104920.00")),
+    (datetime.fromisoformat("2026-06-23T21:00:00+00:00"), Decimal("104870.00")),
+    (datetime.fromisoformat("2026-06-24T21:00:00+00:00"), Decimal("105010.00")),
+    (datetime.fromisoformat("2026-06-25T21:00:00+00:00"), Decimal("104940.00")),
+    (datetime.fromisoformat("2026-06-26T21:00:00+00:00"), Decimal("105060.00")),
+    (datetime.fromisoformat("2026-06-29T21:00:00+00:00"), Decimal("104980.00")),
+    (datetime.fromisoformat("2026-06-30T21:00:00+00:00"), Decimal("105120.00")),
+    (datetime.fromisoformat("2026-07-01T21:00:00+00:00"), Decimal("105080.00")),
+    (datetime.fromisoformat("2026-07-02T21:00:00+00:00"), Decimal("105210.00")),
+    (datetime.fromisoformat("2026-07-06T21:00:00+00:00"), Decimal("105040.00")),
+    (datetime.fromisoformat("2026-07-07T21:00:00+00:00"), Decimal("105160.00")),
+    (datetime.fromisoformat("2026-07-08T21:00:00+00:00"), Decimal("105090.00")),
+    (datetime.fromisoformat("2026-07-09T21:00:00+00:00"), Decimal("105240.00")),
+    (datetime.fromisoformat("2026-07-10T21:00:00+00:00"), Decimal("105180.00")),
+    (datetime.fromisoformat("2026-07-13T21:00:00+00:00"), Decimal("105310.00")),
+    (datetime.fromisoformat("2026-07-14T21:00:00+00:00"), Decimal("105190.00")),
+    (datetime.fromisoformat("2026-07-15T21:00:00+00:00"), Decimal("105330.00")),
+    (datetime.fromisoformat("2026-07-16T21:00:00+00:00"), Decimal("105260.00")),
+    (datetime.fromisoformat("2026-07-17T21:00:00+00:00"), DEMO_EQUITY),
 )
 
 HOLDING_BY_SYMBOL: Final = {holding.symbol: holding for holding in DEMO_HOLDINGS}

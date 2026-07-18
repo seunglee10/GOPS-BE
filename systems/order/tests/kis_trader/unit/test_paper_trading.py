@@ -10,7 +10,9 @@ from kis_trader.paper.fixture import (
     DEMO_HOLDINGS,
     DEMO_HOLDINGS_COST,
     DEMO_MARKET_VALUE,
+    DEMO_PENDING_ORDERS,
     DEMO_REALIZED_PNL,
+    DEMO_RESERVED_CASH,
     DEMO_UNREALIZED_PNL,
     SEED_PROFILE,
 )
@@ -184,10 +186,14 @@ class PaperTradingRepositoryTest(unittest.TestCase):
         self.assertEqual(snapshot["account"]["cash_balance"], DEMO_FINAL_CASH)
         self.assertEqual(snapshot["account"]["realized_pnl"], DEMO_REALIZED_PNL)
         self.assertEqual(snapshot["account"]["seed_profile"], SEED_PROFILE)
+        self.assertEqual(snapshot["account"]["reserved_cash"], DEMO_RESERVED_CASH)
+        self.assertEqual(len(snapshot["open_orders"]), len(DEMO_PENDING_ORDERS))
         self.assertEqual(len(positions), 10)
+        self.assertNotIn("NVDA", positions)
+        self.assertIn("AAPL", positions)
         self.assertEqual(len({holding.sector for holding in DEMO_HOLDINGS}), 7)
-        self.assertEqual(len(repository.orders), len(DEMO_FILLS))
-        self.assertGreaterEqual(len(repository.portfolio_history), len(DEMO_FILLS) * 2 + 4)
+        self.assertEqual(len(repository.orders), len(DEMO_FILLS) + len(DEMO_PENDING_ORDERS))
+        self.assertGreaterEqual(len(repository.portfolio_history), len(DEMO_FILLS) * 2 + 20)
         self.assertEqual(repository.portfolio_history[-1]["payload"]["snapshotPhase"], "daily-close")
         self.assertEqual(repository.portfolio_history[-1]["payload"]["account"]["totalValueForeign"], DEMO_EQUITY)
         self.assertEqual(
@@ -203,7 +209,10 @@ class PaperTradingRepositoryTest(unittest.TestCase):
         seeded_ledger = [row for row in repository.ledger if row["event_type"] == "order.filled"]
         self.assertEqual(len(seeded_ledger), len(DEMO_FILLS))
         self.assertEqual(seeded_ledger[-1]["cash_balance_after"], DEMO_FINAL_CASH)
-        seeded_orders = sorted(repository.orders.values(), key=lambda row: row["filled_at"])
+        seeded_orders = sorted(
+            (row for row in repository.orders.values() if row["status"] == "filled"),
+            key=lambda row: row["filled_at"],
+        )
         self.assertEqual(
             [(row["symbol"], row["side"], row["qty"], row["fill_price"]) for row in seeded_orders],
             [(fill.symbol, fill.side, fill.quantity, fill.price) for fill in DEMO_FILLS],
@@ -218,7 +227,7 @@ class PaperTradingRepositoryTest(unittest.TestCase):
         second = repository.ensure_account(self.user_id)
 
         self.assertEqual(first, second)
-        self.assertEqual(len(repository.orders), len(DEMO_FILLS))
+        self.assertEqual(len(repository.orders), len(DEMO_FILLS) + len(DEMO_PENDING_ORDERS))
 
         reset = repository.reset_account(self.user_id, Decimal("250000"))
         reopened = repository.ensure_account(self.user_id)
@@ -251,7 +260,7 @@ class PaperTradingRepositoryTest(unittest.TestCase):
         self.assertEqual(repository.get_order(self.user_id, original_order["order_id"])["status"], "cancelled")
         self.assertEqual(
             len(repository.list_orders(self.user_id, include_previous=True, limit=500)),
-            len(DEMO_FILLS) + 1,
+            len(DEMO_FILLS) + len(DEMO_PENDING_ORDERS) + 1,
         )
 
     def test_simulation_limit_uses_only_future_replay_sequence(self):

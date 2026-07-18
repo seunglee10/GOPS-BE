@@ -11,6 +11,7 @@ from .fixture import (
     DEMO_FILLS,
     DEMO_FINAL_CASH,
     DEMO_HOLDINGS,
+    DEMO_PENDING_ORDERS,
     HOLDING_BY_SYMBOL,
     DEMO_REALIZED_PNL,
     SEED_PROFILE,
@@ -521,6 +522,38 @@ class InMemoryPaperTradingRepository:
                 "reserved_cash_after": Decimal("0"),
                 "created_at": fill.filled_at,
             })
+        for index, pending in enumerate(DEMO_PENDING_ORDERS, start=1):
+            seed_key = f"{SEED_PROFILE}:{user_id}:{generation}:pending:{index}"
+            order_id = f"paper_seed_{uuid5(NAMESPACE_URL, seed_key).hex}"
+            row = {
+                "order_id": order_id, "user_id": user_id, "generation": generation,
+                "market": "overseas", "symbol": pending.symbol, "side": pending.side,
+                "qty": pending.quantity, "limit_price": pending.limit_price,
+                "exchange": HOLDING_BY_SYMBOL[pending.symbol].exchange,
+                "order_division": "00", "order_type": "limit", "execution_mode": "paper",
+                "simulation_run_id": None, "simulation_submitted_sequence": None,
+                "virtual_submitted_at": None, "virtual_filled_at": None,
+                "seed_profile": SEED_PROFILE, "status": PENDING_STATUS, "filled_qty": Decimal("0"),
+                "fill_price": None, "quote_event_id": None, "quote_timestamp": None, "reason": None,
+                "idempotency_key_hash": f"seed:{SEED_PROFILE}:{generation}:pending:{index}",
+                "body_hash": SEED_PROFILE, "created_at": pending.created_at, "updated_at": pending.created_at,
+                "filled_at": None, "cancelled_at": None,
+            }
+            reserved_cash_delta = Decimal("0")
+            if pending.side == "buy":
+                reserved_cash_delta = pending.quantity * pending.limit_price
+                run["reserved_cash"] += reserved_cash_delta
+            else:
+                position = self._position(user_id, generation, pending.symbol)
+                position["reserved_qty"] += pending.quantity
+                position["updated_at"] = pending.created_at
+            self.orders[order_id] = row
+            self.idempotency[(user_id, row["idempotency_key_hash"])] = (SEED_PROFILE, order_id)
+            self._append_event(row, "order.created", PENDING_STATUS, payload={"seed_profile": SEED_PROFILE})
+            self._append_ledger(
+                user_id, generation, run, "order.reserved",
+                order_id=order_id, reserved_cash_delta=reserved_cash_delta,
+            )
         self.portfolio_history.extend(
             {"user_sub": user_id, "source_as_of": source_as_of, "payload": snapshot}
             for source_as_of, snapshot in seed_snapshot_history()

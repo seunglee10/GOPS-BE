@@ -17,6 +17,7 @@ from .fixture import (
     DEMO_FILLS,
     DEMO_FINAL_CASH,
     DEMO_HOLDINGS,
+    DEMO_PENDING_ORDERS,
     HOLDING_BY_SYMBOL,
     SEED_PROFILE,
     configured_seed_profile,
@@ -765,6 +766,58 @@ class PostgresPaperTradingRepository:
                     user_id, generation, order_id, cash_delta, seed_cash,
                     Jsonb({"seed_profile": SEED_PROFILE}), fill.filled_at,
                 ),
+            )
+        for index, pending in enumerate(DEMO_PENDING_ORDERS, start=1):
+            seed_key = f"{SEED_PROFILE}:{user_id}:{generation}:pending:{index}"
+            order_id = f"paper_seed_{uuid5(NAMESPACE_URL, seed_key).hex}"
+            conn.execute(
+                """
+                INSERT INTO paper_orders (
+                    order_id, user_id, generation, market, symbol, side, qty, limit_price,
+                    exchange, order_division, order_type, execution_mode, seed_profile,
+                    status, filled_qty, idempotency_key_hash, body_hash, created_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, 'overseas', %s, %s, %s, %s,
+                    %s, '00', 'limit', 'paper', %s,
+                    'pending', 0, %s, %s, %s, %s
+                ) ON CONFLICT (order_id) DO NOTHING
+                """,
+                (
+                    order_id, user_id, generation, pending.symbol, pending.side,
+                    pending.quantity, pending.limit_price, HOLDING_BY_SYMBOL[pending.symbol].exchange,
+                    SEED_PROFILE, f"seed:{SEED_PROFILE}:{generation}:pending:{index}", SEED_PROFILE,
+                    pending.created_at, pending.created_at,
+                ),
+            )
+            reserved_cash_delta = Decimal("0")
+            if pending.side == "buy":
+                reserved_cash_delta = pending.quantity * pending.limit_price
+                conn.execute(
+                    """
+                    UPDATE paper_account_runs
+                    SET reserved_cash = reserved_cash + %s
+                    WHERE user_id = %s AND generation = %s
+                    """,
+                    (reserved_cash_delta, user_id, generation),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE paper_positions
+                    SET reserved_qty = reserved_qty + %s, updated_at = %s
+                    WHERE user_id = %s AND generation = %s AND symbol = %s
+                    """,
+                    (pending.quantity, pending.created_at, user_id, generation, pending.symbol),
+                )
+            order = conn.execute("SELECT * FROM paper_orders WHERE order_id = %s", (order_id,)).fetchone()
+            self._append_event(
+                conn, order, "order.created", PENDING_STATUS,
+                payload={"seed_profile": SEED_PROFILE},
+            )
+            current_run = self._run(conn, user_id, generation)
+            self._append_ledger(
+                conn, user_id, generation, current_run, "order.reserved",
+                order_id=order_id, reserved_cash_delta=reserved_cash_delta,
             )
         for source_as_of, snapshot in seed_snapshot_history():
             conn.execute(

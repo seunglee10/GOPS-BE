@@ -84,12 +84,13 @@ def account_performance(
         from app.recommendations.routes import _repository_from_app
 
         repository = _repository_from_app(request.app)
+        performance_sources = _paper_performance_sources(request.app, user.sub)
         source_reader = getattr(repository, "list_daily_portfolio_snapshots_for_sources", None)
         if callable(source_reader):
             snapshots = source_reader(
                 user.sub,
                 start_at.isoformat() if start_at is not None else None,
-                tuple(sorted(PAPER_PERFORMANCE_SOURCES)),
+                performance_sources,
             )
         else:
             snapshots = _paper_performance_snapshots(
@@ -226,7 +227,7 @@ def _paper_portfolio_payload(app: Any, repository: Any, user_sub: str, snapshot:
         },
         "positions": positions,
         "orders": orders,
-        "limitations": ["seeded demo account"] if data_origin == "seeded-demo" else [],
+        "limitations": [],
     }
 
 
@@ -253,6 +254,28 @@ def _paper_performance_snapshots(snapshots: list[dict[str, Any]]) -> list[dict[s
         if payload.get("source") in PAPER_PERFORMANCE_SOURCES:
             result.append(row)
     return result
+
+
+def _paper_performance_sources(app: Any, user_sub: str) -> tuple[str, ...]:
+    all_sources = tuple(sorted(PAPER_PERFORMANCE_SOURCES))
+    try:
+        from app.routes.paper_trading import paper_repository_from_app
+
+        paper_repository = paper_repository_from_app(app)
+        snapshot = paper_repository.account_snapshot(user_sub)
+        account = snapshot.get("account") or {}
+        if not account.get("seed_profile"):
+            return all_sources
+        current_orders = paper_repository.list_orders(
+            user_sub,
+            include_previous=False,
+            limit=500,
+        )
+        if all(order.get("seed_profile") for order in current_orders):
+            return ("seeded-demo",)
+    except Exception:
+        return all_sources
+    return all_sources
 
 
 def _kis_client_from_app(app: Any) -> Any:

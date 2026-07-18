@@ -225,16 +225,17 @@ class PaperTradingRoutesTest(unittest.TestCase):
         holding_positions = {row["symbol"]: row for row in holdings["positions"]}
         self.assertEqual(
             set(account_positions),
-            {"GOOGL", "MSFT", "JPM", "XOM", "JNJ", "COST", "HD", "NVDA", "AMZN", "WMT"},
+            {"GOOGL", "MSFT", "JPM", "XOM", "JNJ", "COST", "HD", "AAPL", "AMZN", "WMT"},
         )
         for symbol in account_positions:
             self.assertEqual(account_positions[symbol]["qty"], holding_positions[symbol]["quantity"])
             self.assertEqual(account_positions[symbol]["average_price"], holding_positions[symbol]["averagePrice"])
             self.assertEqual(account_positions[symbol]["market_value"], holding_positions[symbol]["marketValueForeign"])
-        self.assertEqual(account["account"]["equity"], 105053.52)
+        self.assertEqual(account["account"]["equity"], 105023.52)
+        self.assertEqual(len(account["open_orders"]), 3)
         self.assertEqual(performance["dataOrigin"], "seeded-demo")
-        self.assertEqual(performance["portfolio"]["points"][-1]["portfolioValue"], 105053.52)
-        self.assertEqual(performance["portfolio"]["points"][-1]["holdingsCostBasis"], 91203.38)
+        self.assertEqual(performance["portfolio"]["points"][-1]["portfolioValue"], 105023.52)
+        self.assertEqual(performance["portfolio"]["points"][-1]["holdingsCostBasis"], 91903.38)
         weekly = self.client.get("/api/account/performance?range=1W").json()
         self.assertEqual(weekly["status"], "ready")
         self.assertGreaterEqual(len(weekly["portfolio"]["points"]), 2)
