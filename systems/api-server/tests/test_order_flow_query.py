@@ -24,6 +24,7 @@ from fastapi import HTTPException
 
 from app.market_data.query.service import MarketDataQueryService
 from app.market_data.realtime.stream_hub import StreamSession, should_deliver_to_session
+from app.routes.streams import _serve_simulation_chart
 from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
 
 
@@ -137,6 +138,63 @@ class OrderFlowStreamHubTest(unittest.IsolatedAsyncioTestCase):
         item = session.queue.get_nowait()
         self.assertEqual(item["data"]["eventMinute"], "new")
         self.assertNotEqual(item["type"], "ERROR")
+
+    async def test_simulation_socket_opt_in_emits_replay_order_flow_and_quote(self):
+        gateway = FakeSimulationStreamGateway()
+        websocket = FakeSimulationWebSocket(gateway)
+
+        with mock.patch("app.routes.streams.simulator_mode_active", side_effect=[True, False]):
+            await _serve_simulation_chart(websocket, "NVDA", "1m", None, order_flow=True)
+
+        events = {event["type"]: event for event in websocket.sent}
+        self.assertIn("ORDER_FLOW_BINS_UPDATE", events)
+        self.assertIn("LIVE_QUOTE_UPDATE", events)
+        self.assertTrue(events["ORDER_FLOW_BINS_UPDATE"]["simulation"])
+        self.assertEqual(events["ORDER_FLOW_BINS_UPDATE"]["runId"], "run-1")
+        self.assertEqual(events["ORDER_FLOW_BINS_UPDATE"]["data"]["sessionDate"], "2026-07-14")
+        self.assertEqual(events["LIVE_QUOTE_UPDATE"]["data"]["bidPrice"], 100.0)
+        self.assertEqual(websocket.closed_code, 1012)
+
+
+class FakeSimulationStreamGateway:
+    def candles(self, symbol, interval, limit):
+        return {"candles": []}
+
+    def order_flow(self, symbol, **_kwargs):
+        return {
+            "runId": "run-1",
+            "nextSequence": 42,
+            "datasetId": "dataset-1",
+            "virtualTime": "2026-07-14T15:00:30.000Z",
+            "sessionDate": "2026-07-14",
+            "priceBinSize": 0.01,
+            "minutes": [{
+                "eventMinute": "2026-07-14T15:00:00Z",
+                "updatedAt": "2026-07-14T15:00:20.000Z",
+                "bins": [{"priceBin": 100.0, "askVolume": 2, "bidVolume": 1, "unknownVolume": 0}],
+            }],
+            "liveQuote": {
+                "bidPrice": 100.0,
+                "askPrice": 100.1,
+                "timestamp": "2026-07-14T15:00:25.000Z",
+            },
+        }
+
+
+class FakeSimulationWebSocket:
+    def __init__(self, gateway):
+        self.app = types.SimpleNamespace(state=types.SimpleNamespace(simulator_gateway=gateway))
+        self.sent = []
+        self.closed_code = None
+
+    async def accept(self):
+        return None
+
+    async def send_json(self, payload):
+        self.sent.append(payload)
+
+    async def close(self, code):
+        self.closed_code = code
 
 
 class CapturingClickHouseProvider:

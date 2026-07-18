@@ -70,6 +70,21 @@ class ClickHouseReplayEventSource:
         return [ReplayEvent(sequence=int(row["sequence"]), timestamp=parse_timestamp(row["event_time"]),
             feed=str(row.get("feed") or "sip"), payload=json.loads(str(row.get("payload") or "{}"))) for row in rows]
 
+    def events_for_symbol_after(self, symbol: str, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]:
+        normalized = symbol.strip().upper()
+        if normalized not in REPLAY_SYMBOLS:
+            raise ValueError(f"symbol is not available in {self.dataset_id}")
+        rows = self.client.query_rows(
+            "SELECT sequence, event_time, feed, payload FROM market_data.simulation_replay_events "
+            f"WHERE dataset_id = {sql_string(self.dataset_id)} AND symbol = {sql_string(normalized)} "
+            "AND event_type IN ('trade', 'quote') "
+            f"AND sequence > {max(0, int(sequence))} "
+            f"AND event_time <= parseDateTime64BestEffort({sql_string(isoformat_z(through))}, 9) "
+            f"ORDER BY sequence LIMIT {max(1, int(limit))}"
+        )
+        return [ReplayEvent(sequence=int(row["sequence"]), timestamp=parse_timestamp(row["event_time"]),
+            feed=str(row.get("feed") or "sip"), payload=json.loads(str(row.get("payload") or "{}"))) for row in rows]
+
     def candle_snapshot(self, symbol: str, interval: str, through: datetime, limit: int) -> dict[str, object]:
         symbol = symbol.strip().upper(); seconds = INTERVAL_SECONDS.get(interval)
         if symbol not in REPLAY_SYMBOLS: raise ValueError(f"symbol is not available in {self.dataset_id}")

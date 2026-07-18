@@ -52,5 +52,16 @@ for script_name in ("start-dev-simulator.sh", "stop-dev-simulator.sh"):
     if "kubectl set env deployment/gops-backend" in script:
         raise SystemExit(f"{script_name} must not override the declarative backend simulator URL")
 
+dockerfile = (repo_root / "infra/docker/Dockerfile.gops-simulator").read_text(encoding="utf-8")
+if "COPY systems/market-data/shared /app/market-data-shared" not in dockerfile:
+    raise SystemExit("simulator image must include the shared order-flow implementation")
+if "PYTHONPATH=/app:/app/market-data-shared" not in dockerfile:
+    raise SystemExit("simulator image must make the shared alfaka namespace importable")
+
+detector = (repo_root / "scripts/aws/detect-changed-services.sh").read_text(encoding="utf-8")
+shared_case = detector.split("systems/market-data/shared/*)", 1)[1].split(";;", 1)[0]
+if "add_service simulator" not in shared_case:
+    raise SystemExit("market-data shared changes must rebuild the simulator image")
+
 print("simulator deploy contract passed")
 PY

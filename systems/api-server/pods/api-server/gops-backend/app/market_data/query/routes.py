@@ -9,6 +9,7 @@ from app.market_data.calendar.service import next_market_open_payload
 from app.market_data.query.service import get_query_service
 from app.routes.simulator import simulator_gateway_from_app
 from app.services.simulator_gateway import SimulatorUnavailable
+from alfaka.orderflow import ORDER_FLOW_CLASSIFICATION_VERSION, ORDER_FLOW_SIDE_CLASSIFICATION, price_bin_size_from_env
 from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT, resolve_candle_limit
 
 router = APIRouter()
@@ -171,7 +172,32 @@ def chart_event_reference_time(request: Request) -> datetime | None:
 
 
 @router.get("/api/charts/order-flow/symbols")
-def chart_order_flow_symbols() -> dict[str, Any]:
+def chart_order_flow_symbols(request: Request) -> dict[str, Any]:
+    gateway = simulator_gateway_from_app(request.app)
+    try:
+        status = gateway.status()
+        if status.get("mode") == "simulation":
+            replay_symbols = gateway.symbols(limit=100)
+            symbols = [
+                str(item.get("symbol") or "").strip().upper()
+                for item in replay_symbols.get("symbols", [])
+                if isinstance(item, dict) and item.get("symbol")
+            ]
+            return {
+                "symbols": symbols,
+                "priceBinSize": price_bin_size_from_env(),
+                "sideClassification": ORDER_FLOW_SIDE_CLASSIFICATION,
+                "classificationVersion": ORDER_FLOW_CLASSIFICATION_VERSION,
+                "marketSession": "regular",
+                "source": "simulation_replay",
+                "simulation": True,
+                "datasetId": status.get("datasetId"),
+                "runId": status.get("runId"),
+                "virtualTime": status.get("virtualTime"),
+            }
+    except SimulatorUnavailable as exc:
+        if (getattr(gateway, "last_status", None) or {}).get("mode") == "simulation":
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     return get_query_service().order_flow_symbols()
 
 
@@ -190,8 +216,16 @@ def chart_order_flow_daily(
 
 @router.get("/api/charts/order-flow/intraday")
 def chart_order_flow_intraday(
+    request: Request,
     symbol: str = Query(min_length=1, max_length=12),
 ) -> dict[str, Any]:
+    gateway = simulator_gateway_from_app(request.app)
+    try:
+        if gateway.status().get("mode") == "simulation":
+            return gateway.order_flow(symbol.strip().upper())
+    except SimulatorUnavailable as exc:
+        if (getattr(gateway, "last_status", None) or {}).get("mode") == "simulation":
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     return get_query_service().order_flow_intraday(symbol)
 
 

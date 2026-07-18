@@ -28,8 +28,10 @@ class DeploymentContractsTest(unittest.TestCase):
         compose_builder = load_yaml("docker-compose.yml")["services"]["chart-asset-builder"]
         compose_env = compose_builder["environment"]
         self.assertEqual(compose_env["CHART_ASSET_REPAIR_ALPACA_ENABLED"], "${CHART_ASSET_REPAIR_ALPACA_ENABLED:-true}")
-        for name in ("REDIS_URL", "KAFKA_BOOTSTRAP_SERVERS", "S3_BUCKET", "OPENAI_API_KEY"):
+        for name in ("REDIS_URL", "KAFKA_BOOTSTRAP_SERVERS", "S3_BUCKET"):
             self.assertNotIn(name, compose_env)
+        self.assertEqual(compose_env["OPENAI_API_KEY"], "${OPENAI_API_KEY:-}")
+        self.assertEqual(compose_env["CHART_COMMENTARY_PROVIDER"], "${CHART_COMMENTARY_PROVIDER:-disabled}")
 
         completed = subprocess.run(
             ["kubectl", "kustomize", "infra/k8s/overlays/aws-incluster-app-ci"],

@@ -92,6 +92,30 @@ class FakeSimulatorGateway:
         self.calls.append(("symbols", query, limit))
         return {"source": "simulation_replay", "symbols": [{"symbol": "NVDA"}]}
 
+    def order_flow(self, symbol):
+        self.calls.append(("order-flow", symbol))
+        return {
+            "symbol": symbol,
+            "sessionDate": "2026-07-14",
+            "priceBinSize": 0.01,
+            "sideClassification": "estimated",
+            "classificationVersion": "orderflow-estimated-v2",
+            "marketSession": "regular",
+            "dataStatus": "ready",
+            "minutes": [{
+                "eventMinute": "2026-07-14T15:00:00Z",
+                "updatedAt": "2026-07-14T15:00:10.000Z",
+                "bins": [{"priceBin": 100.0, "askVolume": 10, "bidVolume": 2, "unknownVolume": 0}],
+            }],
+            "liveQuote": {"bidPrice": 99.9, "askPrice": 100.0, "timestamp": "2026-07-14T15:00:10.000Z"},
+            "supportedSymbols": ["NVDA"],
+            "source": "simulation_replay",
+            "simulation": True,
+            "datasetId": "sp500-top20-plus-amd-mu-20260715-kst-v2",
+            "runId": "run-1",
+            "virtualTime": self.virtual_time,
+        }
+
     def account(self, user_id):
         self.calls.append(("account", user_id))
         return {
@@ -228,6 +252,23 @@ class SimulatorRoutesTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertNotIn(("quote", "NVDA"), self.gateway.calls)
+
+    def test_simulation_order_flow_symbols_and_intraday_use_replay_gateway(self):
+        self.gateway.mode = "simulation"
+
+        symbols = self.client.get("/api/charts/order-flow/symbols")
+        intraday = self.client.get("/api/charts/order-flow/intraday?symbol=NVDA")
+        daily = self.client.get("/api/charts/order-flow/daily?symbol=NVDA&from=2026-07-14&to=2026-07-14")
+
+        self.assertEqual(symbols.status_code, 200)
+        self.assertEqual(symbols.json()["symbols"], ["NVDA"])
+        self.assertTrue(symbols.json()["simulation"])
+        self.assertEqual(intraday.status_code, 200)
+        self.assertEqual(intraday.json()["sessionDate"], "2026-07-14")
+        self.assertEqual(intraday.json()["minutes"][0]["bins"][0]["askVolume"], 10)
+        self.assertIn(("order-flow", "NVDA"), self.gateway.calls)
+        self.assertEqual(daily.status_code, 409)
+        self.assertEqual(daily.json()["detail"], "simulation_data_unavailable")
 
     def test_simulation_holdings_use_shared_diversified_paper_account(self):
         self.gateway.mode = "simulation"

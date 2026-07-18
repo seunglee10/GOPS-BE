@@ -10,8 +10,10 @@ from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SIMULATOR_ROOT = REPO_ROOT / "systems" / "simulator"
-if str(SIMULATOR_ROOT) not in sys.path:
-    sys.path.insert(0, str(SIMULATOR_ROOT))
+MARKET_DATA_SHARED_ROOT = REPO_ROOT / "systems" / "market-data" / "shared"
+for source_root in (SIMULATOR_ROOT, MARKET_DATA_SHARED_ROOT):
+    if str(source_root) not in sys.path:
+        sys.path.insert(0, str(source_root))
 
 from gops_simul.dataset import (
     DATASET_END,
@@ -25,6 +27,7 @@ from gops_simul.dataset import (
 )
 from gops_simul import env as simulator_env
 from gops_simul.tick_replay import InMemoryReplayEventSource, ReplayController, ReplayEvent
+from gops_simul.order_flow import ReplayOrderFlowProjection
 from gops_simul.clickhouse import ClickHouseHttpClient, ClickHouseReplayEventSource
 from gops_simul.tools import import_alpaca
 from gops_simul.tools.import_alpaca import fetch_kind
@@ -234,6 +237,97 @@ class DatasetContractTests(unittest.TestCase):
                 )
 
 
+class ReplayOrderFlowProjectionTests(unittest.TestCase):
+    def test_classification_uses_replay_quote_age_and_cent_bins(self):
+        source = InMemoryReplayEventSource([
+            quote(1, 1, "NVDA", 100.0, 101.0),
+            ReplayEvent(2, DATASET_START + timedelta(seconds=1.1), "sip", {"T": "t", "S": "NVDA", "p": 101.0, "s": 2}),
+            ReplayEvent(3, DATASET_START + timedelta(seconds=4), "sip", {"T": "t", "S": "NVDA", "p": 101.0, "s": 3}),
+            quote(4, 5, "NVDA", 100.0, 102.0),
+            ReplayEvent(5, DATASET_START + timedelta(seconds=5.5), "sip", {"T": "t", "S": "NVDA", "p": 101.5, "s": 1}),
+            ReplayEvent(6, DATASET_START + timedelta(seconds=6), "sip", {"T": "t", "S": "NVDA", "p": 100.5, "s": 1}),
+        ])
+        payload = ReplayOrderFlowProjection(source, page_size=2).snapshot(
+            "NVDA", through=DATASET_START + timedelta(seconds=7), run_id="run-1"
+        )
+
+        self.assertEqual(payload["classificationVersion"], "orderflow-estimated-v2")
+        self.assertEqual(payload["dataStatus"], "ready")
+        levels = {level["priceBin"]: level for level in payload["minutes"][0]["bins"]}
+        self.assertEqual(levels[101.0]["askVolume"], 2.0)
+        self.assertEqual(levels[101.0]["unknownVolume"], 3.0)
+        self.assertEqual(levels[101.0]["askTradeCount"], 1)
+        self.assertEqual(levels[101.0]["unknownTradeCount"], 1)
+        self.assertEqual(levels[101.5]["askTradeCount"], 1)
+        self.assertEqual(levels[100.5]["bidTradeCount"], 1)
+
+    def test_snapshot_never_reads_after_virtual_cursor(self):
+        source = InMemoryReplayEventSource([
+            quote(1, 1, "NVDA", 100.0, 101.0),
+            trade(2, 2, "NVDA", 101.0),
+            quote(3, 3.5, "NVDA", 100.0, 101.0),
+            trade(4, 4, "NVDA", 101.0),
+        ])
+        projection = ReplayOrderFlowProjection(source)
+
+        first = projection.snapshot("NVDA", through=DATASET_START + timedelta(seconds=3), run_id="run-1")
+        second = projection.snapshot("NVDA", through=DATASET_START + timedelta(seconds=5), run_id="run-1")
+        delta = projection.snapshot(
+            "NVDA",
+            through=DATASET_START + timedelta(seconds=5),
+            run_id="run-1",
+            after_sequence=first["nextSequence"],
+        )
+
+        self.assertEqual(first["minutes"][0]["bins"][0]["askTradeCount"], 1)
+        self.assertEqual(second["minutes"][0]["bins"][0]["askTradeCount"], 2)
+        self.assertEqual(delta["minutes"][0]["bins"][0]["askTradeCount"], 2)
+        self.assertEqual(delta["nextSequence"], 4)
+
+    def test_after_hours_keeps_previous_regular_profile_until_next_regular_trade(self):
+        next_regular_seconds = 22 * 60 * 60 + 30 * 60
+        source = InMemoryReplayEventSource([
+            quote(1, 1, "NVDA", 100.0, 101.0),
+            trade(2, 2, "NVDA", 101.0),
+            quote(3, 6 * 60 * 60, "NVDA", 200.0, 201.0),
+            trade(4, 6 * 60 * 60 + 1, "NVDA", 201.0),
+            quote(5, next_regular_seconds, "NVDA", 300.0, 301.0),
+            trade(6, next_regular_seconds + 1, "NVDA", 301.0),
+        ])
+        projection = ReplayOrderFlowProjection(source)
+
+        after_hours = projection.snapshot("NVDA", through=DATASET_START + timedelta(hours=7), run_id="run-1")
+        next_session = projection.snapshot(
+            "NVDA", through=DATASET_START + timedelta(seconds=next_regular_seconds + 2), run_id="run-1"
+        )
+
+        self.assertEqual(after_hours["sessionDate"], "2026-07-14")
+        self.assertEqual(after_hours["liveQuote"]["bidPrice"], 200.0)
+        self.assertEqual(len(after_hours["minutes"]), 1)
+        self.assertEqual(next_session["sessionDate"], "2026-07-15")
+        self.assertEqual(len(next_session["minutes"]), 1)
+        self.assertEqual(next_session["minutes"][0]["bins"][0]["priceBin"], 301.0)
+
+    def test_projection_supports_all_replay_symbols_with_bounded_lru(self):
+        events = []
+        sequence = 1
+        for index, symbol in enumerate(REPLAY_SYMBOLS):
+            seconds = index + 1
+            events.extend([
+                quote(sequence, seconds, symbol, 100.0 + index, 101.0 + index),
+                trade(sequence + 1, seconds + 0.1, symbol, 101.0 + index),
+            ])
+            sequence += 2
+        projection = ReplayOrderFlowProjection(InMemoryReplayEventSource(events), cache_symbol_limit=8)
+
+        for symbol in REPLAY_SYMBOLS:
+            payload = projection.snapshot(symbol, through=DATASET_START + timedelta(minutes=1), run_id="run-1")
+            self.assertEqual(payload["dataStatus"], "ready")
+
+        self.assertEqual(payload["supportedSymbols"], list(REPLAY_SYMBOLS))
+        self.assertLessEqual(len(projection._states), 8)
+
+
 class ReplayControllerTests(unittest.TestCase):
     def setUp(self):
         self.clock = ManualClock()
@@ -407,11 +501,17 @@ class ReplayControllerTests(unittest.TestCase):
         self.assertIsNone(controller.latest_quote("NVDA"))
 
     def test_restart_changes_run_without_resetting_an_account_ledger(self):
+        self.controller.set_mode("simulation")
+        self.controller.resume()
+        self.clock.value += 2
+        before_restart = self.controller.order_flow_snapshot("NVDA")
         first = self.controller.set_mode("simulation")
         restarted = self.controller.restart()
 
+        self.assertEqual(before_restart["dataStatus"], "ready")
         self.assertNotEqual(first["runId"], restarted["runId"])
         self.assertEqual(restarted["state"], "ready")
+        self.assertEqual(self.controller.order_flow_snapshot("NVDA")["dataStatus"], "empty")
         self.assertNotIn("accounts", self.controller.state_store.snapshot if self.controller.state_store else {})
 
     def test_persisted_state_contains_replay_state_only(self):
@@ -423,9 +523,11 @@ class ReplayControllerTests(unittest.TestCase):
         controller.status()
 
         self.assertNotIn("accounts", store.snapshot)
+        self.assertNotIn("orderFlow", store.snapshot)
         restored = ReplayController(self.source, clock=self.clock, state_store=store)
         self.assertEqual(restored.status()["state"], "paused")
         self.assertEqual(restored.status()["processedEventCount"], 2)
+        self.assertEqual(restored.order_flow_snapshot("NVDA")["dataStatus"], "ready")
 
 if __name__ == "__main__":
     unittest.main()

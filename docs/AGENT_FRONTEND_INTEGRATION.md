@@ -123,6 +123,12 @@ fixture를 남기지 않고 `simulation_data_unavailable` 상태를 표시한다
 추천·뉴스·AI 보고서를 만들지 않는다. 차트는 서버가 반환한
 과거+replay candle과 replay WebSocket만 사용한다.
 
+Order Flow 패널과 Bid/Ask 차트는 SIM에서 기존 intraday API와
+`/ws/charts?orderFlow=true`를 사용한다. 캐시는 `mode + datasetId + runId + virtual NY
+date + symbol`로 격리하고 mode/run 변경 시 폐기한다. 새 `sessionDate`가 오면 이전
+minute map을 먼저 비우며, Bid/Ask 캔들은 해당 세션의 정규장 구간만 표시한다.
+오더플로우 조회 실패는 빈 데이터가 아니라 명시적 error 상태로 렌더링한다.
+
 차트의 실적·뉴스 DOM 마커는 Canvas scene 좌표를 chart container의 local 좌표로
 환산하고 대응 봉의 x 중심을 그대로 사용한다. 같은 봉의 여러 이벤트는 좌우로 벌리지
 않고 세로로 쌓아 UI scale·pan·zoom 중에도 봉과 시간축에서 분리되지 않게 한다.
@@ -236,6 +242,11 @@ production build에는 debug snapshot을 노출하지 않는다.
 focus/pointer 선택한 `OrderTicket`·`QuickOrderPanel`(paper 변형 포함), 또는 화면
 순서상 첫 주문 패널 하나에만 이를 typed prop으로 전달한다. 주문 패널은 종목과
 지정가만 바꾸고 수량·매수/매도 방향을 보존하며 자동 제출하지 않는다.
+현재 화면에 표시된 최종 지지·저항 horizontal line의 오른쪽 가격 pill은 같은
+snapshot 경로를 사용하는 semantic button이다. pill을 직접 선택하면 pointer의 연속
+Y 좌표가 아니라 해당 drawing anchor의 정확한 소수점 두 자리 가격으로 스냅한다.
+숨김 또는 가격 pane 밖 레벨, 추세·패턴·제안·사용자 drawing과 평균 매입가는 이 스냅
+대상이 아니며, pill 바깥의 가격축은 기존 연속 가격 선택을 유지한다.
 
 `이 가격에 예약하자`, `이 때 사자` 같은 차트 맥락 문장은 Agent/주문/알림 API보다
 먼저 로컬 확인 intent로 분기한다. 현재 `ChartTradeSetup`의 진입·목표·손절과 asset
