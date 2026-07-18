@@ -1311,9 +1311,18 @@ ClickHouse `company_journal_reports_v1`, `company_journal_generation_events_v1`�
 backend 이미지가 선택된 배포는 app rollout 전에
 `scripts/aws/run-company-journal-migrations-job.sh`를 자동 실행한다. migration은
 `CREATE TABLE IF NOT EXISTS`만 수행하고 실패하면 rollout을 중단한다. 이후 AWS scheduled
-overlay의 `gops-company-journal-worker`가 10분마다 pending event를 처리하고,
-`gops-company-journal-post-market`이 평일 23:30 UTC에 최근 데이터 기업을 갱신 예약한다.
-두 CronJob은 API 이미지와 ClickHouse/OpenAI secret을 사용하고 batch node pool에서 실행된다.
+overlay의 기존 이름 `gops-company-journal-worker`는 매분 30분을 제외하고 실행되는 경량
+Dispatcher다. 항상 켜진 `general-purpose` NodePool에서 ClickHouse pending 한 건의 존재 여부만
+확인하고, 요청이 있을 때만 `gops-company-journal-process-template`의 선언형 spec을 실제 Job으로
+복제한다. 이 템플릿 CronJob 자체는 항상 `suspend: true`이며, 실제 처리 Job만 API 이미지와
+ClickHouse/OpenAI secret을 사용해 동적 `batch` NodePool에서 최대 25건을 처리한다.
+
+Dispatcher는 전용 namespace Role로 processor label의 Job 조회·생성과 지정된 template CronJob
+조회만 허용된다. 활성 processor Job이 있으면 새 Job을 만들지 않고, Job 이름은 UTC 분 단위로
+결정해 같은 실행의 API 재시도는 `409 already exists`를 멱등 성공으로 처리한다. 매시 30분을
+비워 두는 이유는 평일 23:30 UTC의 `gops-company-journal-post-market`과 동시에 시작하지 않기
+위함이다. post-market Job은 최근 데이터 기업을 갱신 예약하고 최대 100건을 직접 처리하며,
+같은 processor label을 사용하므로 이후 Dispatcher도 실행 중인 야간 Job을 중복 실행하지 않는다.
 SEC companyfacts CronJob은 매일 20:30 UTC, Yahoo estimates CronJob은 21:15 UTC에 실행되어
 안정성/실적 차트 원천을 먼저 갱신한다. 기업저널 v2 worker는 최대 520개 일봉과 최근 42개월의
 SEC 실제치/Yahoo 예상치를 읽으며 원천 row를 복제하지 않고 receipt에 기간과 기준시각만 남긴다.
@@ -1327,7 +1336,10 @@ CI/local deploy는 market-processor 이미지가 선택됐을 때 이 Job을 명
 ```text
 company-journal-migrations Job complete
 company-journal-benchmark-bootstrap Job complete, SPY·섹터 ETF 1D coverage 약 2년
-두 company-journal CronJob 존재 및 image tag가 backend와 동일
+company-journal Dispatcher와 post-market CronJob 존재 및 image tag가 backend와 동일
+gops-company-journal-process-template는 suspend=true이고 image tag가 backend와 동일
+pending 0건 Dispatcher 실행은 processor Job, batch NodeClaim, EC2를 생성하지 않음
+pending 존재 시 활성 processor가 없으면 다음 Dispatcher 실행에서 batch Job 한 개만 생성
 GET /api/company-journal/NVDA가 ready 또는 pending 계약 반환
 GET /api/company-journal/NVDA/evidence가 SEC/Yahoo/일봉 근거 또는 명시적 missingData 반환
 worker 완료 후 verified report가 ClickHouse에 append
