@@ -239,6 +239,7 @@ def test_point_in_time_queries_bound_every_temporal_company_journal_source():
     assert all(parameters.get("cutoff") == cutoff.isoformat() for query, parameters in client.queries if "{cutoff:String}" in query)
     assert "toDate(toTimeZone(parseDateTime64BestEffort({cutoff:String}), 'America/New_York'))" in temporal_queries
     assert "filed_at < toDate(toTimeZone(parseDateTime64BestEffort({cutoff:String}), 'America/New_York'))" in temporal_queries
+    assert "version_filed_at < toDate(toTimeZone(parseDateTime64BestEffort({cutoff:String}), 'America/New_York'))" in temporal_queries
     assert "collected_at <= parseDateTime64BestEffort({cutoff:String})" in temporal_queries
     assert "generated_at <= parseDateTime64BestEffort({cutoff:String})" in temporal_queries
 
@@ -272,6 +273,37 @@ def test_simulation_report_is_reconstructed_from_cutoff_bundle_without_latest_re
     assert report["inputDigest"] == "point-in-time-digest"
     assert report["validationStatus"] == "verified"
     assert report["sourceReceipt"]["priceAsOf"] == "2026-07-15"
+
+
+def test_simulation_report_finishes_with_explicit_missing_data_when_cutoff_has_no_evidence():
+    class EmptyPointInTimeRepository:
+        def load_source_bundle(self, symbol, cutoff=None):
+            return {
+                "symbol": symbol,
+                "analysisAsOf": "2026-07-14",
+                "company": {"company_name": "NVIDIA"},
+                "prices": [], "benchmarkPrices": [], "news": [], "financialMetrics": [],
+                "earningsActuals": [], "earningsEstimates": [], "analystActions": [],
+                "analystConsensus": [], "filings": [], "graph": {},
+            }
+
+        def input_digest(self, _bundle):
+            return "empty-point-in-time-digest"
+
+        def latest_verified(self, _symbol):
+            raise AssertionError("simulation must not read the latest live report")
+
+    cutoff = datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc)
+
+    report = CompanyJournalService(repository=EmptyPointInTimeRepository(), writer=FakeWriter()).latest(
+        "NVDA", cutoff=cutoff
+    )
+
+    assert report is not None
+    assert report["validationStatus"] == "verified"
+    assert report["sourceMode"] == "historical_reconstruction"
+    assert "recent_stock_return" in report["missingData"]
+    assert "가상시각 이전의 완료 일봉이 부족" in report["recentMovement"]
 
 
 def test_worker_persists_only_a_validated_report_then_completes_request():
@@ -334,6 +366,42 @@ def test_company_journal_evidence_route_is_read_only_and_simulation_safe():
     assert response.status_code == 200
     assert response.json()["contractVersion"] == "company-journal-evidence.v1"
     assert service.calls == [("GOOGL", ["SPY", "XLK"])]
+
+
+def test_company_journal_evidence_route_passes_server_owned_simulation_cutoff():
+    class RouteService:
+        def __init__(self):
+            self.cutoff = None
+
+        def panel_evidence(self, symbol, benchmark_symbols, cutoff=None):
+            self.cutoff = cutoff
+            return {
+                "contractVersion": "company-journal-evidence.v1",
+                "symbol": symbol,
+                "sourceAsOf": None,
+                "financialSeries": [],
+                "earningsSeries": [],
+                "performanceSeries": [],
+                "missingData": ["company_daily_prices"],
+                "simulation": True,
+                "sourceMode": "historical_reconstruction",
+                "cutoff": cutoff.isoformat(),
+            }
+
+    service = RouteService()
+    app = FastAPI()
+    app.state.simulator_gateway = type("Gateway", (), {"status": lambda self: {
+        "mode": "simulation",
+        "virtualTime": "2026-07-15T00:00:00+09:00",
+    }})()
+    app.include_router(router)
+    app.dependency_overrides[get_company_journal_service] = lambda: service
+
+    response = TestClient(app).get("/api/company-journal/NVDA/evidence?benchmarks=SPY")
+
+    assert response.status_code == 200
+    assert response.json()["cutoff"] == "2026-07-14T15:00:00+00:00"
+    assert service.cutoff == datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc)
 
 
 def test_company_journal_evidence_requests_history_from_2021(monkeypatch):

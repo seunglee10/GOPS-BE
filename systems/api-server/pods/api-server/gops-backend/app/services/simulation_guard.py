@@ -26,10 +26,17 @@ SAFE_SIMULATION_READ_PATHS = frozenset({
     "/api/charts/analysis-assets",
 })
 
+SAFE_SIMULATION_READ_PREFIXES = (
+    "/api/company-journal/",
+)
+
 
 def requires_point_in_time_data(path: str, method: str = "GET") -> bool:
     """Return whether a route can expose information after the replay cursor."""
 
-    if method.upper() == "GET" and path in SAFE_SIMULATION_READ_PATHS:
-        return False
+    if method.upper() == "GET":
+        if path in SAFE_SIMULATION_READ_PATHS:
+            return False
+        if any(path.startswith(prefix) for prefix in SAFE_SIMULATION_READ_PREFIXES):
+            return False
     return any(path.startswith(prefix) for prefix in UNSAFE_SIMULATION_PREFIXES)

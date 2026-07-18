@@ -118,18 +118,52 @@ class CompanyJournalService:
         self.repository = repository or CompanyJournalRepository()
         self.writer = writer or OpenAIJournalWriter()
 
-    def latest(self, symbol: str) -> dict[str, Any] | None:
+    def latest(self, symbol: str, cutoff: datetime | None = None) -> dict[str, Any] | None:
+        if cutoff is not None:
+            bundle = self.repository.load_source_bundle(symbol, cutoff=cutoff)
+            return build_point_in_time_report(
+                bundle,
+                cutoff=cutoff,
+                input_digest=self.repository.input_digest(bundle),
+            )
         row = self.repository.latest_verified(symbol)
         return report_payload(row) if row else None
 
-    def panel_evidence(self, symbol: str, benchmark_symbols: list[str]) -> dict[str, Any]:
-        from app.market_data.fundamentals.service import build_fundamentals_adapter
+    def panel_evidence(
+        self,
+        symbol: str,
+        benchmark_symbols: list[str],
+        cutoff: datetime | None = None,
+    ) -> dict[str, Any]:
+        from app.market_data.fundamentals.service import (
+            build_fundamentals_adapter,
+            earnings_series_from_rows,
+            financial_series_from_rows,
+        )
 
-        adapter = build_fundamentals_adapter()
-        history_years = company_journal_history_years()
-        financial = adapter.financial_series(symbol, years=history_years, period="quarterly")
-        earnings = adapter.earnings_series(symbol, years=history_years)
-        performance = self.repository.load_performance_series([symbol, *benchmark_symbols])
+        if cutoff is None:
+            adapter = build_fundamentals_adapter()
+            history_years = company_journal_history_years()
+            financial = adapter.financial_series(symbol, years=history_years, period="quarterly")
+            earnings = adapter.earnings_series(symbol, years=history_years)
+        else:
+            financial_rows = self.repository.load_financial_series_rows(
+                symbol,
+                cutoff,
+                COMPANY_JOURNAL_HISTORY_START_YEAR,
+            )
+            actual_rows, estimate_rows = self.repository.load_earnings_series_rows(
+                symbol,
+                cutoff,
+                COMPANY_JOURNAL_HISTORY_START_YEAR,
+            )
+            financial = financial_series_from_rows(financial_rows).get(symbol, [])
+            earnings = earnings_series_from_rows(actual_rows, estimate_rows).get(symbol, [])
+        performance = (
+            self.repository.load_performance_series([symbol, *benchmark_symbols])
+            if cutoff is None
+            else self.repository.load_performance_series([symbol, *benchmark_symbols], cutoff=cutoff)
+        )
         missing: list[str] = []
         if not financial:
             missing.append("sec_financial_series")
@@ -147,7 +181,13 @@ class CompanyJournalService:
             for point in earnings
             if point.periodEndDate
         )
-        return {
+        source_dates.extend(
+            str(candle.get("timestamp"))
+            for series in performance
+            for candle in series.get("candles") or []
+            if candle.get("timestamp")
+        )
+        result = {
             "contractVersion": "company-journal-evidence.v1",
             "symbol": symbol,
             "sourceAsOf": max(source_dates, default=None),
@@ -156,6 +196,13 @@ class CompanyJournalService:
             "performanceSeries": performance,
             "missingData": missing,
         }
+        if cutoff is not None:
+            result.update({
+                "simulation": True,
+                "sourceMode": "historical_reconstruction",
+                "cutoff": cutoff.astimezone(timezone.utc).isoformat(),
+            })
+        return result
 
     def enqueue_if_stale(self, symbol: str, source: str = "panel") -> bool:
         bundle = self.repository.load_source_bundle(symbol)
@@ -207,6 +254,100 @@ class CompanyJournalService:
                 self.repository.append_request_event(request, "failed", error=str(exc)[:1000])
                 stats["failed"] += 1
         return stats
+
+
+def build_point_in_time_report(
+    bundle: dict[str, Any],
+    *,
+    cutoff: datetime,
+    input_digest: str,
+) -> dict[str, Any]:
+    metrics, missing_data = calculate_server_metrics(bundle)
+    symbol = str(bundle.get("symbol") or "").upper()
+    company = bundle.get("company") or {}
+    company_name = str(company.get("company_name") or company.get("name") or symbol)
+    analysis_as_of = str(bundle.get("analysisAsOf") or cutoff.date().isoformat())
+    stock_return = finite_number(metrics.get("stockReturnPercent"))
+    relative_return = finite_number(metrics.get("relativeReturnPercentagePoints"))
+    financial = metrics.get("financial") or {}
+    liabilities_to_equity = finite_number(financial.get("liabilitiesToEquity"))
+    revenue_growth = finite_number(financial.get("revenueGrowthYoY"))
+    operating_margin = finite_number(financial.get("operatingMargin"))
+    estimate_rows = bundle.get("earningsEstimates") or []
+    actual_rows = bundle.get("earningsActuals") or []
+
+    if stock_return is None:
+        movement = "가상시각 이전의 완료 일봉이 부족해 최근 수익률은 계산하지 않았습니다."
+    elif relative_return is None:
+        movement = f"최근 3개 완료 거래일 수익률은 {stock_return:+.2f}%입니다. 비교지수 근거는 부족합니다."
+    else:
+        movement = (
+            f"최근 3개 완료 거래일 수익률은 {stock_return:+.2f}%이고, "
+            f"S&P 500 대비 상대수익률은 {relative_return:+.2f}%p입니다."
+        )
+
+    if liabilities_to_equity is None:
+        stability = "가상시각 전에 공개된 부채비율 근거가 없어 재무 안정성을 판단하지 않았습니다."
+    else:
+        stability = (
+            f"가상시각 전에 공개된 부채 대비 자본 비율은 {liabilities_to_equity * 100:.1f}%입니다. "
+            "현금흐름과 이자보상배율을 함께 확인해야 합니다."
+        )
+
+    growth_text = (
+        f"확인 가능한 최근 매출 성장률은 {revenue_growth * 100:+.1f}%입니다."
+        if revenue_growth is not None
+        else "가상시각 전에 공개된 매출 성장률 근거가 부족합니다."
+    )
+    profitability_text = (
+        f"확인 가능한 최근 영업이익률은 {operating_margin * 100:.1f}%입니다."
+        if operating_margin is not None
+        else "가상시각 전에 공개된 영업이익률 근거가 부족합니다."
+    )
+    earnings_text = (
+        f"공개 실적 {len(actual_rows)}건과 당시 저장된 예상치 {len(estimate_rows)}건을 비교할 수 있습니다."
+        if actual_rows or estimate_rows
+        else "가상시각 전에 함께 비교할 수 있는 공개 실적과 예상치가 없습니다."
+    )
+    missing_summary = ", ".join(missing_data[:4])
+    watch_items = (
+        f"누락된 근거({missing_summary})는 최신값으로 대체하지 않았습니다."
+        if missing_summary
+        else "다음 공개 실적과 완료 일봉에서 같은 흐름이 이어지는지 확인해야 합니다."
+    )
+    cutoff_text = cutoff.astimezone(timezone.utc).isoformat()
+    receipt = {
+        **source_receipt(bundle),
+        "sourceMode": "historical_reconstruction",
+        "sourceCutoff": cutoff_text,
+    }
+    return {
+        "contractVersion": "company-journal.v2",
+        "symbol": symbol,
+        "analysisAsOf": analysis_as_of,
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "inputDigest": input_digest,
+        "headline": f"{company_name}의 {analysis_as_of} 시점에 확인 가능한 근거만 정리했습니다.",
+        "keywords": ["시점 재현", "완료 일봉", "공개 재무"],
+        "recentMovement": movement,
+        "financialStability": stability,
+        "watchItems": watch_items,
+        "tabs": {
+            "current": f"{analysis_as_of}까지 공개된 자료만 사용했습니다. {movement}",
+            "growth": growth_text,
+            "profitability": profitability_text,
+            "earnings": earnings_text,
+            "stability": stability,
+            "valuation": "가상시각 이전의 완료 일봉과 공개 재무자료가 있는 범위에서만 가치 지표를 확인합니다.",
+        },
+        "serverMetrics": metrics,
+        "sourceReceipt": receipt,
+        "missingData": missing_data,
+        "validationStatus": "verified",
+        "sourceMode": "historical_reconstruction",
+        "sourceCutoff": cutoff_text,
+        "simulation": True,
+    }
 
 
 def calculate_server_metrics(bundle: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
