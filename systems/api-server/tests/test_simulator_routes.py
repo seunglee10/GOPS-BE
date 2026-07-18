@@ -30,6 +30,7 @@ from systems.order.tests.kis_trader.fixtures.orders import sample_order_request
 class FakeSimulatorGateway:
     def __init__(self, trace=None):
         self.mode = "live"
+        self.state = "idle"
         self.calls = []
         self.trace = trace
         self.virtual_time = "2026-07-15T00:00:00+09:00"
@@ -38,7 +39,7 @@ class FakeSimulatorGateway:
         return {
             "available": True,
             "mode": self.mode,
-            "state": "ready" if self.mode == "simulation" else "idle",
+            "state": self.state,
             "datasetId": "sp500-top20-20260715-kst-v1",
             "runId": "run-1" if self.mode == "simulation" else None,
             "virtualTime": self.virtual_time,
@@ -55,6 +56,7 @@ class FakeSimulatorGateway:
 
     def set_mode(self, mode):
         self.mode = mode
+        self.state = "ready" if mode == "simulation" else "idle"
         self.calls.append(("mode", mode))
         if self.trace is not None:
             self.trace.append(("gateway", mode))
@@ -62,6 +64,9 @@ class FakeSimulatorGateway:
 
     def action(self, action):
         self.calls.append(("action", action))
+        if action == "start":
+            self.mode = "simulation"
+            self.state = "running"
         return self.status()
 
     def set_speed(self, speed):
@@ -176,6 +181,14 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(stopped.json()["mode"], "live")
         self.assertEqual(self.gateway.calls, [("mode", "simulation"), ("mode", "live")])
         self.assertEqual(self.trace, [("gateway", "simulation"), ("gateway", "live")])
+
+    def test_play_action_prepares_and_starts_replay_from_live(self):
+        response = self.client.post("/api/simulator/action", json={"action": "start"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["mode"], "simulation")
+        self.assertEqual(response.json()["state"], "running")
+        self.assertEqual(self.gateway.calls, [("action", "start")])
 
     def test_operator_can_change_replay_speed(self):
         self.gateway.mode = "simulation"
