@@ -1387,13 +1387,18 @@ Dispatcher는 전용 namespace Role로 processor label의 Job 조회·생성과 
 비워 두는 이유는 평일 23:30 UTC의 `gops-company-journal-post-market`과 동시에 시작하지 않기
 위함이다. post-market Job은 최근 데이터 기업을 갱신 예약하고 최대 100건을 직접 처리하며,
 같은 processor label을 사용하므로 이후 Dispatcher도 실행 중인 야간 Job을 중복 실행하지 않는다.
-SEC companyfacts CronJob은 매일 20:30 UTC, Yahoo estimates CronJob은 21:15 UTC에 실행되어
+SEC companyfacts CronJob은 매일 20:30 UTC, Yahoo estimates CronJob은 매일 22:30 UTC에 실행되어
 안정성/실적 차트 원천을 먼저 갱신한다. 기업저널 v2 worker는 최대 520개 일봉과 2021년 이후의
 SEC 실제치, ClickHouse에 실제 적재된 Yahoo 예상치를 읽으며 원천 row를 복제하지 않고 receipt에
 기간과 기준시각만 남긴다. Yahoo 수집 전 과거 컨센서스는 추정하지 않는다.
-같은 Yahoo CronJob은 `yahoo_analyst_actions`와 `yahoo_analyst_consensus`를 멱등 생성·갱신한다.
-기업저널 worker는 최근 120일의 실제 기관 event와 최대 30개 날짜별 consensus snapshot만 읽고,
-기관별 목표가 쌍이나 날짜별 consensus 비교값이 없으면 변화 방향을 생성하지 않는다.
+같은 Yahoo CronJob은 기관 event·목표가·추천 분포를 메모리에서 기업별 한 문장으로 조합한 뒤
+`yahoo_analyst_summaries`에 문장만 저장한다. 테이블 TTL과 API freshness 조건은 모두 24시간이며,
+provider 원본 row/JSON은 저장하지 않는다. 새 projection 적재가 성공하면 기존
+`yahoo_analyst_actions`와 `yahoo_analyst_consensus` 테이블을 삭제한다.
+Yahoo 요청에서는 class-share 표기의 점을 대시로 바꾸되(`BRK.B` -> `BRK-B`), ClickHouse에는
+GOPS canonical symbol인 `BRK.B`를 유지한다.
+기업저널 report worker는 이 단기 문장을 입력·report·receipt에 복제하지 않는다. panel evidence
+API만 현재 24시간 projection을 읽으므로 별도 report 재생성 없이 화면에 반영된다.
 `company-journal-benchmark-bootstrap` Job은 SPY와 8개 섹터 ETF의 2년 `1D` 누락 timestamp만
 기존 candle-bootstrap 계약으로 추가한다. canonical v2/split 기존 행을 삭제하거나 덮어쓰지 않는다.
 CI/local deploy는 market-processor 이미지가 선택됐을 때 이 Job을 명시적으로 실행하고 완료를
@@ -1410,6 +1415,8 @@ pending 0건 Dispatcher 실행은 processor Job, batch NodeClaim, EC2를 생성�
 pending 존재 시 활성 processor가 없으면 다음 Dispatcher 실행에서 batch Job 한 개만 생성
 GET /api/company-journal/NVDA가 ready 또는 pending 계약 반환
 GET /api/company-journal/NVDA/evidence가 SEC/Yahoo/일봉 근거 또는 명시적 missingData 반환
+SIM에서 GET /api/company-journal/NVDA/evidence의 cutoff가 simulator virtualTime과 일치하고 미래 SEC/Yahoo/일봉 행이 없음
+SIM에서 GET /api/company-journal/NVDA는 409를 유지하며 다른 market/agent guard도 그대로 차단
 worker 완료 후 verified report가 ClickHouse에 append
 기존 report row와 원천 테이블 row count가 감소하지 않음
 ```

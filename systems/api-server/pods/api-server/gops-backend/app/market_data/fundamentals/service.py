@@ -157,10 +157,23 @@ class FundamentalsAdapter:
     def latest_for_symbols(self, symbols: list[str]) -> dict[str, FundamentalsRecord]:
         raise NotImplementedError
 
-    def financial_series(self, symbol: str, *, years: int = 3, period: str = "quarterly") -> list[FinancialSeriesPoint]:
+    def financial_series(
+        self,
+        symbol: str,
+        *,
+        years: int = 3,
+        period: str = "quarterly",
+        cutoff: str | None = None,
+    ) -> list[FinancialSeriesPoint]:
         return []
 
-    def earnings_series(self, symbol: str, *, years: int = 3) -> list[EarningsSeriesPoint]:
+    def earnings_series(
+        self,
+        symbol: str,
+        *,
+        years: int = 3,
+        cutoff: str | None = None,
+    ) -> list[EarningsSeriesPoint]:
         return []
 
 
@@ -221,7 +234,13 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                 records[record.symbol] = record
         return records
 
-    def _series_from_clickhouse(self, symbols: list[str], *, years: int = 3) -> dict[str, list[EarningsSeriesPoint]]:
+    def _series_from_clickhouse(
+        self,
+        symbols: list[str],
+        *,
+        years: int = 3,
+        cutoff: str | None = None,
+    ) -> dict[str, list[EarningsSeriesPoint]]:
         provider = self._clickhouse()
         query_json_each_row = getattr(provider, "query_json_each_row", None)
         if not callable(query_json_each_row):
@@ -229,6 +248,27 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
         facts_table = provider.table("sec_financial_facts") if hasattr(provider, "table") else "market_data.sec_financial_facts"
         estimates_table = provider.table("yahoo_earnings_estimates") if hasattr(provider, "table") else "market_data.yahoo_earnings_estimates"
         months = max(18, min(120, int(years) * 12 + 6))
+        history_anchor = "toDate(parseDateTime64BestEffort({cutoff:String}))" if cutoff else "today()"
+        sec_cutoff_clause = (
+            "AND filed_at <= toDate(parseDateTime64BestEffort({cutoff:String}))\n"
+            "                  AND version_filed_at <= toDate(parseDateTime64BestEffort({cutoff:String}))"
+            if cutoff
+            else ""
+        )
+        yahoo_cutoff_clause = (
+            "AND collected_at <= parseDateTime64BestEffort({cutoff:String})"
+            if cutoff
+            else ""
+        )
+        actual_parameters: dict[str, Any] = {
+            "symbols": symbols,
+            "metrics": list(EARNINGS_SERIES_METRICS),
+            "months": months,
+        }
+        estimate_parameters = dict(actual_parameters)
+        if cutoff:
+            actual_parameters["cutoff"] = cutoff
+            estimate_parameters["cutoff"] = cutoff
         try:
             actual_rows = query_json_each_row(
                 f"""
@@ -246,12 +286,13 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                   AND metric IN {{metrics:Array(String)}}
                   AND value IS NOT NULL
                   AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
-                  AND period_end >= addMonths(today(), -{{months:UInt16}})
+                  AND period_end >= addMonths({history_anchor}, -{{months:UInt16}})
+                  {sec_cutoff_clause}
                 ORDER BY symbol ASC, metric ASC, period_end DESC, version_filed_at DESC
                 LIMIT 1 BY symbol, metric, fiscal_year, fiscal_period
                 FORMAT JSONEachRow
                 """,
-                {"symbols": symbols, "metrics": list(EARNINGS_SERIES_METRICS), "months": months},
+                actual_parameters,
             )
         except Exception:
             actual_rows = []
@@ -280,22 +321,36 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                     fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
                     OR (fiscal_period = 'EVENT' AND metric = 'eps' AND event_status = 'reported')
                   )
-                  AND period_end >= addMonths(today(), -{{months:UInt16}})
+                  AND period_end >= addMonths({history_anchor}, -{{months:UInt16}})
+                  {yahoo_cutoff_clause}
                 ORDER BY symbol ASC, metric ASC, period_end DESC, collected_at DESC
                 LIMIT 1 BY symbol, metric, fiscal_period, period_end
                 FORMAT JSONEachRow
                 """,
-                {"symbols": symbols, "metrics": list(EARNINGS_SERIES_METRICS), "months": months},
+                estimate_parameters,
             )
         except Exception:
             estimate_rows = []
         return earnings_series_from_rows(actual_rows or [], estimate_rows or [])
 
-    def earnings_series(self, symbol: str, *, years: int = 3) -> list[EarningsSeriesPoint]:
+    def earnings_series(
+        self,
+        symbol: str,
+        *,
+        years: int = 3,
+        cutoff: str | None = None,
+    ) -> list[EarningsSeriesPoint]:
         normalized = normalize_market_symbol(symbol)
-        return self._series_from_clickhouse([normalized], years=years).get(normalized, [])
+        return self._series_from_clickhouse([normalized], years=years, cutoff=cutoff).get(normalized, [])
 
-    def financial_series(self, symbol: str, *, years: int = 3, period: str = "quarterly") -> list[FinancialSeriesPoint]:
+    def financial_series(
+        self,
+        symbol: str,
+        *,
+        years: int = 3,
+        period: str = "quarterly",
+        cutoff: str | None = None,
+    ) -> list[FinancialSeriesPoint]:
         normalized = normalize_market_symbol(symbol)
         provider = self._clickhouse()
         query_json_each_row = getattr(provider, "query_json_each_row", None)
@@ -305,6 +360,21 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
         derived_table = provider.table("sec_derived_metrics") if hasattr(provider, "table") else "market_data.sec_derived_metrics"
         fiscal_periods = ("FY",) if period == "annual" else ("Q1", "Q2", "Q3", "Q4")
         months = max(12, min(120, int(years) * 12 + 6))
+        history_anchor = "toDate(parseDateTime64BestEffort({cutoff:String}))" if cutoff else "today()"
+        cutoff_clause = (
+            "AND filed_at <= toDate(parseDateTime64BestEffort({cutoff:String}))\n"
+            "                  AND version_filed_at <= toDate(parseDateTime64BestEffort({cutoff:String}))"
+            if cutoff
+            else ""
+        )
+        query_parameters: dict[str, Any] = {
+            "symbol": normalized,
+            "metrics": list(FINANCIAL_SERIES_METRICS),
+            "fiscalPeriods": list(fiscal_periods),
+            "months": months,
+        }
+        if cutoff:
+            query_parameters["cutoff"] = cutoff
         try:
             fact_rows = query_json_each_row(
                 f"""
@@ -323,17 +393,13 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                   AND metric IN {{metrics:Array(String)}}
                   AND fiscal_period IN {{fiscalPeriods:Array(String)}}
                   AND value IS NOT NULL
-                  AND period_end >= addMonths(today(), -{{months:UInt16}})
+                  AND period_end >= addMonths({history_anchor}, -{{months:UInt16}})
+                  {cutoff_clause}
                 ORDER BY metric ASC, period_end DESC, version_filed_at DESC
                 LIMIT 1 BY metric, fiscal_year, fiscal_period
                 FORMAT JSONEachRow
                 """,
-                {
-                    "symbol": normalized,
-                    "metrics": list(FINANCIAL_SERIES_METRICS),
-                    "fiscalPeriods": list(fiscal_periods),
-                    "months": months,
-                },
+                query_parameters,
             )
         except Exception:
             fact_rows = []
@@ -354,16 +420,15 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                   AND metric IN {{metrics:Array(String)}}
                   AND fiscal_period IN {{fiscalPeriods:Array(String)}}
                   AND value IS NOT NULL
-                  AND period_end >= addMonths(today(), -{{months:UInt16}})
+                  AND period_end >= addMonths({history_anchor}, -{{months:UInt16}})
+                  {cutoff_clause}
                 ORDER BY metric ASC, period_end DESC, version_filed_at DESC
                 LIMIT 1 BY metric, fiscal_year, fiscal_period
                 FORMAT JSONEachRow
                 """,
                 {
-                    "symbol": normalized,
+                    **query_parameters,
                     "metrics": list(FINANCIAL_DERIVED_SERIES_METRICS),
-                    "fiscalPeriods": list(fiscal_periods),
-                    "months": months,
                 },
             )
         except Exception:
@@ -489,16 +554,29 @@ class CompositeFundamentalsAdapter(FundamentalsAdapter):
             records.update(adapter.latest_for_symbols(missing))
         return records
 
-    def financial_series(self, symbol: str, *, years: int = 3, period: str = "quarterly") -> list[FinancialSeriesPoint]:
+    def financial_series(
+        self,
+        symbol: str,
+        *,
+        years: int = 3,
+        period: str = "quarterly",
+        cutoff: str | None = None,
+    ) -> list[FinancialSeriesPoint]:
         for adapter in self.adapters:
-            series = adapter.financial_series(symbol, years=years, period=period)
+            series = adapter.financial_series(symbol, years=years, period=period, cutoff=cutoff)
             if series:
                 return series
         return []
 
-    def earnings_series(self, symbol: str, *, years: int = 3) -> list[EarningsSeriesPoint]:
+    def earnings_series(
+        self,
+        symbol: str,
+        *,
+        years: int = 3,
+        cutoff: str | None = None,
+    ) -> list[EarningsSeriesPoint]:
         for adapter in self.adapters:
-            series = adapter.earnings_series(symbol, years=years)
+            series = adapter.earnings_series(symbol, years=years, cutoff=cutoff)
             if series:
                 return series
         return []

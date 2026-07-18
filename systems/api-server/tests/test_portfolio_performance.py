@@ -152,6 +152,34 @@ def test_current_paper_principal_is_not_backfilled_across_account_resets_or_simu
     ) is None
 
 
+def test_current_seeded_demo_principal_backfills_immutable_fixture_history() -> None:
+    seeded_history = [
+        {
+            **snapshot("2026-06-18T00:00:00Z", 5),
+            "payload": {
+                **snapshot("2026-06-18T00:00:00Z", 5)["payload"],
+                "source": "seeded-demo",
+                "seedProfile": SEED_PROFILE,
+            },
+        },
+        {
+            **snapshot("2026-07-17T00:00:00Z", 10),
+            "payload": {
+                **snapshot("2026-07-17T00:00:00Z", 10)["payload"],
+                "source": "seeded-demo",
+                "seedProfile": SEED_PROFILE,
+            },
+        },
+    ]
+
+    assert _performance_principal_for_snapshots(
+        seeded_history,
+        current_principal=100_000,
+        current_principal_started_at=datetime(2026, 7, 18, tzinfo=timezone.utc),
+        simulation_time=None,
+    ) == 100_000
+
+
 def test_account_performance_route_uses_user_daily_snapshots_and_benchmark() -> None:
     os.environ["AUTH_ENABLED"] = "false"
     app = create_app()
@@ -261,5 +289,8 @@ def test_seeded_performance_ignores_live_valuation_outlier_until_user_trades() -
     assert response.status_code == 200
     payload = response.json()
     assert payload["portfolio"]["points"][-1]["portfolioValue"] == float(DEMO_EQUITY)
+    assert {
+        point["netInvestedPrincipal"] for point in payload["portfolio"]["points"]
+    } == {100_000}
     values = [point["portfolioValue"] for point in payload["portfolio"]["points"]]
     assert max(values) - min(values) < 1000

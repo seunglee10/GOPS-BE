@@ -964,10 +964,9 @@ Kubernetes batch Job에서 수행한다. Dispatcher는 생성 요청이 없으�
 ClickHouse에 실제 적재된 Yahoo 예상 실적을 bounded 조회한다. Yahoo는 과거 실제 실적을 대체하거나
 수집 전 과거 컨센서스를 추정하지 않는다. Yahoo table이 아직 비어 있거나 선택적 원천 조회가 실패하면
 route 자체를 실패시키지 않고 missing data로 남기며, 검증된 문장은 없는 숫자를 만들지 않는다.
-같은 bundle은 최근 120일의 Yahoo 기관별 투자의견 event와 날짜별 목표주가 컨센서스 snapshot을
-bounded 조회한다. 기관명·등급·목표주가가 실제 row에 있을 때만 문장에 사용하며, 이전/현재 목표주가
-쌍이 없으면 기관 목표가 변화로 표현하지 않는다. 서로 다른 snapshot 날짜가 두 개 이상 없으면
-시장 컨센서스 상승·하락도 표현하지 않는다. 유료 리서치의 사유나 원문을 추정하지 않는다.
+기관 의견은 이 report bundle에 포함하지 않는다. Yahoo 수집기는 기관 event·목표가·추천 분포를
+메모리에서 기업별 한 문장으로 조합하고 원본 row/JSON을 폐기한다. 문장은 별도
+`yahoo_analyst_summaries` projection에만 24시간 보관하므로 report·receipt·OpenAI 입력에 복제하지 않는다.
 
 `/evidence`는 기업저널 panel 전용 읽기 계약으로 분기 재무, SEC/Yahoo 실적, 최대 520개 일봉을
 한 번에 반환한다. replay simulation에서는 두 GET route가 simulator status의 `virtualTime`을
@@ -979,6 +978,10 @@ SEC는 시간 정밀도가 날짜뿐이므로 replay 당일 filing은 제외하�
 action은 `action_at`과 `collected_at`, 저장 요약과 graph는 `generated_at`이 cutoff 이하일 때만
 사용한다. 완료 일봉은 New York 기준 현재 replay 날짜보다 이전 session만 선택한다. 적격 row가
 없으면 결측으로 남기며 최신 report, live fundamentals adapter, 현재 candle로 fallback하지 않는다.
+`/evidence`는 여기에 현재 Yahoo `analystSummary` 한 건을 추가한다. summary query는
+`collected_at >= now() - 24h`와 simulation cutoff를 모두 강제하므로 오래된 SIM을 위해 analyst
+이력을 보존하거나 현재 문장을 과거 사실로 대체하지 않는다. 현재 summary가 없으면
+`yahoo_analyst_summary`를 `missingData`에 명시하며, report·receipt·OpenAI 입력에는 복제하지 않는다.
 
 ## Failure Policy
 

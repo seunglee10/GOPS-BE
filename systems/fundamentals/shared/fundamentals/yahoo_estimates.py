@@ -14,6 +14,11 @@ from .backfill import build_clickhouse_client, clickhouse_datetime, ensure_sec_c
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 
+def yahoo_provider_symbol(symbol: str) -> str:
+    """Translate GOPS class-share symbols to Yahoo Finance's ticker format."""
+    return symbol.strip().upper().replace(".", "-")
+
+
 @dataclass
 class YahooEstimatesConfig:
     dry_run: bool = True
@@ -42,8 +47,7 @@ class YahooEstimatesStats:
     symbols_loaded: int = 0
     rows: int = 0
     analyst_symbols_loaded: int = 0
-    analyst_action_rows: int = 0
-    analyst_consensus_rows: int = 0
+    analyst_summary_rows: int = 0
     errors: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,8 +59,7 @@ class YahooEstimatesStats:
             "symbolsSucceeded": self.symbols_loaded,
             "rows": self.rows,
             "analystSymbolsLoaded": self.analyst_symbols_loaded,
-            "analystActionRows": self.analyst_action_rows,
-            "analystConsensusRows": self.analyst_consensus_rows,
+            "analystSummaryRows": self.analyst_summary_rows,
             "errors": self.errors,
         }
 
@@ -85,10 +88,9 @@ def run_yahoo_estimates_sync(
     clickhouse_client = clickhouse_client or build_clickhouse_client()
     ensure_sec_clickhouse_schema(clickhouse_client)
     fetcher = fetcher or fetch_yfinance_estimate_rows
-    analyst_fetcher = analyst_fetcher or fetch_yfinance_analyst_rows
+    analyst_fetcher = analyst_fetcher or fetch_yfinance_analyst_summary
     batch: list[dict[str, Any]] = []
-    analyst_action_batch: list[dict[str, Any]] = []
-    analyst_consensus_batch: list[dict[str, Any]] = []
+    analyst_summary_batch: list[dict[str, Any]] = []
     for symbol in symbols:
         try:
             rows = fetcher(symbol, collected_at=started_at)
@@ -104,32 +106,26 @@ def run_yahoo_estimates_sync(
                 insert_batches(clickhouse_client, "yahoo_earnings_estimates", batch, config.batch_size)
                 batch = []
         try:
-            action_rows, consensus_rows = analyst_fetcher(symbol, collected_at=started_at)
+            analyst_summary = analyst_fetcher(symbol, collected_at=started_at)
         except Exception as exc:
             message = str(exc).strip()
             append_sync_error(stats, symbol, "analysts", exc.__class__.__name__, message)
-            action_rows, consensus_rows = [], []
-        if action_rows or consensus_rows:
+            analyst_summary = None
+        if analyst_summary:
             stats.analyst_symbols_loaded += 1
-            stats.analyst_action_rows += len(action_rows)
-            stats.analyst_consensus_rows += len(consensus_rows)
-            analyst_action_batch.extend(action_rows)
-            analyst_consensus_batch.extend(consensus_rows)
-        if len(analyst_action_batch) >= config.batch_size:
-            insert_batches(clickhouse_client, "yahoo_analyst_actions", analyst_action_batch, config.batch_size)
-            analyst_action_batch = []
-        if len(analyst_consensus_batch) >= config.batch_size:
-            insert_batches(clickhouse_client, "yahoo_analyst_consensus", analyst_consensus_batch, config.batch_size)
-            analyst_consensus_batch = []
+            stats.analyst_summary_rows += 1
+            analyst_summary_batch.append(analyst_summary)
+        if len(analyst_summary_batch) >= config.batch_size:
+            insert_batches(clickhouse_client, "yahoo_analyst_summaries", analyst_summary_batch, config.batch_size)
+            analyst_summary_batch = []
     if batch:
         insert_batches(clickhouse_client, "yahoo_earnings_estimates", batch, config.batch_size)
-    if analyst_action_batch:
-        insert_batches(clickhouse_client, "yahoo_analyst_actions", analyst_action_batch, config.batch_size)
-    if analyst_consensus_batch:
-        insert_batches(clickhouse_client, "yahoo_analyst_consensus", analyst_consensus_batch, config.batch_size)
+    if analyst_summary_batch:
+        insert_batches(clickhouse_client, "yahoo_analyst_summaries", analyst_summary_batch, config.batch_size)
     if stats.rows == 0:
         print(json.dumps({"status": "failed", "reason": "zero-rows", **stats.to_dict()}, ensure_ascii=False, default=str), flush=True)
         raise RuntimeError("Yahoo estimates sync produced zero rows")
+    finalize_analyst_summary_storage(clickhouse_client)
     print(json.dumps({"status": "success", **stats.to_dict()}, ensure_ascii=False, default=str), flush=True)
     return stats
 
@@ -140,7 +136,7 @@ def fetch_yfinance_estimate_rows(symbol: str, *, collected_at: datetime) -> list
     except ImportError as exc:
         raise RuntimeError("yfinance is required for Yahoo estimates sync") from exc
 
-    ticker = yf.Ticker(symbol)
+    ticker = yf.Ticker(yahoo_provider_symbol(symbol))
     rows: list[dict[str, Any]] = []
     rows.extend(rows_from_estimate_frame(symbol, "eps", safe_call(ticker, "get_earnings_estimate"), collected_at=collected_at))
     rows.extend(rows_from_estimate_frame(symbol, "revenue", safe_call(ticker, "get_revenue_estimate"), collected_at=collected_at))
@@ -148,17 +144,17 @@ def fetch_yfinance_estimate_rows(symbol: str, *, collected_at: datetime) -> list
     return dedupe_rows(rows)
 
 
-def fetch_yfinance_analyst_rows(
+def fetch_yfinance_analyst_summary(
     symbol: str,
     *,
     collected_at: datetime,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> dict[str, Any] | None:
     try:
         import yfinance as yf
     except ImportError as exc:
         raise RuntimeError("yfinance is required for Yahoo analyst sync") from exc
 
-    ticker = yf.Ticker(symbol)
+    ticker = yf.Ticker(yahoo_provider_symbol(symbol))
     actions = rows_from_upgrades_downgrades(
         symbol,
         safe_call(ticker, "get_upgrades_downgrades"),
@@ -170,7 +166,12 @@ def fetch_yfinance_analyst_rows(
         safe_call(ticker, "get_recommendations_summary"),
         collected_at=collected_at,
     )
-    return dedupe_analyst_actions(actions), consensus
+    return build_analyst_summary_row(
+        symbol,
+        dedupe_analyst_actions(actions),
+        consensus,
+        collected_at=collected_at,
+    )
 
 
 def rows_from_upgrades_downgrades(symbol: str, frame: Any, *, collected_at: datetime) -> list[dict[str, Any]]:
@@ -201,6 +202,8 @@ def rows_from_upgrades_downgrades(symbol: str, frame: Any, *, collected_at: date
             row,
             "PriceTarget",
             "priceTarget",
+            "CurrentPriceTarget",
+            "currentPriceTarget",
             "NewPriceTarget",
             "newPriceTarget",
             "priceTargetCurrent",
@@ -216,14 +219,6 @@ def rows_from_upgrades_downgrades(symbol: str, frame: Any, *, collected_at: date
             "price_target": target,
             "source": "yahoo-finance",
             "collected_at": clickhouse_datetime(collected_at),
-            "raw": json.dumps({
-                "firm": firm,
-                "action": action,
-                "fromGrade": from_grade,
-                "toGrade": to_grade,
-                "priorPriceTarget": prior_target,
-                "priceTarget": target,
-            }, ensure_ascii=False, separators=(",", ":"), default=str),
         })
     return rows
 
@@ -253,8 +248,123 @@ def rows_from_analyst_consensus(
         **counts,
         "source": "yahoo-finance",
         "collected_at": clickhouse_datetime(collected_at),
-        "raw": json.dumps({"priceTargets": targets, "recommendationCounts": counts}, ensure_ascii=False, separators=(",", ":"), default=str),
     }]
+
+
+def build_analyst_summary_row(
+    symbol: str,
+    actions: list[dict[str, Any]],
+    consensus_rows: list[dict[str, Any]],
+    *,
+    collected_at: datetime,
+) -> dict[str, Any] | None:
+    """Collapse Yahoo analyst payloads to one display sentence per symbol."""
+
+    normalized_symbol = symbol.strip().upper()
+    latest_action = max(actions, key=lambda row: str(row.get("action_at") or ""), default=None)
+    consensus = consensus_rows[0] if consensus_rows else {}
+    sentences: list[str] = []
+    tone = "neutral"
+
+    if latest_action:
+        firm = str(latest_action.get("firm") or "").strip()
+        action = normalize_analyst_action(str(latest_action.get("action") or ""))
+        from_grade = str(latest_action.get("from_grade") or "").strip()
+        to_grade = str(latest_action.get("to_grade") or "").strip()
+        prior_target = parse_float(latest_action.get("prior_price_target"))
+        current_target = parse_float(latest_action.get("price_target"))
+        action_date = str(latest_action.get("action_at") or "")[:10]
+        if action == "upgrade":
+            tone = "positive"
+        elif action == "downgrade":
+            tone = "negative"
+        rating_phrase = analyst_rating_phrase(action, from_grade, to_grade)
+        target_phrase = analyst_target_phrase(prior_target, current_target)
+        detail = "하고 ".join(value for value in (rating_phrase, target_phrase) if value)
+        if firm and detail:
+            prefix = f"{action_date} " if action_date else ""
+            sentences.append(f"{prefix}{firm}은 {normalized_symbol}의 {detail}했습니다.")
+
+    target_mean = parse_float(consensus.get("target_mean"))
+    if target_mean is not None:
+        sentences.append(f"시장 평균 목표주가는 {format_usd(target_mean)}입니다.")
+    strong_buy = int_or_none(consensus.get("strong_buy")) or 0
+    buy = int_or_none(consensus.get("buy")) or 0
+    hold = int_or_none(consensus.get("hold")) or 0
+    sell = int_or_none(consensus.get("sell")) or 0
+    strong_sell = int_or_none(consensus.get("strong_sell")) or 0
+    if strong_buy + buy + hold + sell + strong_sell > 0:
+        sentences.append(
+            f"의견 분포는 매수 {strong_buy + buy}·보유 {hold}·매도 {sell + strong_sell}입니다."
+        )
+    if not sentences:
+        return None
+    return {
+        "symbol": normalized_symbol,
+        "statement": " ".join(sentences),
+        "tone": tone,
+        "source_as_of": clickhouse_datetime(collected_at),
+        "source": "yahoo-finance",
+        "collected_at": clickhouse_datetime(collected_at),
+    }
+
+
+def normalize_analyst_action(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in {"up", "upgrade", "upgraded"}:
+        return "upgrade"
+    if normalized in {"down", "downgrade", "downgraded"}:
+        return "downgrade"
+    if normalized in {"main", "maintain", "maintained", "reit", "reiterate", "reiterated"}:
+        return "maintain"
+    if normalized in {"init", "initiate", "initiated"}:
+        return "initiate"
+    return normalized or "unknown"
+
+
+def analyst_rating_phrase(action: str, from_grade: str, to_grade: str) -> str:
+    grade = to_grade or from_grade
+    if action == "upgrade" and from_grade and to_grade:
+        return f"투자의견을 {from_grade}에서 {to_grade}로 상향"
+    if action == "upgrade" and to_grade:
+        return f"투자의견을 {to_grade}로 상향"
+    if action == "downgrade" and from_grade and to_grade:
+        return f"투자의견을 {from_grade}에서 {to_grade}로 하향"
+    if action == "downgrade" and to_grade:
+        return f"투자의견을 {to_grade}로 하향"
+    if action == "initiate" and to_grade:
+        return f"투자의견 {to_grade}로 분석을 시작"
+    if action == "maintain" and grade:
+        return f"투자의견 {grade}를 유지"
+    if grade:
+        return f"투자의견 {grade}를 제시"
+    return ""
+
+
+def analyst_target_phrase(prior_target: float | None, current_target: float | None) -> str:
+    if prior_target is not None and current_target is not None:
+        direction = "상향" if current_target > prior_target else "하향" if current_target < prior_target else "유지"
+        return f"목표주가를 {format_usd(prior_target)}에서 {format_usd(current_target)}로 {direction}"
+    if current_target is not None:
+        return f"목표주가를 {format_usd(current_target)}로 제시"
+    return ""
+
+
+def format_usd(value: float) -> str:
+    return f"${value:,.2f}".rstrip("0").rstrip(".")
+
+
+def int_or_none(value: Any) -> int | None:
+    number = parse_float(value)
+    return int(number) if number is not None and number >= 0 else None
+
+
+def finalize_analyst_summary_storage(clickhouse_client: Any) -> None:
+    """Remove legacy raw analyst tables and compact the 24-hour projection."""
+
+    clickhouse_client.execute("DROP TABLE IF EXISTS market_data.yahoo_analyst_actions")
+    clickhouse_client.execute("DROP TABLE IF EXISTS market_data.yahoo_analyst_consensus")
+    clickhouse_client.execute("OPTIMIZE TABLE market_data.yahoo_analyst_summaries FINAL")
 
 
 def safe_call(obj: Any, method_name: str, **kwargs: Any) -> Any:

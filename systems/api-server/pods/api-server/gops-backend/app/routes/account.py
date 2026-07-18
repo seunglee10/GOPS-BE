@@ -348,7 +348,7 @@ def _performance_principal_for_snapshots(
     """Use a live paper principal only when every visible point belongs to the current account run."""
     if current_principal is None or simulation_time is not None:
         return None
-    if current_principal_started_at is None:
+    if current_principal_started_at is None or _is_current_seeded_demo_history(snapshots):
         return current_principal
     observed_times: list[datetime] = []
     for row in snapshots:
@@ -363,6 +363,24 @@ def _performance_principal_for_snapshots(
     if observed_times and min(observed_times) < current_principal_started_at:
         return None
     return current_principal
+
+
+def _is_current_seeded_demo_history(snapshots: list[dict[str, Any]]) -> bool:
+    """Seed history is an immutable reconstruction of the current seeded paper account."""
+    if not snapshots:
+        return False
+    for row in snapshots:
+        payload = row.get("payload") if isinstance(row, dict) else None
+        if not isinstance(payload, dict):
+            return False
+        if not (
+            payload.get("source") == "seeded-demo"
+            or payload.get("dataOrigin") == "seeded-demo"
+            or payload.get("seedProfile")
+            or payload.get("seed_profile")
+        ):
+            return False
+    return True
 
 
 def _kis_client_from_app(app: Any) -> Any:

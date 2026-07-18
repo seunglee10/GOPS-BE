@@ -3867,6 +3867,32 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertIn("event_status = 'reported'", estimate_query)
         self.assertNotIn("actual_value AS actualValue", estimate_query)
 
+    def test_store_fundamentals_series_apply_company_journal_cutoff_to_every_source(self):
+        provider = FakeHeatmapProvider()
+        adapter = StoreFundamentalsAdapter(provider=provider)
+        cutoff = "2026-07-15T00:00:00+09:00"
+
+        adapter.financial_series("MSFT", years=6, cutoff=cutoff)
+        adapter.earnings_series("MSFT", years=6, cutoff=cutoff)
+
+        source_calls = [
+            call for call in provider.clickhouse_provider.calls
+            if "query" in call and any(table in call["query"] for table in (
+                "sec_financial_facts",
+                "sec_derived_metrics",
+                "yahoo_earnings_estimates",
+            ))
+        ]
+        self.assertGreaterEqual(len(source_calls), 4)
+        for call in source_calls:
+            self.assertEqual(call["params"]["cutoff"], cutoff)
+            self.assertIn("parseDateTime64BestEffort({cutoff:String})", call["query"])
+        sec_calls = [call for call in source_calls if "sec_" in call["query"]]
+        self.assertTrue(all("filed_at <=" in call["query"] for call in sec_calls))
+        self.assertTrue(all("version_filed_at <=" in call["query"] for call in sec_calls))
+        yahoo_call = next(call for call in source_calls if "yahoo_earnings_estimates" in call["query"])
+        self.assertIn("collected_at <=", yahoo_call["query"])
+
     def test_yahoo_event_estimate_is_matched_to_preceding_sec_quarter(self):
         series = earnings_series_from_rows(
             [{

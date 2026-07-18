@@ -34,7 +34,7 @@ from app.routes.streams import chart_stream, router as streams_router
 from app.services.ai_agents import openai_agent_chat, openai_chart_proposal
 from app.services.agent_request_limit import AgentRequestBodyLimitMiddleware
 from app.services.alfaka_market_data import configured_symbols, get_market_data_provider, symbol_summaries
-from app.services.simulation_guard import requires_point_in_time_data
+from app.services.simulation_guard import requires_point_in_time_data, supports_cutoff_safe_simulation_read
 from gops_agents.query_understanding import warm_entity_catalog_cache
 
 
@@ -74,6 +74,15 @@ def create_app() -> FastAPI:
             except SimulatorUnavailable:
                 simulator_status = {}
             if simulator_status.get("mode") == "simulation":
+                if supports_cutoff_safe_simulation_read(request.url.path, request.method):
+                    cutoff = str(simulator_status.get("virtualTime") or "").strip()
+                    if not cutoff:
+                        return JSONResponse(
+                            status_code=409,
+                            content={"detail": "simulation_data_unavailable"},
+                        )
+                    request.state.simulation_point_in_time_cutoff = cutoff
+                    return await call_next(request)
                 if request.url.path.startswith("/api/recommendations/stocks"):
                     try:
                         provider = fixed_replay_provider(request.app, force=True)

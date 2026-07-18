@@ -662,6 +662,7 @@ class InMemoryPaperTradingRepository:
                 "cashForeign": run["cash_balance"],
                 "stockValueForeign": market_value,
                 "totalValueForeign": equity,
+                "netInvestedPrincipal": run["starting_cash"],
                 "unrealizedPnlForeign": market_value - holdings_cost,
             },
             "positions": rendered,

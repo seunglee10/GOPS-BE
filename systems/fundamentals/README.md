@@ -115,8 +115,7 @@ sec_derived_metrics
 sec_frames
 sec_collection_runs
 yahoo_earnings_estimates
-yahoo_analyst_actions
-yahoo_analyst_consensus
+yahoo_analyst_summaries
 ```
 
 Redis stale checks are not part of the Financial Agent runtime. Sync or nightly
@@ -144,13 +143,19 @@ The Yahoo estimates entrypoint is:
 python -u systems/fundamentals/jobs/yahoo-estimates-sync/main.py
 ```
 
-It runs in the `gops-market-storage` image and writes Yahoo EPS/revenue consensus,
-firm rating actions, and daily analyst target consensus to
-`market_data.yahoo_earnings_estimates`, `market_data.yahoo_analyst_actions`, and
-`market_data.yahoo_analyst_consensus`. It does not write SEC actual tables or Redis
-fundamentals summaries. In AWS/EKS the scheduled collector is
+It runs in the `gops-market-storage` image and writes Yahoo EPS/revenue consensus to
+`market_data.yahoo_earnings_estimates`. Analyst actions, price targets, and
+recommendation counts exist only in collector memory long enough to build one Korean
+statement per symbol. Only that statement is written to
+`market_data.yahoo_analyst_summaries`; the provider rows and raw JSON are not stored.
+The summary table has a 24-hour TTL and the first successful run drops the legacy raw
+analyst tables. It does not write SEC actual tables or Redis fundamentals summaries.
+In AWS/EKS the scheduled collector is
 `infra/k8s/overlays/aws/scheduled/cronjob-yahoo-estimates-sync.yaml`, running on
-weekdays at `22:30 UTC`.
+every day at `22:30 UTC`.
+
+Class-share symbols use Yahoo's dash form only for the provider request (for example,
+`BRK.B` -> `BRK-B`); persisted rows keep the GOPS canonical symbol `BRK.B`.
 
 Default execution is a dry-run:
 
@@ -175,12 +180,11 @@ market session, actual EPS, estimate, surprise percentage, and
 scheduled/reported status. An empty universe or a zero-row live run exits with
 failure and prints structured requested/succeeded/row/error counts.
 
-Analyst-action rows preserve only Yahoo Finance fields actually returned by
-yfinance: firm, action date, rating action/from/to grade, and optional prior/current
-price targets. Missing targets or reasons are never inferred. Daily consensus rows
-preserve current/low/high/mean/median targets and recommendation counts when Yahoo
-provides them. Consecutive snapshot dates allow the Company Journal to describe a
-consensus direction without reconstructing history from a single current value.
+The analyst projection combines only Yahoo Finance fields actually returned by
+yfinance: the latest firm/rating action, optional prior/current target pair, mean
+target, and recommendation counts. Missing targets or reasons are never inferred.
+The API reads this current sentence directly; reports do not copy it, and it is not
+available as historical evidence after its 24-hour retention window.
 
 ## 10-K Profile Backfill
 
