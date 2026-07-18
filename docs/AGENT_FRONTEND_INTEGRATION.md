@@ -106,10 +106,10 @@ limit-only 계약을 유지한다. 주문 상태는 `/ws/orders/{order_id}`의 S
 `published_at`과 `localized_at`이 모두 `virtualTime` 이하인 기사만 고른 결과이며,
 프런트가 가상시각을 query로 보내거나 live Redis 결과와 합치지 않는다. 일별 뉴스 API와
 차트의 `GET /api/charts/events`도 `generated_at <= virtualTime`인 저장 스냅샷만
-반환한다. 추천 패널은 검증된 fixed replay provider가 켜진 배포에서 기존
-recommendation API를 다시 조회한다. 서버는 활성 SIM `runId`와 시각이 검증된 최신 paper
+반환한다. 추천 패널은 SIM 전 구간에서 기존 recommendation API를 다시 조회하고 서버가
+번들된 검증 fixed replay provider를 사용하므로 `simulation_data_unavailable`을 표시하지 않는다.
+서버는 활성 SIM `runId`와 시각이 검증된 최신 paper
 portfolio로 추천을 다시 계산할 수 있으며, 프런트는 계좌와 추천 item을 직접 합치지 않는다.
-replay cursor가 artifact의 근거시각보다 이르면 `simulation_data_unavailable`을 표시한다.
 차트 자동 작도는 현재 symbol과 interval을
 `GET /api/charts/analysis-assets`에 보내며, 서버가 replay cursor까지의 실제 완료 봉으로
 만든 비영속 Geometry 자산만 표시한다. 저장된 자산의 `asOf`가 cursor보다 미래이면

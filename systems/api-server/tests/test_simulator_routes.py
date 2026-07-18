@@ -679,19 +679,30 @@ class SimulatorRoutesTest(unittest.TestCase):
         service.latest.assert_not_called()
         service.enqueue_if_stale.assert_not_called()
 
-    def test_fixed_recommendations_wait_for_their_evidence_cutoff(self):
+    def test_fixed_recommendations_are_available_for_the_entire_simulation(self):
         self.gateway.mode = "simulation"
         with patch.dict(os.environ, {
-            "RECOMMENDATION_FIXED_REPLAY_ENABLED": "true",
+            "RECOMMENDATION_FIXED_REPLAY_ENABLED": "false",
             "RECOMMENDATION_DECISION_V1_ENABLED": "false",
         }):
             before_cutoff = self.client.get("/api/recommendations/stocks/latest")
+            refreshed = self.client.post("/api/recommendations/stocks/refresh", json={})
             self.gateway.virtual_time = "2026-07-15T05:00:00+09:00"
             at_cutoff = self.client.get("/api/recommendations/stocks/latest")
 
-        self.assertEqual(before_cutoff.status_code, 409)
-        self.assertEqual(before_cutoff.json()["detail"], "simulation_data_unavailable")
+        self.assertEqual(before_cutoff.status_code, 200)
+        self.assertEqual(refreshed.status_code, 200)
         self.assertEqual(at_cutoff.status_code, 200)
+        self.assertEqual(len(before_cutoff.json()["items"]), 15)
+        self.assertEqual(
+            before_cutoff.json()["recommendationDigest"],
+            refreshed.json()["recommendationDigest"],
+        )
+        self.assertEqual(
+            before_cutoff.json()["recommendationDigest"],
+            at_cutoff.json()["recommendationDigest"],
+        )
+        self.assertEqual(before_cutoff.json()["evidenceAsOf"], "2026-07-14T16:00:00-04:00")
         self.assertEqual(at_cutoff.json()["evidenceAsOf"], "2026-07-14T16:00:00-04:00")
 
     def test_chart_events_use_the_replay_cursor_in_simulation_mode(self):

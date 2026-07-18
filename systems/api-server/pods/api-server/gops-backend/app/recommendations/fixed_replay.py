@@ -184,8 +184,8 @@ def configured_artifact_path() -> Path:
     return Path(configured) if configured else DEFAULT_ARTIFACT_PATH
 
 
-def prepare_fixed_replay_provider(app: Any) -> None:
-    if not fixed_replay_enabled():
+def prepare_fixed_replay_provider(app: Any, *, force: bool = False) -> None:
+    if not force and not fixed_replay_enabled():
         app.state.fixed_replay_recommendation_provider = None
         app.state.fixed_replay_recommendation_error = None
         return
@@ -199,13 +199,13 @@ def prepare_fixed_replay_provider(app: Any) -> None:
     app.state.fixed_replay_recommendation_error = None
 
 
-def fixed_replay_provider(app: Any) -> FixedReplayRecommendationProvider | None:
-    if not fixed_replay_enabled():
+def fixed_replay_provider(app: Any, *, force: bool = False) -> FixedReplayRecommendationProvider | None:
+    if not force and not fixed_replay_enabled():
         return None
     provider = getattr(app.state, "fixed_replay_recommendation_provider", None)
     error = getattr(app.state, "fixed_replay_recommendation_error", None)
     if provider is None and error is None:
-        prepare_fixed_replay_provider(app)
+        prepare_fixed_replay_provider(app, force=force)
         provider = getattr(app.state, "fixed_replay_recommendation_provider", None)
         error = getattr(app.state, "fixed_replay_recommendation_error", None)
     if isinstance(error, FixedReplayProviderError):

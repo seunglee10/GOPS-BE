@@ -15,8 +15,6 @@ from app.market_data.query.routes import router as market_query_router
 from app.recommendations.routes import router as recommendations_router
 from app.recommendations.fixed_replay import (
     FixedReplayProviderError,
-    fixed_replay_available_at,
-    fixed_replay_enabled,
     fixed_replay_provider,
     prepare_fixed_replay_provider,
 )
@@ -76,22 +74,15 @@ def create_app() -> FastAPI:
             except SimulatorUnavailable:
                 simulator_status = {}
             if simulator_status.get("mode") == "simulation":
-                if request.url.path.startswith("/api/recommendations/stocks") and fixed_replay_enabled():
+                if request.url.path.startswith("/api/recommendations/stocks"):
                     try:
-                        provider = fixed_replay_provider(request.app)
-                        if provider is None or not fixed_replay_available_at(
-                            provider,
-                            simulator_status.get("virtualTime"),
-                        ):
-                            return JSONResponse(
-                                status_code=409,
-                                content={"detail": "simulation_data_unavailable"},
-                            )
+                        provider = fixed_replay_provider(request.app, force=True)
                     except FixedReplayProviderError:
                         return JSONResponse(
                             status_code=503,
                             content={"detail": "fixed_replay_recommendation_unavailable"},
                         )
+                    request.state.fixed_replay_recommendation_provider = provider
                     return await call_next(request)
                 return JSONResponse(
                     status_code=409,

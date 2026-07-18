@@ -238,7 +238,7 @@ def latest_stock_recommendations(
     request: Request,
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
-    provider = _fixed_replay_from_app(request.app)
+    provider = _fixed_replay_from_request(request)
     if provider is not None:
         return jsonable_encoder(_fixed_replay_response(request.app, provider, user.sub))
     return jsonable_encoder(_call_recommendation_storage(lambda: _service_from_app(request.app).latest(user.sub)))
@@ -250,7 +250,7 @@ def refresh_stock_recommendations(
     request: Request,
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
-    provider = _fixed_replay_from_app(request.app)
+    provider = _fixed_replay_from_request(request)
     if provider is not None:
         return jsonable_encoder(_fixed_replay_response(request.app, provider, user.sub))
     now_provider = getattr(request.app.state, "recommendation_now_provider", None)
@@ -273,9 +273,12 @@ def _call_recommendation_storage(callback):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-def _fixed_replay_from_app(app: Any):
+def _fixed_replay_from_request(request: Request):
+    simulation_provider = getattr(request.state, "fixed_replay_recommendation_provider", None)
+    if simulation_provider is not None:
+        return simulation_provider
     try:
-        return fixed_replay_provider(app)
+        return fixed_replay_provider(request.app)
     except FixedReplayProviderError as exc:
         raise HTTPException(status_code=503, detail="fixed_replay_recommendation_unavailable") from exc
 

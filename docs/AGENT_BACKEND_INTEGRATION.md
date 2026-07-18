@@ -431,14 +431,15 @@ action 값이 직접 매수 권한으로 오인되지 않게 한다.
 `fixed_replay_override` 상태만 반환한다. manifest/file/recommendation digest가 하나라도
 맞지 않으면 legacy나 LIVE 결과로 fallback하지 않고 503을 반환한다.
 
-SIM middleware는 이 검증된 provider가 준비된 추천 경로만 예외적으로 허용한다. 시장
-evidence와 진입 판단은 fixed replay cutoff를 유지하며, replay cursor가 artifact의
-7월 14일 16:00 ET 근거시각보다 이르면 409로 차단한다. 다만 현재 저장 portfolio가
+SIM middleware는 환경변수 활성화 여부와 replay cursor 시각에 관계없이 번들된 검증
+provider를 추천 경로에 주입한다. 따라서 SIM 전 구간에서 추천 패널은
+`simulation_data_unavailable`로 차단되지 않으며 응답은 artifact의 실제
+`evidenceAsOf=2026-07-14T16:00:00-04:00`을 그대로 보존한다. 현재 저장 portfolio가
 `simulation=true`, 활성 `runId` 일치, `asOf <= virtualTime`을 모두 만족하면 그 SIM paper
 snapshot으로 보유종목 제외·포트폴리오 적합도·수량을 다시 계산한다. 다른 run, LIVE/KIS,
 미래 시각 snapshot은 사용하지 않고 fixed replay cutoff snapshot으로 돌아간다. 따라서
-SIM에서 계좌 상태가 바뀐 뒤의 item·digest는 LIVE 결과와 달라질 수 있다. override가 꺼져
-있으면 기존처럼 point-in-time 추천 경로를 409로 차단한다.
+SIM에서 계좌 상태가 바뀐 뒤의 item·digest는 LIVE 결과와 달라질 수 있다. 이 강제 주입은
+SIM 요청에만 적용하며 LIVE 추천과 worker의 환경변수 기반 override 계약은 유지한다.
 
 V2 commit은 사용자 advisory lock 아래에서 slot idempotency와 예상 preference state를
 재확인하고, processed/skipped events, immutable preference/risk states, 모든 적격 후보의
