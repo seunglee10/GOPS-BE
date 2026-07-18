@@ -30,6 +30,7 @@ GEOMETRY_ASSET_SCHEMA_PATH = (
 class ChartAssetStore(Protocol):
     def save(self, asset: dict[str, Any]) -> bool: ...
     def get(self, symbol: str, interval: str) -> dict[str, Any] | None: ...
+    def get_commentary(self, symbol: str, interval: str) -> dict[str, Any] | None: ...
     def get_symbol_assets(self, symbol: str) -> dict[str, dict[str, Any] | None]: ...
     def coverage(self, symbols: list[str] | None = None) -> list[dict[str, Any]]: ...
     def delete(self, symbols: list[str], intervals: list[str]) -> int: ...
@@ -98,6 +99,20 @@ class PostgresChartAssetStorage:
                 (symbol.upper(), interval),
             ).fetchone()
         return _decode_asset(row.get("payload")) if row else None
+
+    def get_commentary(self, symbol: str, interval: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT asset_version, algorithm_version, as_of, generated_at, input_digest,
+                       payload -> 'commentary' AS commentary,
+                       jsonb_path_query_array(payload, '$.geometry.drawings[*].id') AS drawing_ids
+                FROM {POSTGRES_TABLE}
+                WHERE symbol = %s AND "interval" = %s
+                """,
+                (symbol.upper(), interval),
+            ).fetchone()
+        return _commentary_projection(row) if row else None
 
     def get_symbol_assets(self, symbol: str) -> dict[str, dict[str, Any] | None]:
         with self._connect() as conn:
@@ -172,6 +187,7 @@ class MaintenanceChartAssetStorage:
         self.delegate = delegate
     def save(self, _asset): raise RuntimeError("chart asset storage is read-only during migration maintenance")
     def get(self, symbol, interval): return self.delegate.get(symbol, interval)
+    def get_commentary(self, symbol, interval): return self.delegate.get_commentary(symbol, interval)
     def get_symbol_assets(self, symbol): return self.delegate.get_symbol_assets(symbol)
     def coverage(self, symbols=None): return self.delegate.coverage(symbols)
     def delete(self, _symbols, _intervals): raise RuntimeError("chart asset storage is read-only during migration maintenance")
@@ -210,6 +226,26 @@ def _asset_projection(asset: dict[str, Any], payload: str | None = None) -> dict
         "status": str(asset.get("status") or ""), "coverage_state": str(coverage.get("state") or ""),
         "drawing_count": len(geometry.get("drawings") or []), "payload_bytes": len(payload.encode("utf-8")),
         "input_digest": str(asset.get("inputDigest") or ""), "payload_digest": _payload_digest(payload),
+    }
+
+
+def _commentary_projection(row: dict[str, Any]) -> dict[str, Any]:
+    drawing_ids = row.get("drawing_ids")
+    if isinstance(drawing_ids, str):
+        try:
+            drawing_ids = json.loads(drawing_ids)
+        except ValueError:
+            drawing_ids = []
+    if not isinstance(drawing_ids, list):
+        drawing_ids = []
+    return {
+        "assetVersion": str(row.get("asset_version") or ""),
+        "algorithmVersion": str(row.get("algorithm_version") or ""),
+        "asOf": _iso(row.get("as_of")),
+        "generatedAt": _iso(row.get("generated_at")),
+        "inputDigest": str(row.get("input_digest") or ""),
+        "drawingIds": [str(value) for value in drawing_ids if isinstance(value, str) and value],
+        "commentary": _decode_asset(row.get("commentary")),
     }
 
 

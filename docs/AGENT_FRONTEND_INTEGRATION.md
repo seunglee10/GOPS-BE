@@ -122,6 +122,12 @@ fixture를 남기지 않고 `simulation_data_unavailable` 상태를 표시한다
 추천·뉴스·AI 보고서를 만들지 않는다. 차트는 서버가 반환한
 과거+replay candle과 replay WebSocket만 사용한다.
 
+차트 초기 로딩에서는 저장 종합 해설의 경량 projection을 캔들과 병렬로 요청하고,
+전체 Geometry Asset은 현재 캔들이 첫 scene에 반영된 뒤 후순위로 요청한다. 해설 본문은
+먼저 표시할 수 있지만 작도·봉·이벤트·지표를 바꾸는 inline link는 전체 자산과 scene이
+준비된 뒤 활성화한다. 해설 panel은 별도 전체 자산 요청을 만들지 않고 chart document별
+runtime snapshot을 구독한다.
+
 Order Flow 패널과 Bid/Ask 차트는 SIM에서 기존 intraday API와
 `/ws/charts?orderFlow=true`를 사용한다. 캐시는 `mode + datasetId + runId + virtual NY
 date + symbol`로 격리하고 mode/run 변경 시 폐기한다. 새 `sessionDate`가 오면 이전

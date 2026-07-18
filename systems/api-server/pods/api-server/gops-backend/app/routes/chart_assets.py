@@ -83,6 +83,34 @@ def chart_analysis_assets(
     return {"symbol": normalized, "assets": assets, "meta": meta}
 
 
+@router.get("/api/charts/analysis-assets/commentary")
+def chart_analysis_asset_commentary(
+    request: Request,
+    symbol: str = Query(min_length=1, max_length=12),
+    interval: str = Query(pattern="^(1m|5m|10m|1h|4h|1D|1W)$"),
+) -> dict[str, Any]:
+    normalized = normalize_market_symbol(symbol)
+    try:
+        asset = chart_asset_storage().get_commentary(normalized, interval)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Chart commentary asset storage is unavailable.") from exc
+    meta: dict[str, Any] = {"servedAt": utc_now_iso()}
+    try:
+        simulator_status = simulator_gateway_from_app(request.app).status()
+    except SimulatorUnavailable:
+        simulator_status = {"mode": "live"}
+    if simulator_status.get("mode") == "simulation":
+        cutoff_value = str(simulator_status.get("virtualTime") or "")
+        cutoff = _parse_timestamp(cutoff_value)
+        asset = _assets_at_or_before({interval: asset}, cutoff, [interval])[interval]
+        meta.update({
+            "simulation": True,
+            "cutoff": cutoff_value,
+            "runId": simulator_status.get("runId"),
+        })
+    return {"symbol": normalized, "interval": interval, "asset": asset, "meta": meta}
+
+
 @router.get("/api/charts/analysis-assets/coverage")
 def chart_analysis_asset_coverage(symbols: str | None = Query(default=None, max_length=4096)) -> dict[str, Any]:
     selected = _parse_symbol_csv(symbols) if symbols else None

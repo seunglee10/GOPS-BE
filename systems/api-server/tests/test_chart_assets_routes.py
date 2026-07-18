@@ -28,6 +28,7 @@ class FakeStorage:
     def __init__(self):
         self.assets = {"NVDA": {interval: {"symbol": "NVDA", "interval": interval} if interval == "1D" else None for interval in ALL_INTERVALS}}
         self.get_calls = []
+        self.get_commentary_calls = []
         self.get_symbol_assets_calls = []
     def get(self, symbol, interval):
         self.get_calls.append((symbol, interval))
@@ -35,6 +36,19 @@ class FakeStorage:
     def get_symbol_assets(self, symbol):
         self.get_symbol_assets_calls.append(symbol)
         return self.assets.get(symbol, {interval: None for interval in ALL_INTERVALS})
+    def get_commentary(self, symbol, interval):
+        self.get_commentary_calls.append((symbol, interval))
+        if symbol != "NVDA" or interval != "1D":
+            return None
+        return {
+            "assetVersion": "geometry",
+            "algorithmVersion": "ohlcv-consensus-pattern-families-v6",
+            "asOf": "2026-07-16T04:00:00.000Z",
+            "generatedAt": "2026-07-17T00:00:00.000Z",
+            "inputDigest": "sha256:input",
+            "drawingIds": ["level-1", "pattern-1"],
+            "commentary": {"version": "chart-commentary.v2", "status": "ready"},
+        }
     def coverage(self, symbols=None):
         items = [{"symbol": "NVDA", "interval": "1D", "generatedAt": "2026-07-11T00:00:00.000Z", "status": "ready"}]
         return [item for item in items if not symbols or item["symbol"] in symbols]
@@ -53,6 +67,7 @@ class FailingQueue:
 class FailingStorage:
     def get(self, _symbol, _interval): raise RuntimeError("postgres unavailable")
     def get_symbol_assets(self, _symbol): raise RuntimeError("postgres unavailable")
+    def get_commentary(self, _symbol, _interval): raise RuntimeError("postgres unavailable")
     def coverage(self, _symbols=None): raise RuntimeError("postgres unavailable")
     def delete(self, _symbols, _intervals): raise RuntimeError("postgres unavailable")
 
@@ -94,6 +109,30 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         missing = self.client.get("/api/charts/analysis-assets", params={"symbol": "AAPL", "interval": "1m"})
         self.assertEqual(missing.status_code, 200)
         self.assertEqual(missing.json()["assets"], {"1m": None})
+
+    def test_serves_lightweight_commentary_projection_only(self):
+        response = self.client.get(
+            "/api/charts/analysis-assets/commentary",
+            params={"symbol": "NVDA", "interval": "1D"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["symbol"], "NVDA")
+        self.assertEqual(payload["interval"], "1D")
+        self.assertEqual(payload["asset"]["drawingIds"], ["level-1", "pattern-1"])
+        self.assertNotIn("geometry", payload["asset"])
+        self.assertNotIn("analysisTrace", payload["asset"])
+        self.assertNotIn("indicators", payload["asset"])
+        self.assertNotIn("coverage", payload["asset"])
+        self.assertEqual(self.storage.get_commentary_calls, [("NVDA", "1D")])
+
+        missing = self.client.get(
+            "/api/charts/analysis-assets/commentary",
+            params={"symbol": "AAPL", "interval": "1m"},
+        )
+        self.assertEqual(missing.status_code, 200)
+        self.assertIsNone(missing.json()["asset"])
 
     def test_coverage_filters_symbols(self):
         response = self.client.get("/api/charts/analysis-assets/coverage", params={"symbols": "NVDA,AAPL"})
@@ -209,9 +248,11 @@ class ChartAssetsRoutesTest(unittest.TestCase):
     def test_storage_failures_return_503(self):
         with patch("app.routes.chart_assets.chart_asset_storage", return_value=FailingStorage()):
             asset = self.client.get("/api/charts/analysis-assets", params={"symbol": "NVDA"})
+            commentary = self.client.get("/api/charts/analysis-assets/commentary", params={"symbol": "NVDA", "interval": "1D"})
             coverage = self.client.get("/api/charts/analysis-assets/coverage")
             deleted = self.client.delete("/api/charts/analysis-assets", params={"symbols": "NVDA"})
         self.assertEqual(asset.status_code, 503)
+        self.assertEqual(commentary.status_code, 503)
         self.assertEqual(coverage.status_code, 503)
         self.assertEqual(deleted.status_code, 503)
 

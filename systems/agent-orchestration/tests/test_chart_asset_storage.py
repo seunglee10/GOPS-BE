@@ -60,6 +60,31 @@ class ChartAssetStorageTest(unittest.TestCase):
             self.assertEqual(loaded["commentary"], asset["commentary"])
             self.assertEqual(loaded["commentary"]["sourceIdentity"]["geometryInputDigest"], asset["inputDigest"])
 
+    def test_commentary_read_projects_only_identity_commentary_and_drawing_ids(self):
+        asset = _asset()
+        asset["commentary"] = _commentary_v2()
+        connection = Connection(rows=[{
+            "asset_version": asset["assetVersion"],
+            "algorithm_version": asset["algorithmVersion"],
+            "as_of": asset["asOf"],
+            "generated_at": asset["generatedAt"],
+            "input_digest": asset["inputDigest"],
+            "drawing_ids": ["one", "two"],
+            "commentary": asset["commentary"],
+        }])
+        storage = PostgresChartAssetStorage("postgresql://test", connect=lambda *_args, **_kwargs: connection)
+
+        projected = storage.get_commentary("nvda", "1D")
+
+        self.assertEqual(projected["drawingIds"], ["one", "two"])
+        self.assertEqual(projected["commentary"], asset["commentary"])
+        self.assertNotIn("geometry", projected)
+        query, parameters = connection.executions[0]
+        self.assertIn("payload -> 'commentary'", query)
+        self.assertIn("jsonb_path_query_array", query)
+        self.assertNotIn("SELECT payload FROM", query)
+        self.assertEqual(parameters, ("NVDA", "1D"))
+
     def test_v4_schema_limits_recommendations_without_rejecting_v3_assets(self):
         recommendations = [
             {

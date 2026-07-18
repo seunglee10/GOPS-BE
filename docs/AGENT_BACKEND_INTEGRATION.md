@@ -152,6 +152,9 @@ simulator의 종목별 replay projection을 사용한다. projection은 원본 q
 recommendation route를 허용한다. 그 전에는 미래 추천으로 취급해 409를 반환한다. 자동 작도 조회는
 `GET /api/charts/analysis-assets` 정확한 경로만 허용하고, DELETE·coverage·build·status는
 계속 차단한다.
+저장된 종합 해설은 `GET /api/charts/analysis-assets/commentary?symbol&interval`에서
+asset identity, commentary, 최종 drawing ID만 PostgreSQL JSONB projection으로 읽는다.
+이 safe-read도 `asOf <= virtualTime`인 저장 자산만 반환하며 replay 중 해설을 동적으로 생성하지 않는다.
 예외적으로 `GET /api/market/news/latest`는 live Redis를 건너뛰고 ClickHouse의
 `published_at <= virtualTime AND localized_at <= virtualTime`인 저장 기사만 읽는다.
 `GET /api/market/news/daily`와 `GET /api/charts/events`는 SIM `virtualTime`을 cutoff로

@@ -669,6 +669,15 @@ class SimulatorRoutesTest(unittest.TestCase):
         storage = SimpleNamespace(
             get=lambda _symbol, interval: stored_assets.get(interval),
             get_symbol_assets=lambda _symbol: stored_assets,
+            get_commentary=lambda _symbol, interval: {
+                "assetVersion": "geometry",
+                "algorithmVersion": "ohlcv-consensus-pattern-families-v6",
+                "asOf": stored_assets[interval]["asOf"],
+                "generatedAt": "2026-07-14T21:00:00Z",
+                "inputDigest": f"sha256:{interval}",
+                "drawingIds": [],
+                "commentary": None,
+            } if stored_assets.get(interval) else None,
         )
         historical = {"symbol": "NVDA", "interval": "1m", "candles": []}
 
@@ -682,6 +691,8 @@ class SimulatorRoutesTest(unittest.TestCase):
         ):
             stored_response = self.client.get("/api/charts/analysis-assets?symbol=NVDA")
             response = self.client.get("/api/charts/analysis-assets?symbol=NVDA&interval=1m")
+            future_commentary = self.client.get("/api/charts/analysis-assets/commentary?symbol=NVDA&interval=1m")
+            safe_commentary = self.client.get("/api/charts/analysis-assets/commentary?symbol=NVDA&interval=1D")
 
         self.assertEqual(stored_response.status_code, 200)
         self.assertIsNone(stored_response.json()["assets"]["1m"])
@@ -693,6 +704,11 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertTrue(payload["meta"]["simulation"])
         self.assertEqual(payload["meta"]["cutoff"], "2026-07-15T02:00:00+09:00")
         self.assertEqual(payload["meta"]["dynamicInterval"], "1m")
+        self.assertEqual(future_commentary.status_code, 200)
+        self.assertIsNone(future_commentary.json()["asset"])
+        self.assertEqual(safe_commentary.status_code, 200)
+        self.assertEqual(safe_commentary.json()["asset"]["asOf"], "2026-07-14T04:00:00Z")
+        self.assertTrue(safe_commentary.json()["meta"]["simulation"])
 
         delete_response = self.client.delete("/api/charts/analysis-assets?symbols=NVDA&intervals=1m")
         self.assertEqual(delete_response.status_code, 409)
