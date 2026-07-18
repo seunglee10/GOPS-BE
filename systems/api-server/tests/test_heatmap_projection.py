@@ -158,8 +158,10 @@ def test_projection_worker_is_rendered_and_redeployed_with_the_backend_image():
     kustomization = (ROOT / "infra" / "k8s" / "base" / "app" / "kustomization.yaml").read_text(encoding="utf-8")
     image_helpers = (ROOT / "scripts" / "aws" / "lib-gops-images.sh").read_text(encoding="utf-8")
     backend_env = (ROOT / "systems" / "api-server" / ".env.example").read_text(encoding="utf-8")
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
     assert "name: gops-heatmap-projection-worker" in deployment
     assert "deployment-heatmap-projection-worker.yaml" in kustomization
     assert "gops-heatmap-projection-worker" in image_helpers
     assert "HEATMAP_CACHE_TTL_SECONDS=70" in backend_env
+    assert 'HEATMAP_CACHE_TTL_SECONDS: "${HEATMAP_CACHE_TTL_SECONDS:-70}"' in compose
