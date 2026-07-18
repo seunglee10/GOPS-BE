@@ -755,6 +755,10 @@ SEC actuals and Yahoo consensus estimates stay separate. SEC EDGAR actual
 financial statement rows live in `market_data.sec_financial_facts` and
 `market_data.sec_derived_metrics`; Yahoo/yfinance consensus rows are materialized
 by a separate scheduled collector into `market_data.yahoo_earnings_estimates`.
+The same collector stores Yahoo-supplied firm rating actions and daily target
+consensus in `market_data.yahoo_analyst_actions` and
+`market_data.yahoo_analyst_consensus`; it never fills missing firms, targets, or
+research rationales.
 The AWS collector is `alfaka-yahoo-estimates-sync` and runs the
 `systems/fundamentals/jobs/yahoo-estimates-sync/main.py` entrypoint in the
 `gops-market-storage` image. It writes only Yahoo consensus rows and keeps them

@@ -60,6 +60,8 @@ returning `has_services=false`.
 Changes under `shared/chart-contract/` select both `frontend` and
 `agent-orchestrator`, because the typed chart explanation contract is consumed on
 both sides.
+Changes under `systems/fundamentals/` select `market-storage`, because SEC/Yahoo
+collectors and their idempotent ClickHouse schema bootstrap run from that image.
 
 The chart commentary reader compatibility deploy is a read-only consumer rollout. Use
 `CHART_INTERPRETATION_ONLY=true` together with
@@ -1339,6 +1341,9 @@ SEC companyfacts CronJob은 매일 20:30 UTC, Yahoo estimates CronJob은 21:15 U
 안정성/실적 차트 원천을 먼저 갱신한다. 기업저널 v2 worker는 최대 520개 일봉과 2021년 이후의
 SEC 실제치, ClickHouse에 실제 적재된 Yahoo 예상치를 읽으며 원천 row를 복제하지 않고 receipt에
 기간과 기준시각만 남긴다. Yahoo 수집 전 과거 컨센서스는 추정하지 않는다.
+같은 Yahoo CronJob은 `yahoo_analyst_actions`와 `yahoo_analyst_consensus`를 멱등 생성·갱신한다.
+기업저널 worker는 최근 120일의 실제 기관 event와 최대 30개 날짜별 consensus snapshot만 읽고,
+기관별 목표가 쌍이나 날짜별 consensus 비교값이 없으면 변화 방향을 생성하지 않는다.
 `company-journal-benchmark-bootstrap` Job은 SPY와 8개 섹터 ETF의 2년 `1D` 누락 timestamp만
 기존 candle-bootstrap 계약으로 추가한다. canonical v2/split 기존 행을 삭제하거나 덮어쓰지 않는다.
 CI/local deploy는 market-processor 이미지가 선택됐을 때 이 Job을 명시적으로 실행하고 완료를

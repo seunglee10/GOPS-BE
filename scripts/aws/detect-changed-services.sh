@@ -192,6 +192,9 @@ select_services_for_path() {
     systems/simulator/*)
       add_service simulator
       ;;
+    systems/fundamentals/*)
+      add_service market-storage
+      ;;
     systems/market-data/config/*)
       add_service backend
       add_service agent-orchestrator

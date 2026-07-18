@@ -41,6 +41,9 @@ class YahooEstimatesStats:
     symbols_requested: int = 0
     symbols_loaded: int = 0
     rows: int = 0
+    analyst_symbols_loaded: int = 0
+    analyst_action_rows: int = 0
+    analyst_consensus_rows: int = 0
     errors: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -51,11 +54,20 @@ class YahooEstimatesStats:
             "symbolsLoaded": self.symbols_loaded,
             "symbolsSucceeded": self.symbols_loaded,
             "rows": self.rows,
+            "analystSymbolsLoaded": self.analyst_symbols_loaded,
+            "analystActionRows": self.analyst_action_rows,
+            "analystConsensusRows": self.analyst_consensus_rows,
             "errors": self.errors,
         }
 
 
-def run_yahoo_estimates_sync(config: YahooEstimatesConfig | None = None, *, clickhouse_client=None, fetcher=None) -> YahooEstimatesStats:
+def run_yahoo_estimates_sync(
+    config: YahooEstimatesConfig | None = None,
+    *,
+    clickhouse_client=None,
+    fetcher=None,
+    analyst_fetcher=None,
+) -> YahooEstimatesStats:
     config = config or YahooEstimatesConfig.from_env()
     started_at = datetime.now(timezone.utc)
     stats = YahooEstimatesStats(run_id=f"yahoo-estimates-{started_at.strftime('%Y%m%dT%H%M%SZ')}", dry_run=config.dry_run)
@@ -73,24 +85,48 @@ def run_yahoo_estimates_sync(config: YahooEstimatesConfig | None = None, *, clic
     clickhouse_client = clickhouse_client or build_clickhouse_client()
     ensure_sec_clickhouse_schema(clickhouse_client)
     fetcher = fetcher or fetch_yfinance_estimate_rows
+    analyst_fetcher = analyst_fetcher or fetch_yfinance_analyst_rows
     batch: list[dict[str, Any]] = []
+    analyst_action_batch: list[dict[str, Any]] = []
+    analyst_consensus_batch: list[dict[str, Any]] = []
     for symbol in symbols:
         try:
             rows = fetcher(symbol, collected_at=started_at)
         except Exception as exc:
             message = str(exc).strip()
-            stats.errors[symbol] = f"{exc.__class__.__name__}: {message}"[:240] if message else exc.__class__.__name__
-            continue
-        if not rows:
-            continue
-        stats.symbols_loaded += 1
-        stats.rows += len(rows)
-        batch.extend(rows)
-        if len(batch) >= config.batch_size:
-            insert_batches(clickhouse_client, "yahoo_earnings_estimates", batch, config.batch_size)
-            batch = []
+            append_sync_error(stats, symbol, "estimates", exc.__class__.__name__, message)
+            rows = []
+        if rows:
+            stats.symbols_loaded += 1
+            stats.rows += len(rows)
+            batch.extend(rows)
+            if len(batch) >= config.batch_size:
+                insert_batches(clickhouse_client, "yahoo_earnings_estimates", batch, config.batch_size)
+                batch = []
+        try:
+            action_rows, consensus_rows = analyst_fetcher(symbol, collected_at=started_at)
+        except Exception as exc:
+            message = str(exc).strip()
+            append_sync_error(stats, symbol, "analysts", exc.__class__.__name__, message)
+            action_rows, consensus_rows = [], []
+        if action_rows or consensus_rows:
+            stats.analyst_symbols_loaded += 1
+            stats.analyst_action_rows += len(action_rows)
+            stats.analyst_consensus_rows += len(consensus_rows)
+            analyst_action_batch.extend(action_rows)
+            analyst_consensus_batch.extend(consensus_rows)
+        if len(analyst_action_batch) >= config.batch_size:
+            insert_batches(clickhouse_client, "yahoo_analyst_actions", analyst_action_batch, config.batch_size)
+            analyst_action_batch = []
+        if len(analyst_consensus_batch) >= config.batch_size:
+            insert_batches(clickhouse_client, "yahoo_analyst_consensus", analyst_consensus_batch, config.batch_size)
+            analyst_consensus_batch = []
     if batch:
         insert_batches(clickhouse_client, "yahoo_earnings_estimates", batch, config.batch_size)
+    if analyst_action_batch:
+        insert_batches(clickhouse_client, "yahoo_analyst_actions", analyst_action_batch, config.batch_size)
+    if analyst_consensus_batch:
+        insert_batches(clickhouse_client, "yahoo_analyst_consensus", analyst_consensus_batch, config.batch_size)
     if stats.rows == 0:
         print(json.dumps({"status": "failed", "reason": "zero-rows", **stats.to_dict()}, ensure_ascii=False, default=str), flush=True)
         raise RuntimeError("Yahoo estimates sync produced zero rows")
@@ -110,6 +146,115 @@ def fetch_yfinance_estimate_rows(symbol: str, *, collected_at: datetime) -> list
     rows.extend(rows_from_estimate_frame(symbol, "revenue", safe_call(ticker, "get_revenue_estimate"), collected_at=collected_at))
     rows.extend(rows_from_earnings_dates(symbol, safe_call(ticker, "get_earnings_dates", limit=16), collected_at=collected_at))
     return dedupe_rows(rows)
+
+
+def fetch_yfinance_analyst_rows(
+    symbol: str,
+    *,
+    collected_at: datetime,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    try:
+        import yfinance as yf
+    except ImportError as exc:
+        raise RuntimeError("yfinance is required for Yahoo analyst sync") from exc
+
+    ticker = yf.Ticker(symbol)
+    actions = rows_from_upgrades_downgrades(
+        symbol,
+        safe_call(ticker, "get_upgrades_downgrades"),
+        collected_at=collected_at,
+    )
+    consensus = rows_from_analyst_consensus(
+        symbol,
+        safe_call(ticker, "get_analyst_price_targets"),
+        safe_call(ticker, "get_recommendations_summary"),
+        collected_at=collected_at,
+    )
+    return dedupe_analyst_actions(actions), consensus
+
+
+def rows_from_upgrades_downgrades(symbol: str, frame: Any, *, collected_at: datetime) -> list[dict[str, Any]]:
+    if frame is None or not hasattr(frame, "iterrows"):
+        return []
+    rows: list[dict[str, Any]] = []
+    for index, row in frame.iterrows():
+        firm = first_text(row, "Firm", "firm", "Company", "company")
+        if not firm:
+            continue
+        action_date_value = first_value(row, "GradeDate", "gradeDate", "Date", "date")
+        action_at = datetime_from_any(
+            index if action_date_value is None else action_date_value,
+            fallback=collected_at,
+        )
+        action = first_text(row, "Action", "action") or "unknown"
+        from_grade = first_text(row, "FromGrade", "fromGrade", "from_grade") or ""
+        to_grade = first_text(row, "ToGrade", "toGrade", "to_grade") or ""
+        prior_target = first_number(
+            row,
+            "PriorPriceTarget",
+            "priorPriceTarget",
+            "OldPriceTarget",
+            "oldPriceTarget",
+            "priceTargetPrior",
+        )
+        target = first_number(
+            row,
+            "PriceTarget",
+            "priceTarget",
+            "NewPriceTarget",
+            "newPriceTarget",
+            "priceTargetCurrent",
+        )
+        rows.append({
+            "symbol": symbol.strip().upper(),
+            "action_at": clickhouse_datetime(action_at),
+            "firm": firm,
+            "action": action.lower(),
+            "from_grade": from_grade,
+            "to_grade": to_grade,
+            "prior_price_target": prior_target,
+            "price_target": target,
+            "source": "yahoo-finance",
+            "collected_at": clickhouse_datetime(collected_at),
+            "raw": json.dumps({
+                "firm": firm,
+                "action": action,
+                "fromGrade": from_grade,
+                "toGrade": to_grade,
+                "priorPriceTarget": prior_target,
+                "priceTarget": target,
+            }, ensure_ascii=False, separators=(",", ":"), default=str),
+        })
+    return rows
+
+
+def rows_from_analyst_consensus(
+    symbol: str,
+    price_targets: Any,
+    recommendations: Any,
+    *,
+    collected_at: datetime,
+) -> list[dict[str, Any]]:
+    targets = price_targets if isinstance(price_targets, dict) else {}
+    counts = recommendation_counts(recommendations)
+    values = {
+        "current_price": first_mapping_number(targets, "current", "currentPrice", "regularMarketPrice"),
+        "target_low": first_mapping_number(targets, "low", "targetLowPrice"),
+        "target_high": first_mapping_number(targets, "high", "targetHighPrice"),
+        "target_mean": first_mapping_number(targets, "mean", "targetMeanPrice"),
+        "target_median": first_mapping_number(targets, "median", "targetMedianPrice"),
+    }
+    if all(value is None for value in values.values()) and all(value is None for value in counts.values()):
+        return []
+    return [{
+        "symbol": symbol.strip().upper(),
+        "snapshot_date": collected_at.date().isoformat(),
+        **values,
+        **counts,
+        "source": "yahoo-finance",
+        "collected_at": clickhouse_datetime(collected_at),
+        "raw": json.dumps({"priceTargets": targets, "recommendationCounts": counts}, ensure_ascii=False, separators=(",", ":"), default=str),
+    }]
 
 
 def safe_call(obj: Any, method_name: str, **kwargs: Any) -> Any:
@@ -269,6 +414,50 @@ def first_number(row: Any, *keys: str) -> float | None:
     return None
 
 
+def first_value(row: Any, *keys: str) -> Any:
+    for key in keys:
+        try:
+            value = row.get(key)
+        except Exception:
+            value = None
+        if value is not None and str(value).strip() not in {"", "nan", "NaT", "<NA>"}:
+            return value
+    return None
+
+
+def first_text(row: Any, *keys: str) -> str | None:
+    value = first_value(row, *keys)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def first_mapping_number(mapping: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        parsed = parse_float(mapping.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def recommendation_counts(frame: Any) -> dict[str, int | None]:
+    empty = {"strong_buy": None, "buy": None, "hold": None, "sell": None, "strong_sell": None}
+    if frame is None or not hasattr(frame, "iterrows"):
+        return empty
+    rows = list(frame.iterrows())
+    if not rows:
+        return empty
+    _, row = next((entry for entry in rows if str(entry[0]).strip().lower() in {"0m", "current"}), rows[0])
+    return {
+        "strong_buy": first_int(row, "strongBuy", "strong_buy", "Strong Buy"),
+        "buy": first_int(row, "buy", "Buy"),
+        "hold": first_int(row, "hold", "Hold"),
+        "sell": first_int(row, "sell", "Sell"),
+        "strong_sell": first_int(row, "strongSell", "strong_sell", "Strong Sell"),
+    }
+
+
 def first_int(row: Any, *keys: str) -> int | None:
     value = first_number(row, *keys)
     return int(value) if value is not None else None
@@ -296,6 +485,26 @@ def date_from_any(value: Any) -> date | None:
         return datetime.fromisoformat(text[:10]).date()
     except ValueError:
         return None
+
+
+def datetime_from_any(value: Any, *, fallback: datetime) -> datetime:
+    raw = value
+    to_python = getattr(value, "to_pydatetime", None)
+    if callable(to_python):
+        try:
+            raw = to_python()
+        except Exception:
+            raw = value
+    if isinstance(raw, datetime):
+        parsed = raw
+    elif isinstance(raw, date):
+        parsed = datetime(raw.year, raw.month, raw.day)
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(raw or "").strip().replace("Z", "+00:00"))
+        except ValueError:
+            return fallback.astimezone(timezone.utc)
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
 def earnings_event_datetime(value: Any) -> tuple[datetime | None, str]:
@@ -354,6 +563,25 @@ def dedupe_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
         deduped[key] = row
     return list(deduped.values())
+
+
+def dedupe_analyst_actions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            str(row.get("symbol")),
+            str(row.get("action_at")),
+            str(row.get("firm")),
+            str(row.get("action")),
+        )
+        deduped[key] = row
+    return list(deduped.values())
+
+
+def append_sync_error(stats: YahooEstimatesStats, symbol: str, source: str, error_type: str, message: str) -> None:
+    detail = f"{error_type}: {message}" if message else error_type
+    existing = stats.errors.get(symbol)
+    stats.errors[symbol] = f"{existing}; {source}={detail}"[:480] if existing else f"{source}={detail}"[:480]
 
 
 def bool_env(value: Any, default: bool) -> bool:
