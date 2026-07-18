@@ -650,15 +650,20 @@ and conditions change atomically. Price, volume, RSI, and MACD share the `T-60..
 relative axis, and today's path ends at its latest observation without a forecast.
 The fixed report module is loaded by a dynamic import when
 `VITE_AI_COACH_DEV_FIXTURE=true` in development. A production exception exists only for an
-untouched seeded paper account: while every current-generation order has `seed_profile`, the
-panel uses the matching `diversified-us-v3` portfolio report instead of a stale archived report.
-The first real user order disables that exception and restores the authenticated archive path.
+untouched seeded paper account: while every current-generation non-simulation order has
+`seed_profile`, the panel uses the matching `diversified-us-v3` portfolio report instead of a stale
+archived report. Simulation orders are excluded from this eligibility decision because entering or
+trading in SIM must not change the selected coach report. The first real non-seed paper order
+disables that exception and restores the authenticated archive path.
 Simulator mode does not clear, refetch, or replace the resolved coach report. The same report and
 current internal page remain visible when switching between LIVE and SIM; account and order panels
 may continue refreshing independently from the common paper ledger. A runtime provider above the
 workspace owns the in-memory report and panel-page state, so the TreeMap transition may unmount the
 panel without losing either value. Loading paper account/orders is an unknown seed state and cannot
 replace the current report; only a completed non-seed order/account-generation decision may do so.
+Legacy report warnings containing internal fixture labels such as `DEV DEMO`, `DEV FIXTURE`, or
+`fixed replay` are removed at the response-normalization boundary and are never rendered directly
+as the page-1 empty state.
 The seeded report's entry charts embed the stored AAPL/AMZN/WMT fixed-replay daily OHLCV window at
 build time. Prices are rebased to the paper fill only because the chart is a fill-relative percent
 view; candle returns, volume, RSI(14), MACD, signal, and relative volume come from those stored rows.
