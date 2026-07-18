@@ -98,7 +98,9 @@ def write_company_daily_summary_to_redis(redis_client, record, *, ttl_seconds=DE
     encoded = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
     score = daily_summary_score(item)
     keys = RedisKeyBuilder()
-    write_news_cache_member(redis_client, keys.news_daily_v2(locale, symbol), encoded, score, ttl_seconds, max_items)
+    key = keys.news_daily_v2(locale, symbol)
+    redis_zremrangebyscore(redis_client, key, score, score)
+    write_news_cache_member(redis_client, key, encoded, score, ttl_seconds, max_items)
 
 
 def write_company_daily_summaries_to_redis(

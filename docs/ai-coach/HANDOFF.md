@@ -229,6 +229,14 @@ The fixed UI report activates in development when both `import.meta.env.DEV` and
 `VITE_AI_COACH_DEV_FIXTURE=true`. The same dynamically imported report is also used for an
 untouched `diversified-us-v3` paper account so its 10 holdings, 23 fills, 3 pending orders,
 sector weights, and guardrails remain coherent instead of showing an older archived report.
+Its seeded decision-check records and coaching narratives are part of that isolated scenario.
+User-facing copy names understandable evidence such as `일봉 차트`, `체결 내역`, `기업 뉴스`,
+`실적 일정`, and `계좌 분석`; it does not expose `DEV DEMO`, fixture/replay terminology, or
+storage implementation names. These records are never attributed to a real user or mixed into a
+production report.
+Coach prose starts with the user's repeatable behavior, not an account-value or sample-count dump.
+The strengths section says what the user does well in direct language; supporting figures remain in
+the evidence rows. Improvement copy ends with one concrete action for the next trade.
 Any current-generation order without `seed_profile` disables this seeded-account path. The
 fixed report is never written to Redis, ClickHouse, Kafka, PostgreSQL, or S3.
 Switching between LIVE and SIM does not clear or replace the resolved coach report. The panel keeps
@@ -240,9 +248,12 @@ authenticated account changes and is never written into shared layout storage.
 For the seeded report only, page-1 chart series are built from the repository's stored fixed-replay
 AAPL/AMZN/WMT daily candles. The fill-relative view rebases OHLC prices to the ledger fill while
 preserving actual returns and volumes, and computes RSI/MACD from those stored closes. Confirmation
-items use a flat `DESIGN.md` to-do-list treatment with inline evidence and semantic typography roles;
-the old nested cards, hover-only evidence, generated waves, fluid font sizes, and heavy local weights
-are not part of the contract.
+items use a flat `DESIGN.md` to-do-list treatment with inline evidence. All four pages share one
+three-role typography map: core coaching sentences and titles use `title-sm` (18px); explanation copy,
+rows, metrics, tabs, and text actions use `label-md` (16px); status/source/time/table metadata uses
+`caption` (14px/500).
+The old nested cards, hover-only evidence, generated waves, fluid font sizes, local font metrics, and
+heavy local weights are not part of the contract.
 Page 2 follows the same presentation contract: semantic stage tabs, flat evidence and habit rows,
 label/count/meter-only strength summaries, problem recommendations without secondary observed-behavior
 copy, hairline-separated representative-trade sections, and no local typography metrics, decorative

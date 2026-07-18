@@ -408,6 +408,14 @@ def load_news_daily_summary_worker_module():
     return module
 
 
+def load_news_daily_summary_rebuild_module():
+    module_path = REPO_ROOT / "systems/market-data/jobs/news-daily-summary-rebuild/main.py"
+    spec = importlib.util.spec_from_file_location("news_daily_summary_rebuild", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def load_news_intelligence_rebuild_module():
     module_path = REPO_ROOT / "systems/market-data/jobs/news-intelligence-rebuild/main.py"
     spec = importlib.util.spec_from_file_location("news_intelligence_rebuild", module_path)
@@ -7968,39 +7976,87 @@ class MarketDataHardeningContractTest(unittest.TestCase):
                 self.sent.append((topic, key, value))
 
         producer = RecordingProducer()
-        worker.process_news_event(
-            {
-                "eventType": "NEWS_ARTICLE",
-                "symbol": "AAPL",
-                "articleId": "daily-dirty-1",
-                "headline": "Apple services revenue grows",
-                "summary": "Apple services revenue improved.",
-                "publishedAt": "2026-07-01T14:02:03.000Z",
-                "url": "https://example.com/aapl-dirty",
-                "source": "alpaca",
-                "symbols": ["AAPL"],
-            },
-            clickhouse_client=client,
-            redis_client=redis_client,
-            enrich_fn=lambda _event: {
-                "localizedHeadline": "애플 서비스 매출 성장",
-                "localizedSummary": "애플 서비스 매출이 개선됐습니다.",
-                "keyPoints": ["서비스 매출 개선"],
-                "positivePoints": ["서비스 성장"],
-                "concerns": [],
-                "eventType": "earnings",
-                "sentiment": "positive",
-                "impactDirection": "positive",
-                "whyItMatters": "애플 수익성에 긍정적입니다.",
-            },
-            locale="ko-KR",
-            daily_summary_producer=producer,
-        )
+        with mock.patch.dict(os.environ, {"NEWS_DAILY_SUMMARY_EVENT_DRIVEN_ENABLED": "true"}):
+            worker.process_news_event(
+                {
+                    "eventType": "NEWS_ARTICLE",
+                    "symbol": "AAPL",
+                    "articleId": "daily-dirty-1",
+                    "headline": "Apple services revenue grows",
+                    "summary": "Apple services revenue improved.",
+                    "publishedAt": "2026-07-01T14:02:03.000Z",
+                    "url": "https://example.com/aapl-dirty",
+                    "source": "alpaca",
+                    "symbols": ["AAPL"],
+                },
+                clickhouse_client=client,
+                redis_client=redis_client,
+                enrich_fn=lambda _event: {
+                    "localizedHeadline": "애플 서비스 매출 성장",
+                    "localizedSummary": "애플 서비스 매출이 개선됐습니다.",
+                    "keyPoints": ["서비스 매출 개선"],
+                    "positivePoints": ["서비스 성장"],
+                    "concerns": [],
+                    "eventType": "earnings",
+                    "sentiment": "positive",
+                    "impactDirection": "positive",
+                    "whyItMatters": "애플 수익성에 긍정적입니다.",
+                },
+                locale="ko-KR",
+                daily_summary_producer=producer,
+            )
 
         self.assertEqual(producer.sent[0][0], "market.news.daily-summary-dirty.v1")
         self.assertEqual(producer.sent[0][1], "AAPL:2026-07-01")
         self.assertEqual(producer.sent[0][2]["eventType"], "NEWS_DAILY_SUMMARY_DIRTY")
         self.assertEqual(producer.sent[0][2]["symbol"], "AAPL")
+
+    def test_news_intelligence_worker_does_not_publish_scheduled_summary_events(self):
+        worker = load_news_intelligence_worker_module()
+
+        class RecordingProducer:
+            def __init__(self):
+                self.sent = []
+
+            def send(self, topic, key, value):
+                self.sent.append((topic, key, value))
+
+        producer = RecordingProducer()
+        with mock.patch.dict(os.environ, {"NEWS_DAILY_SUMMARY_EVENT_DRIVEN_ENABLED": "false"}):
+            event = worker.publish_daily_summary_dirty_event(
+                {
+                    "symbol": "NVDA",
+                    "targetSymbol": "NVDA",
+                    "publishedAt": "2026-07-18T01:02:03.000Z",
+                    "articleId": "nvda-scheduled-1",
+                },
+                producer=producer,
+                locale="ko-KR",
+            )
+
+        self.assertIsNone(event)
+        self.assertEqual(producer.sent, [])
+
+    def test_news_daily_summary_rebuild_filters_nvda_and_caps_five_groups(self):
+        rebuild = load_news_daily_summary_rebuild_module()
+        client = SequentialQueryClickHouseClient([[
+            {"symbol": "NVDA", "date": "2026-07-17", "locale": "ko-KR"},
+        ]])
+
+        groups = rebuild.read_dirty_groups(
+            client,
+            days=5,
+            max_groups=5,
+            symbols=["nvda", "NVDA"],
+        )
+
+        query, parameters = client.queries[0]
+        self.assertIn("target_symbol IN {symbols:Array(String)}", query)
+        self.assertEqual(parameters["symbols"], ["NVDA"])
+        self.assertEqual(parameters["days"], 5)
+        self.assertEqual(parameters["maxGroups"], 5)
+        self.assertEqual(groups[0]["symbol"], "NVDA")
+        self.assertIsNone(rebuild.normalized_rebuild_status("auto"))
 
     def test_daily_summary_row_and_redis_cache_keep_lightweight_brief(self):
         record = build_daily_summary_record(
@@ -8091,6 +8147,32 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertTrue(company_daily_summary_coverage_valid(coverage, symbol="AAPL", days=30, limit=30, locale="ko-KR", rows=cached))
         self.assertIn(RedisKeyBuilder().news_daily_coverage_v2("ko-KR", "AAPL"), redis_client.values)
 
+    def test_daily_summary_redis_replaces_older_versions_for_same_date(self):
+        from alfaka.serving.news_hot_cache import write_company_daily_summary_to_redis
+
+        redis_client = MemoryRedis()
+        key = RedisKeyBuilder().news_daily_v2("ko-KR", "NVDA")
+        write_company_daily_summary_to_redis(redis_client, {
+            "date": "2026-07-17",
+            "symbol": "NVDA",
+            "summary": "이전 요약",
+            "generatedAt": "2026-07-17T10:00:00.000Z",
+            "version": "v1",
+        })
+        write_company_daily_summary_to_redis(redis_client, {
+            "date": "2026-07-17",
+            "symbol": "NVDA",
+            "summary": "최신 키워드 요약",
+            "keyPoints": ["AI 경쟁|negative", "파트너십|positive"],
+            "generatedAt": "2026-07-17T22:00:00.000Z",
+            "version": "v2",
+        })
+
+        cached = read_company_daily_summaries_from_redis(redis_client, "NVDA", limit=5, locale="ko-KR")
+        self.assertEqual(redis_client.zcard(key), 1)
+        self.assertEqual(cached[0]["summary"], "최신 키워드 요약")
+        self.assertEqual(cached[0]["version"], "v2")
+
     def test_daily_summary_price_change_uses_previous_trading_day_close(self):
         summaries = [{"date": "2026-07-01", "symbol": "AAPL", "summary": "브리프"}]
         enriched = attach_price_changes_to_daily_summaries(summaries, [
@@ -8172,7 +8254,10 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(cached[0]["summary"], "애플 일일 브리프입니다.")
         self.assertEqual(cached[0]["sources"][0]["name"], "Example News")
 
-        skip_client = SequentialQueryClickHouseClient([rows, [{"articleIdsHash": record["articleIdsHash"]}]])
+        skip_client = SequentialQueryClickHouseClient([rows, [{
+            "articleIdsHash": record["articleIdsHash"],
+            "version": "v2",
+        }]])
         skipped = worker.process_dirty_event(
             {"eventType": "NEWS_DAILY_SUMMARY_DIRTY", "symbol": "AAPL", "date": "2026-07-01", "locale": "ko-KR"},
             clickhouse_client=skip_client,
@@ -8200,7 +8285,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "status": "final",
             "model": "unit-model",
             "generatedAt": "2026-07-01T23:00:00.000Z",
-            "version": "v1",
+            "version": "v2",
             "sources": [{"title": "애플 서비스 매출 성장", "url": "https://example.com/aapl-worker"}],
         }
         warm_client = SequentialQueryClickHouseClient([rows, [existing_record]])

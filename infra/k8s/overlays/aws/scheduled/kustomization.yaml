@@ -11,3 +11,4 @@ resources:
   - cronjob-notification-schedules.yaml
   - cronjob-company-journal-worker.yaml
   - cronjob-company-journal-post-market.yaml
+  - cronjob-news-daily-summary-nvda.yaml

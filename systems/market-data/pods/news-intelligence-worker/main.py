@@ -44,7 +44,10 @@ def main():
         clickhouse.ensure_market_data_schema()
     redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
     daily_summary_producer = None
-    if bool_env("NEWS_DAILY_SUMMARY_ENABLED", True):
+    if (
+        bool_env("NEWS_DAILY_SUMMARY_ENABLED", True)
+        and bool_env("NEWS_DAILY_SUMMARY_EVENT_DRIVEN_ENABLED", False)
+    ):
         try:
             from alfaka.common.kafka_io import create_json_producer
 
@@ -276,7 +279,10 @@ def event_topics(event):
 
 
 def publish_daily_summary_dirty_event(record, *, producer=None, redis_client=None, locale=None):
-    if not bool_env("NEWS_DAILY_SUMMARY_ENABLED", True):
+    if (
+        not bool_env("NEWS_DAILY_SUMMARY_ENABLED", True)
+        or not bool_env("NEWS_DAILY_SUMMARY_EVENT_DRIVEN_ENABLED", False)
+    ):
         return None
     symbol = str(record.get("targetSymbol") or record.get("symbol") or "").strip().upper()
     date = published_date(record.get("publishedAt"))

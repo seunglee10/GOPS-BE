@@ -1,0 +1,68 @@
+# 역할: NVDA 최근 5일 뉴스 키워드를 한국 시간 10시와 22시에만 갱신합니다.
+# 기사 수집/현지화는 계속 실행하며, 동일한 기사 해시의 v2 요약은 OpenAI를 다시 호출하지 않습니다.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: alfaka-news-daily-summary-nvda
+  namespace: alfaka-market-data
+spec:
+  schedule: "0 10,22 * * *"
+  timeZone: Asia/Seoul
+  suspend: false
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 7200
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 604800
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app: alfaka-news-daily-summary-nvda
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            karpenter.sh/nodepool: batch
+          tolerations:
+            - key: gops.io/dedicated
+              operator: Equal
+              value: batch
+              effect: NoSchedule
+          serviceAccountName: alfaka-market-data-sa
+          containers:
+            - name: news-daily-summary
+              image: YOUR_ECR_REPOSITORY/gops-market-storage:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-u", "systems/market-data/jobs/news-daily-summary-rebuild/main.py"]
+              env:
+                - name: NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN
+                  value: "false"
+                - name: NEWS_DAILY_SUMMARY_REBUILD_SYMBOLS
+                  value: NVDA
+                - name: NEWS_DAILY_SUMMARY_REBUILD_DAYS
+                  value: "5"
+                - name: NEWS_DAILY_SUMMARY_REBUILD_MAX_GROUPS
+                  value: "5"
+                - name: NEWS_DAILY_SUMMARY_REBUILD_STATUS
+                  value: auto
+                - name: CLICKHOUSE_ENSURE_SCHEMA_ON_START
+                  value: "false"
+              envFrom:
+                - configMapRef:
+                    name: alfaka-market-data-config
+                - secretRef:
+                    name: alfaka-clickhouse-secret
+                    optional: false
+                - secretRef:
+                    name: alfaka-openai-secret
+                    optional: false
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi

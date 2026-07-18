@@ -414,6 +414,9 @@ patches:
       name: alfaka-news-daily-summary-worker
     patch: |-
       - op: replace
+        path: /spec/replicas
+        value: 0
+      - op: replace
         path: /spec/template/spec/topologySpreadConstraints
         value:
           - maxSkew: 1
