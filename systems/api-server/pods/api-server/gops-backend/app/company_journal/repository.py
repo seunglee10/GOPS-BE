@@ -58,7 +58,28 @@ class CompanyJournalRepository:
         )
         return rows[0] if rows else None
 
-    def load_source_bundle(self, symbol: str) -> dict[str, Any]:
+    def load_source_bundle(self, symbol: str, cutoff: datetime | None = None) -> dict[str, Any]:
+        cutoff_parameters = {"cutoff": cutoff.astimezone(timezone.utc).isoformat()} if cutoff else {}
+        symbol_parameters = {"symbol": symbol, **cutoff_parameters}
+        completed_daily_cutoff = ""
+        dated_source_cutoff = ""
+        versioned_dated_source_cutoff = ""
+        collected_source_cutoff = ""
+        generated_source_cutoff = ""
+        if cutoff is not None:
+            completed_daily_cutoff = (
+                "AND toDate(toTimeZone(event_time, 'America/New_York')) "
+                "< toDate(toTimeZone(parseDateTime64BestEffort({cutoff:String}), 'America/New_York'))"
+            )
+            dated_source_cutoff = (
+                "AND filed_at < toDate(toTimeZone(parseDateTime64BestEffort({cutoff:String}), 'America/New_York'))"
+            )
+            versioned_dated_source_cutoff = (
+                f"{dated_source_cutoff} "
+                "AND version_filed_at < toDate(toTimeZone(parseDateTime64BestEffort({cutoff:String}), 'America/New_York'))"
+            )
+            collected_source_cutoff = "AND collected_at <= parseDateTime64BestEffort({cutoff:String})"
+            generated_source_cutoff = "AND generated_at <= parseDateTime64BestEffort({cutoff:String})"
         company = self._one(
             f"SELECT symbol, company_name, cik, exchange, updated_at FROM {self.database}.sec_company_tickers "
             "WHERE symbol = {symbol:String} ORDER BY updated_at DESC LIMIT 1 FORMAT JSONEachRow",
@@ -70,29 +91,34 @@ class CompanyJournalRepository:
         )
         prices = self._rows(
             f"""
-            SELECT toDate(event_time) AS date,
+            SELECT toDate(toTimeZone(event_time, 'America/New_York')) AS date,
                    argMax(close, tuple(inserted_at, ifNull(source_event_id, ''))) AS close
             FROM {self.database}.chart_candles
             WHERE symbol = {{symbol:String}} AND is_closed = 1
               AND lower(interval) IN ('1d', '1day', 'day')
+              {completed_daily_cutoff}
             GROUP BY date
             ORDER BY date DESC LIMIT 520 FORMAT JSONEachRow
             """,
-            {"symbol": symbol},
+            symbol_parameters,
         )
         benchmark = self._rows(
             f"""
-            SELECT toDate(event_time) AS date,
+            SELECT toDate(toTimeZone(event_time, 'America/New_York')) AS date,
                    argMax(close, tuple(inserted_at, ifNull(source_event_id, ''))) AS close
             FROM {self.database}.chart_candles
             WHERE symbol = 'SPY' AND is_closed = 1
               AND lower(interval) IN ('1d', '1day', 'day')
+              {completed_daily_cutoff}
             GROUP BY date
             ORDER BY date DESC LIMIT 520 FORMAT JSONEachRow
-            """
+            """,
+            cutoff_parameters,
         )
         dates = [str(row.get("date")) for row in prices if row.get("date")]
-        analysis_as_of = max(dates) if dates else date.today().isoformat()
+        analysis_as_of = max(dates) if dates else (
+            cutoff.astimezone(timezone.utc).date().isoformat() if cutoff else date.today().isoformat()
+        )
         news = self._rows(
             f"""
             SELECT date, summary, key_points, positive_points, concerns, article_ids, generated_at
@@ -100,27 +126,30 @@ class CompanyJournalRepository:
             WHERE symbol = {{symbol:String}}
               AND locale IN ('ko-KR', 'ko')
               AND status IN ('final', 'rolling', 'ready')
+              {generated_source_cutoff}
             ORDER BY date DESC, generated_at DESC LIMIT 5 FORMAT JSONEachRow
             """,
-            {"symbol": symbol},
+            symbol_parameters,
         )
         metrics = self._rows(
             f"""
             SELECT metric, value, fiscal_year, fiscal_period, period_end, accession, filed_at, quality
             FROM {self.database}.sec_derived_metrics
             WHERE symbol = {{symbol:String}}
+              {versioned_dated_source_cutoff}
             ORDER BY period_end DESC, filed_at DESC LIMIT 80 FORMAT JSONEachRow
             """,
-            {"symbol": symbol},
+            symbol_parameters,
         )
         filings = self._rows(
             f"""
             SELECT form, filed_at, accession
             FROM {self.database}.sec_filing_events
             WHERE symbol = {{symbol:String}}
+              {dated_source_cutoff}
             ORDER BY filed_at DESC LIMIT 8 FORMAT JSONEachRow
             """,
-            {"symbol": symbol},
+            symbol_parameters,
         )
         earnings_actuals = self._safe_rows(
             f"""
@@ -131,11 +160,12 @@ class CompanyJournalRepository:
               AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
               AND value IS NOT NULL
               AND period_end >= toDate('2021-01-01')
+              {versioned_dated_source_cutoff}
             ORDER BY metric ASC, period_end DESC, version_filed_at DESC
             LIMIT 1 BY metric, fiscal_year, fiscal_period
             FORMAT JSONEachRow
             """,
-            {"symbol": symbol},
+            symbol_parameters,
         )
         earnings_estimates = self._safe_rows(
             f"""
@@ -147,11 +177,12 @@ class CompanyJournalRepository:
               AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
               AND average IS NOT NULL
               AND period_end >= toDate('2021-01-01')
+              {collected_source_cutoff}
             ORDER BY metric ASC, period_end DESC, collected_at DESC
             LIMIT 1 BY metric, fiscal_year, fiscal_period
             FORMAT JSONEachRow
             """,
-            {"symbol": symbol},
+            symbol_parameters,
         )
         analyst_actions = self._safe_rows(
             f"""
@@ -167,12 +198,14 @@ class CompanyJournalRepository:
             WHERE symbol = {{symbol:String}}
               AND action_at < addDays(toDateTime({{analysis_as_of:String}}, 'UTC'), 1)
               AND action_at >= subtractDays(toDateTime({{analysis_as_of:String}}, 'UTC'), 120)
+              {collected_source_cutoff}
+              {"AND action_at <= parseDateTime64BestEffort({cutoff:String})" if cutoff else ""}
             GROUP BY action_at, firm
             ORDER BY action_at DESC, firm ASC
             LIMIT 20
             FORMAT JSONEachRow
             """,
-            {"symbol": symbol, "analysis_as_of": analysis_as_of},
+            {"symbol": symbol, "analysis_as_of": analysis_as_of, **cutoff_parameters},
         )
         analyst_consensus = self._safe_rows(
             f"""
@@ -192,21 +225,23 @@ class CompanyJournalRepository:
             FROM {self.database}.yahoo_analyst_consensus
             WHERE symbol = {{symbol:String}}
               AND snapshot_date <= toDate({{analysis_as_of:String}})
+              {collected_source_cutoff}
             GROUP BY snapshot_date
             ORDER BY snapshot_date DESC
             LIMIT 30
             FORMAT JSONEachRow
             """,
-            {"symbol": symbol, "analysis_as_of": analysis_as_of},
+            {"symbol": symbol, "analysis_as_of": analysis_as_of, **cutoff_parameters},
         )
         graph = self._safe_one(
             f"""
             SELECT relation_version, generated_at, payload
             FROM {self.database}.agent_graph_expansions
             WHERE symbol = {{symbol:String}}
+              {generated_source_cutoff}
             ORDER BY generated_at DESC LIMIT 1 FORMAT JSONEachRow
             """,
-            {"symbol": symbol},
+            symbol_parameters,
         )
         return {
             "symbol": symbol,
@@ -224,10 +259,128 @@ class CompanyJournalRepository:
             "graph": compact_graph_expansion(graph or {}),
         }
 
-    def load_performance_series(self, symbols: list[str]) -> list[dict[str, Any]]:
+    def load_financial_series_rows(
+        self,
+        symbol: str,
+        cutoff: datetime,
+        history_start_year: int,
+    ) -> list[dict[str, Any]]:
+        parameters = {
+            "symbol": symbol,
+            "cutoff": cutoff.astimezone(timezone.utc).isoformat(),
+            "metrics": [
+                "shares_outstanding", "revenue", "operating_income", "net_income", "eps",
+                "assets", "liabilities", "equity", "current_assets", "current_liabilities",
+                "cash_and_cash_equivalents", "interest_expense", "operating_cash_flow",
+            ],
+            "derivedMetrics": [
+                "free_cash_flow", "liabilities_to_equity", "current_liabilities_to_equity",
+                "noncurrent_liabilities_to_equity", "current_ratio", "total_debt",
+                "interest_coverage", "financial_cost_burden_ratio", "net_debt",
+            ],
+        }
+        start_year = max(2000, min(int(history_start_year), 2100))
+        common_cutoff = (
+            "filed_at < toDate(toTimeZone(parseDateTime64BestEffort({cutoff:String}), 'America/New_York')) "
+            "AND version_filed_at < toDate(toTimeZone(parseDateTime64BestEffort({cutoff:String}), 'America/New_York'))"
+        )
+        facts = self._safe_rows(
+            f"""
+            SELECT symbol, metric, value, fiscal_year AS fiscalYear, fiscal_period AS fiscalPeriod,
+                   period_end AS periodEndDate, filed_at AS filedAt, version_filed_at AS versionFiledAt
+            FROM {self.database}.sec_financial_facts
+            WHERE symbol = {{symbol:String}}
+              AND metric IN {{metrics:Array(String)}}
+              AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
+              AND value IS NOT NULL
+              AND period_end >= toDate('{start_year}-01-01')
+              AND {common_cutoff}
+            ORDER BY metric ASC, period_end DESC, version_filed_at DESC
+            LIMIT 1 BY metric, fiscal_year, fiscal_period
+            FORMAT JSONEachRow
+            """,
+            parameters,
+        )
+        derived = self._safe_rows(
+            f"""
+            SELECT symbol, metric, value, fiscal_year AS fiscalYear, fiscal_period AS fiscalPeriod,
+                   period_end AS periodEndDate, filed_at AS filedAt, version_filed_at AS versionFiledAt
+            FROM {self.database}.sec_derived_metrics
+            WHERE symbol = {{symbol:String}}
+              AND metric IN {{derivedMetrics:Array(String)}}
+              AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
+              AND value IS NOT NULL
+              AND period_end >= toDate('{start_year}-01-01')
+              AND {common_cutoff}
+            ORDER BY metric ASC, period_end DESC, version_filed_at DESC
+            LIMIT 1 BY metric, fiscal_year, fiscal_period
+            FORMAT JSONEachRow
+            """,
+            parameters,
+        )
+        return [*facts, *derived]
+
+    def load_earnings_series_rows(
+        self,
+        symbol: str,
+        cutoff: datetime,
+        history_start_year: int,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        start_year = max(2000, min(int(history_start_year), 2100))
+        parameters = {"symbol": symbol, "cutoff": cutoff.astimezone(timezone.utc).isoformat()}
+        actuals = self._safe_rows(
+            f"""
+            SELECT symbol, metric, value, fiscal_year AS fiscalYear, fiscal_period AS fiscalPeriod,
+                   period_end AS periodEndDate, filed_at AS filedAt, version_filed_at AS versionFiledAt
+            FROM {self.database}.sec_financial_facts
+            WHERE symbol = {{symbol:String}}
+              AND metric IN ('eps', 'revenue')
+              AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
+              AND value IS NOT NULL
+              AND period_end >= toDate('{start_year}-01-01')
+              AND filed_at < toDate(toTimeZone(parseDateTime64BestEffort({{cutoff:String}}), 'America/New_York'))
+              AND version_filed_at < toDate(toTimeZone(parseDateTime64BestEffort({{cutoff:String}}), 'America/New_York'))
+            ORDER BY metric ASC, period_end DESC, version_filed_at DESC
+            LIMIT 1 BY metric, fiscal_year, fiscal_period
+            FORMAT JSONEachRow
+            """,
+            parameters,
+        )
+        estimates = self._safe_rows(
+            f"""
+            SELECT symbol, metric, average AS value, low, high, analyst_count AS analystCount,
+                   fiscal_year AS fiscalYear, fiscal_period AS fiscalPeriod, period_end AS periodEndDate,
+                   event_at AS eventAt, event_status AS eventStatus, collected_at AS collectedAt
+            FROM {self.database}.yahoo_earnings_estimates
+            WHERE symbol = {{symbol:String}}
+              AND metric IN ('eps', 'revenue')
+              AND average IS NOT NULL
+              AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
+              AND period_end >= toDate('{start_year}-01-01')
+              AND collected_at <= parseDateTime64BestEffort({{cutoff:String}})
+            ORDER BY metric ASC, period_end DESC, collected_at DESC
+            LIMIT 1 BY metric, fiscal_year, fiscal_period
+            FORMAT JSONEachRow
+            """,
+            parameters,
+        )
+        return actuals, estimates
+
+    def load_performance_series(
+        self,
+        symbols: list[str],
+        cutoff: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         normalized = list(dict.fromkeys(value.strip().upper() for value in symbols if value.strip()))[:3]
         if not normalized:
             return []
+        cutoff_parameters = {"cutoff": cutoff.astimezone(timezone.utc).isoformat()} if cutoff else {}
+        completed_daily_cutoff = ""
+        if cutoff is not None:
+            completed_daily_cutoff = (
+                "AND toDate(toTimeZone(event_time, 'America/New_York')) "
+                "< toDate(toTimeZone(parseDateTime64BestEffort({cutoff:String}), 'America/New_York'))"
+            )
         rows = self._safe_rows(
             f"""
             SELECT symbol, event_time, open, high, low, close, volume
@@ -244,6 +397,7 @@ class CompanyJournalRepository:
               WHERE symbol IN {{symbols:Array(String)}}
                 AND is_closed = 1
                 AND lower(interval) IN ('1d', '1day', 'day')
+                {completed_daily_cutoff}
               GROUP BY symbol, event_time
               ORDER BY event_time DESC
               LIMIT 520 BY symbol
@@ -251,7 +405,7 @@ class CompanyJournalRepository:
             ORDER BY symbol ASC, event_time ASC
             FORMAT JSONEachRow
             """,
-            {"symbols": normalized},
+            {"symbols": normalized, **cutoff_parameters},
         )
         grouped: dict[str, list[dict[str, Any]]] = {symbol: [] for symbol in normalized}
         for row in rows:

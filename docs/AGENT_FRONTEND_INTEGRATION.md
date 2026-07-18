@@ -88,7 +88,9 @@ action, decision, sizing, key evidence, 점수와 설명을 읽는다. 별도 re
 배속과 `재생/일시정지/재시작`을 표시한다. 배속은 `1·5·20·60·300×`이고 서버 status를
 진실의 원천으로 사용한다. 진행 중인 차트 봉의 남은 시간도 LIVE에서는 실제 시각,
 SIM에서는 status의 `virtualTime`과 `effectiveSpeed`를 사용하며 일시정지 중에는 함께
-멈춘다. phase, 합성 news, basket UI는 없다.
+멈춘다. LIVE에서 SIM으로 처음 전환되면 메인 화면은 증시지도(TreeMap)로 이동하고,
+status의 replay 가격과 등락률을 해당 종목 타일에 반영한다. 일시정지·재개·같은 모드의
+run 갱신은 사용자가 보고 있는 화면을 강제로 바꾸지 않는다. phase, 합성 news, basket UI는 없다.
 
 상태는 실행 중 1초, LIVE·ready·paused·completed·연결 불가에서는 30초 간격으로
 확인한다. 이전 요청이 끝난 뒤 다음 요청을 예약하고 숨겨진 브라우저 탭에서는 polling을
@@ -1133,9 +1135,14 @@ headline, keywords, 탭별 자연어, 최근 움직임과 안정성 문장은 �
 종목·S&P 500·섹터 ETF 상대수익률/거래량 차트를 함께 제공한다. 기업저널 내부 뉴스 탭은 두지
 않지만 뉴스는 저장형 문장을 만드는 입력 근거로 계속 사용할 수 있다. 오른쪽 설명의 hover/focus는
 관련 차트 계열을 강조하며 선택된 재무 용어는 공통 사전 tooltip으로 설명한다.
-전용 evidence route도 아직 cutoff 조회를 보장하지 못하므로 replay simulation 중에는
-기업저널 report route와 함께 409를 반환한다. 프런트는 LIVE 최신 report나 fixture를 남기지 않고
-`simulation_data_unavailable` 상태를 표시한다.
+replay simulation에서도 report와 evidence route를 모두 다시 조회한다. 서버 응답의
+`sourceMode=historical_reconstruction`과 `cutoff`가 시점 계약의 source of truth이며, 프런트는
+가상시각을 query parameter로 보내거나 LIVE 응답과 합치지 않는다. mode·runId·KST 날짜가 바뀌면
+이전 report와 evidence를 먼저 지우고 다시 요청하되 실행 중 매 tick마다 재요청하지 않는다.
+SIM에서는 `CompanySummaryPanel`과 상대수익률 chart의 별도 fundamentals/candle fetch를 끄고,
+`/evidence`가 반환한 시점 재무·실적·완료 일봉만 렌더링한다. 기존 universe item은 회사명·sector·
+industry 같은 식별 정보만 남기고 현재 가격·시가총액·재무·등락률은 제거한 뒤 시점 evidence로
+다시 채운다. 적격 자료가 없으면 최신값이나 preview fixture로 대체하지 않고 자료 부족 상태를 표시한다.
 
 어려운 재무 용어는 공통 `GlossaryText`를 사용하므로 hover, focus, Enter/Space에서 같은
 설명을 제공한다. `companyJournalPreview=1` fixture는 `import.meta.env.DEV`일 때만 활성화된다.

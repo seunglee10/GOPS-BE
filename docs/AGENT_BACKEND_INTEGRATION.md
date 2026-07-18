@@ -944,9 +944,15 @@ bounded 조회한다. 기관명·등급·목표주가가 실제 row에 있을 �
 시장 컨센서스 상승·하락도 표현하지 않는다. 유료 리서치의 사유나 원문을 추정하지 않는다.
 
 `/evidence`는 기업저널 panel 전용 읽기 계약으로 분기 재무, SEC/Yahoo 실적, 최대 520개 일봉을
-한 번에 반환한다. 현재 repository가 cutoff 인자를 받지 않으므로 replay simulation 중에는
-`/api/company-journal/{symbol}`과 `/evidence`를 모두 409로 차단한다. 향후 저장 보고서와 각 원천을
-`virtualTime` 이하로 고르는 point-in-time provider가 연결된 뒤에만 SIM 읽기를 다시 허용한다.
+한 번에 반환한다. replay simulation에서는 두 GET route가 simulator status의 `virtualTime`을
+서버 내부 cutoff로 사용한다. report route는 최신 LIVE 보고서를 읽거나 생성 queue에 넣지 않고,
+cutoff 이전 완료 일봉·이전 날짜에 공개된 SEC 실적·cutoff까지 실제 수집된 Yahoo snapshot만으로
+결정론적 `sourceMode=historical_reconstruction` 보고서를 즉시 만든다. 같은 cutoff가 `/evidence`의
+재무·실적·상대수익률에도 적용되며 응답은 `simulation`, `cutoff`, `sourceMode` provenance를 포함한다.
+SEC는 시간 정밀도가 날짜뿐이므로 replay 당일 filing은 제외하고, Yahoo는 `collected_at`, analyst
+action은 `action_at`과 `collected_at`, 저장 요약과 graph는 `generated_at`이 cutoff 이하일 때만
+사용한다. 완료 일봉은 New York 기준 현재 replay 날짜보다 이전 session만 선택한다. 적격 row가
+없으면 결측으로 남기며 최신 report, live fundamentals adapter, 현재 candle로 fallback하지 않는다.
 
 ## Failure Policy
 
