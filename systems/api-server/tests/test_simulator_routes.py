@@ -533,7 +533,10 @@ class SimulatorRoutesTest(unittest.TestCase):
                 "cross": {"status": "none", "direction": None, "timestamp": None, "barsAgo": None},
             },
         }
-        storage = SimpleNamespace(get_symbol_assets=lambda _symbol: stored_assets)
+        storage = SimpleNamespace(
+            get=lambda _symbol, interval: stored_assets.get(interval),
+            get_symbol_assets=lambda _symbol: stored_assets,
+        )
         historical = {"symbol": "NVDA", "interval": "1m", "candles": []}
 
         with (
@@ -553,7 +556,7 @@ class SimulatorRoutesTest(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["assets"]["1m"]["asOf"], "2026-07-14T16:59:00.000Z")
         self.assertEqual(payload["assets"]["1m"]["coverage"]["actualBars"], 120)
-        self.assertEqual(payload["assets"]["1D"]["asOf"], "2026-07-14T04:00:00Z")
+        self.assertEqual(list(payload["assets"]), ["1m"])
         self.assertTrue(payload["meta"]["simulation"])
         self.assertEqual(payload["meta"]["cutoff"], "2026-07-15T02:00:00+09:00")
         self.assertEqual(payload["meta"]["dynamicInterval"], "1m")

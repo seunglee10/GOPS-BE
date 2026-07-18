@@ -117,6 +117,11 @@ asset을 ClickHouse에 저장하거나 dual-write하지 않는다. LLM은 검증
 optional field만 PostgreSQL JSONB에 합치며 prompt와 전체 fact pack은 저장하지 않는다.
 S3, Redis, Kafka는 자산 저장 경로에 없다.
 
+차트 runtime은 현재 symbol·interval의 candle snapshot과 첫 scene을 먼저 렌더한 뒤
+Geometry와 commentary가 든 자산 한 건을 후순위로 읽는다. ChartPanel과 연결된 해설
+패널은 이 응답을 공유하며 별도 전체-interval 조회를 만들지 않는다. interval query가
+있는 GET은 해당 PostgreSQL row 하나만 반환하고, interval 없는 기존 전체 조회만 호환용으로 유지한다.
+
 운영에서 repair가 활성화되고 Alpaca credential이 있을 때만 실제 누락 range를 보충한다.
 Alpaca가 성공했지만 실제 봉이 없는 slot은 `provider_confirmed_empty`로 기록하며 가짜
 봉을 만들지 않는다. 이 경우에도 `coverage.contiguousBars`는 보정값이 아니라 실제 관측

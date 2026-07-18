@@ -886,6 +886,10 @@ symbol과 timeframe을 해당 자산 값으로 함께 바꾸며 주문 route는 
 
 Geometry asset은 GET/build/poll route를 사용한다. timed anchor는 현재 interval의
 canonical candle timestamp로만 snap하며 대응 봉이 없으면 해당 drawing을 제외한다.
+LIVE와 SIM 모두 현재 chart의 canonical candle snapshot과 첫 Canvas scene이 렌더된 뒤에만
+현재 symbol+interval 자산을 후순위로 조회한다. ChartPanel이 요청을 단독 소유하고 연결된
+차트 해설 패널은 document runtime snapshot을 공유하므로 전체 interval 또는 중복 GET을
+보내지 않는다. 자산 조회가 느리거나 실패해도 이미 렌더된 candle chart는 유지한다.
 SIM에서는 차트가 현재 interval을 GET query에 포함하고 symbol+interval별로 cache한다.
 mode/run 또는 interval이 바뀌면 다시 조회하며, 응답의 `meta.simulation=true` 자산도
 동일한 layer/controller 계약으로 적용한다. 이 자산은 서버 메모리 응답일 뿐 build job,

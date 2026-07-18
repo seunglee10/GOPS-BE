@@ -27,7 +27,14 @@ from gops_agents.chart_assets.queue import InMemoryChartAssetBuildQueue  # noqa:
 class FakeStorage:
     def __init__(self):
         self.assets = {"NVDA": {interval: {"symbol": "NVDA", "interval": interval} if interval == "1D" else None for interval in ALL_INTERVALS}}
-    def get_symbol_assets(self, symbol): return self.assets.get(symbol, {interval: None for interval in ALL_INTERVALS})
+        self.get_calls = []
+        self.get_symbol_assets_calls = []
+    def get(self, symbol, interval):
+        self.get_calls.append((symbol, interval))
+        return self.assets.get(symbol, {}).get(interval)
+    def get_symbol_assets(self, symbol):
+        self.get_symbol_assets_calls.append(symbol)
+        return self.assets.get(symbol, {interval: None for interval in ALL_INTERVALS})
     def coverage(self, symbols=None):
         items = [{"symbol": "NVDA", "interval": "1D", "generatedAt": "2026-07-11T00:00:00.000Z", "status": "ready"}]
         return [item for item in items if not symbols or item["symbol"] in symbols]
@@ -44,6 +51,7 @@ class FailingQueue:
 
 
 class FailingStorage:
+    def get(self, _symbol, _interval): raise RuntimeError("postgres unavailable")
     def get_symbol_assets(self, _symbol): raise RuntimeError("postgres unavailable")
     def coverage(self, _symbols=None): raise RuntimeError("postgres unavailable")
     def delete(self, _symbols, _intervals): raise RuntimeError("postgres unavailable")
@@ -75,6 +83,17 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         missing = self.client.get("/api/charts/analysis-assets", params={"symbol": "AAPL"})
         self.assertEqual(missing.status_code, 200)
         self.assertEqual(missing.json()["assets"], {interval: None for interval in ALL_INTERVALS})
+
+    def test_serves_only_requested_interval(self):
+        response = self.client.get("/api/charts/analysis-assets", params={"symbol": "NVDA", "interval": "1D"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["assets"], {"1D": {"symbol": "NVDA", "interval": "1D"}})
+        self.assertEqual(self.storage.get_calls, [("NVDA", "1D")])
+        self.assertEqual(self.storage.get_symbol_assets_calls, [])
+
+        missing = self.client.get("/api/charts/analysis-assets", params={"symbol": "AAPL", "interval": "1m"})
+        self.assertEqual(missing.status_code, 200)
+        self.assertEqual(missing.json()["assets"], {"1m": None})
 
     def test_coverage_filters_symbols(self):
         response = self.client.get("/api/charts/analysis-assets/coverage", params={"symbols": "NVDA,AAPL"})

@@ -818,6 +818,10 @@ GET    /api/charts/analysis-assets/build/{job_id}
 POST   /api/charts/analysis-assets/build/{job_id}/cancel
 ```
 
+GET에 `interval`이 있으면 PostgreSQL의 `(symbol, interval)` row 하나만 읽고 응답
+`assets`에도 해당 interval만 넣는다. interval이 없는 운영·개발 호환 요청은 기존처럼
+symbol의 모든 저장 interval을 반환한다.
+
 DELETE는 개발 패널의 명시적 정리 기능이다. 최대 100개 symbol과
 `1m/5m/10m/1h/4h/1D/1W`만 받고 선택된 pair를 PostgreSQL
 `chart_assets.geometry_assets`에서 삭제한다. 자동 TTL이나 broad cleanup은 사용하지
@@ -867,13 +871,13 @@ error type/code/param은 보존하지만 key, prompt, 뉴스 원문은 기록하
 503으로 막는다. 기존 숫자형 자산은 변환하거나 fallback으로 읽지 않는다.
 
 SIM의 `GET /api/charts/analysis-assets?symbol=NVDA&interval=1m`은 저장 자산 중
-`asOf <= virtualTime`인 것만 먼저 남긴다. 요청 interval은 replay 시작 전 ClickHouse
+요청 interval에서 `asOf <= virtualTime`인 것만 먼저 남긴다. 요청 interval은 replay 시작 전 ClickHouse
 과거 봉과 simulator가 cursor까지 반환한 replay 봉을 기존 chart merge 규칙으로 합친 뒤,
 완료 봉 120개 이상일 때 Geometry v6 분석을 동기 worker thread에서 한 번 실행해 응답의
 해당 interval만 교체한다. 이 동적 자산은 PostgreSQL에 저장하거나 build queue에 넣지
 않으며 `meta.simulation`, `cutoff`, `runId`, `dynamicInterval`, `dynamicStatus`를 함께
 반환한다. 봉이 부족하거나 분석 입력을 읽지 못하면 미래 저장 자산으로 fallback하지
-않고 각각 `data_insufficient` 또는 `unavailable` 상태와 안전한 과거 자산만 반환한다.
+않고 각각 `data_insufficient` 또는 `unavailable` 상태와 같은 interval의 안전한 과거 자산만 반환한다.
 요청 interval이 없으면 동적 분석 없이 cursor-safe 저장 자산만 반환한다.
 
 ## AI Company Journal Routes

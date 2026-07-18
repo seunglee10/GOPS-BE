@@ -50,7 +50,8 @@ def chart_analysis_assets(
 ) -> dict[str, Any]:
     normalized = normalize_market_symbol(symbol)
     try:
-        assets = chart_asset_storage().get_symbol_assets(normalized)
+        storage = chart_asset_storage()
+        assets = {interval: storage.get(normalized, interval)} if interval else storage.get_symbol_assets(normalized)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Chart analysis asset storage is unavailable.") from exc
     meta: dict[str, Any] = {"servedAt": utc_now_iso()}
@@ -61,7 +62,7 @@ def chart_analysis_assets(
     if simulator_status.get("mode") == "simulation":
         cutoff_value = str(simulator_status.get("virtualTime") or "")
         cutoff = _parse_timestamp(cutoff_value)
-        assets = _assets_at_or_before(assets, cutoff)
+        assets = _assets_at_or_before(assets, cutoff, [interval] if interval else ALLOWED_INTERVALS)
         dynamic_status = "not_requested"
         if interval is not None:
             try:
@@ -203,11 +204,12 @@ def _parse_intervals_csv(value: str) -> list[str]:
 def _assets_at_or_before(
     assets: dict[str, dict[str, Any] | None],
     cutoff: datetime | None,
+    intervals: list[str] | tuple[str, ...] = ALLOWED_INTERVALS,
 ) -> dict[str, dict[str, Any] | None]:
-    filtered = {interval: None for interval in ALLOWED_INTERVALS}
+    filtered = {interval: None for interval in intervals}
     if cutoff is None:
         return filtered
-    for interval in ALLOWED_INTERVALS:
+    for interval in intervals:
         asset = assets.get(interval)
         as_of = _parse_timestamp(asset.get("asOf")) if isinstance(asset, dict) else None
         if as_of is not None and as_of <= cutoff:
