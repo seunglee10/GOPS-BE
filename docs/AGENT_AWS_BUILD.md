@@ -189,6 +189,19 @@ systems/api-server/pods/api-server/gops-backend
 `systems/agent-orchestration/config`가 빠지면 backend가 bootstrap seed로 degrade해
 운영 alias catalog에만 있는 회사명/한글명 shortcut을 놓칠 수 있다.
 
+Frontend image:
+
+```text
+gops-frontend
+infra/docker/Dockerfile.gops-frontend
+```
+
+The seeded AI-coach report embeds bounded AAPL/AMZN/WMT daily windows from the canonical
+`systems/market-data/tests/fixtures/chart_assets_v2` replay rows during Vite build. The frontend
+Docker builder must copy those three JSON inputs before `npm run build`; only the bounded virtual
+module output is shipped in browser assets. The full source files are not served by nginx and the
+runtime browser does not fetch repository files or market providers.
+
 같은 `gops-api-server` image는 `app.recommendations.worker`도 실행한다. 이 worker는
 프로필이 저장된 사용자에 대해 정규장 09:45/12:45/15:45 ET 추천 슬롯을 멱등
 생성하고, 기존 notifications Redis/WebSocket 경로로 추천 변경 알림을 발행한다.

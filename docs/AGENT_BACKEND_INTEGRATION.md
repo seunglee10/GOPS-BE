@@ -55,8 +55,8 @@ not create per-page jobs or call `AgentOrchestrator.analyze()` in the request ha
 ## Account Holdings Source Boundary
 
 `GET /api/account/holdings`는 선택적 `source=active|kis`를 받으며 기본값은 `active`다.
-`active`는 기존 동작을 보존해 SIM 모드에서는 시뮬레이터 원장을, 그 외에는 연결된 KIS
-보유정보를 반환한다. `source=kis`는 SIM 모드와 무관하게 KIS 보유정보 경로를 사용한다.
+`active`는 LIVE/SIM 모두 영구 paper 원장의 공통 보유정보를 반환한다.
+`source=kis`는 SIM 모드와 무관하게 KIS 보유정보 경로를 사용한다.
 응답 형식은 기존 account/positions 계약을 그대로 사용한다. 차트 종합 해설은
 비개인화 저장 자산이므로 이 endpoint를 호출하지 않는다.
 

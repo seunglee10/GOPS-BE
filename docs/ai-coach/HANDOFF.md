@@ -170,6 +170,10 @@ cases, assessment, checklist, portfolio impact, and conditions atomically. Page 
 real `reportsByPeriod`, not one report relabelled by the UI. Page 4 is the single merged
 action center.
 
+Selecting a historical case on page 1 also selects that case's `TradeCase.checklist`.
+Seeded replay cases expose unchecked price, momentum, and volume checks from the same stored
+daily-candle window; categories without an archived decision record say `확인 기록 없음`.
+
 The preserved runtime path is:
 
 ```text
@@ -230,6 +234,16 @@ fixed report is never written to Redis, ClickHouse, Kafka, PostgreSQL, or S3.
 Switching between LIVE and SIM does not clear or replace the resolved coach report. The panel keeps
 the same report and internal page in both modes; simulator status is not an AI-coach availability
 condition.
+For the seeded report only, page-1 chart series are built from the repository's stored fixed-replay
+AAPL/AMZN/WMT daily candles. The fill-relative view rebases OHLC prices to the ledger fill while
+preserving actual returns and volumes, and computes RSI/MACD from those stored closes. Confirmation
+items use a flat `DESIGN.md` to-do-list treatment with inline evidence and semantic typography roles;
+the old nested cards, hover-only evidence, generated waves, fluid font sizes, and heavy local weights
+are not part of the contract.
+Page 2 follows the same presentation contract: semantic stage tabs, flat evidence and habit rows,
+label/count/meter-only strength summaries, problem recommendations without secondary observed-behavior
+copy, hairline-separated representative-trade sections, and no local typography metrics, decorative
+shadows, gradients, or nested card hierarchy.
 
 The AI coach production component is lazy-loaded as its own frontend chunk so the AWS
 quality workflow's 512,000-byte JavaScript chunk budget remains enforced. The panel

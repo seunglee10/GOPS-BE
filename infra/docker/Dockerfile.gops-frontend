@@ -16,6 +16,9 @@ RUN npm ci
 
 COPY apps/chart-engine /app/apps/chart-engine
 COPY shared/chart-contract /app/shared/chart-contract
+COPY systems/market-data/tests/fixtures/chart_assets_v2/aapl-1d.json /app/systems/market-data/tests/fixtures/chart_assets_v2/aapl-1d.json
+COPY systems/market-data/tests/fixtures/chart_assets_v2/amzn-1d.json /app/systems/market-data/tests/fixtures/chart_assets_v2/amzn-1d.json
+COPY systems/market-data/tests/fixtures/chart_assets_v2/wmt-1d.json /app/systems/market-data/tests/fixtures/chart_assets_v2/wmt-1d.json
 COPY apps/gops-frontend /app/apps/gops-frontend
 
 RUN npm run build

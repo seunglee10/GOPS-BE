@@ -336,6 +336,10 @@ carousel 위치 숫자를 반복 표시하지 않는다. 화살표는 별도 좌
 요약은 등급 제목이나 상태색 없이 한 문장으로 크게 표시한다. 확인 항목은 `차트`,
 `뉴스`, `재무`, `시장` 순서의 2열 overview로 렌더링하고, 기본 화면에는 분류명, 상태,
 최대 두 개 핵심 항목명만 크게 표시한다. 세부 수치·출처·기준시각은 tooltip에 둔다.
+과거 유사 사례를 전환하면 확인 항목도 해당 `TradeCase.checklist`로 함께 전환한다.
+현재 체결의 checklist를 과거 사례에 재사용하지 않는다. 저장된 일봉 근거가 있는 seeded
+사례는 가격·모멘텀·거래량 확인 여부와 계산 근거를 표시하고, 기록이 없는 분류는
+`확인 기록 없음`으로 표시한다.
 
 2페이지 포트폴리오 탭은 별도 API를 호출하지 않고 받은 report의
 `marketDiversification`만 렌더링한다. 현재 섹터 비중과 보유 종목의 시장 연동성은
@@ -572,6 +576,12 @@ Page 2 is a long-term investor-profile view, not an alert surface: it renders th
 process/outcome cohorts, repeated patterns, and representative trades without a chart or
 per-section fetch. If the report has no decision record, it must show the supplied missing
 state rather than infer a personality or plan from realized profit and loss.
+Its stage tabs, evidence metrics, strength rows, problem recommendation, representative trade,
+and diversification rows use the same flat `DESIGN.md` surface and semantic typography contract
+as page 1. Strength rows show only the label, count, and meter; repeated explanatory sentences are
+not rendered below the meter. Problem recommendations omit the secondary observed-behavior copy and
+retain only the problem title, priority sentence, and action. The page does not use hover-only
+tooltips, nested cards, local font sizes, weights, fluid type, shadows, or gradients.
 
 On page 1, the selected fill and similar-case index are local UI state. A fill switch
 selects one `reviewsByFillId` object so chart, missed checks, outcome, portfolio impact,
@@ -585,6 +595,13 @@ The first real user order disables that exception and restores the authenticated
 Simulator mode does not clear, refetch, or replace the resolved coach report. The same report and
 current internal page remain visible when switching between LIVE and SIM; account and order panels
 may continue refreshing independently from the common paper ledger.
+The seeded report's entry charts embed the stored AAPL/AMZN/WMT fixed-replay daily OHLCV window at
+build time. Prices are rebased to the paper fill only because the chart is a fill-relative percent
+view; candle returns, volume, RSI(14), MACD, signal, and relative volume come from those stored rows.
+The fixture must not generate sine-wave or random candles. Page-1 confirmation evidence renders as
+a flat to-do list with status boxes and inline evidence, not as nested cards or hover-only tooltips.
+Its typography uses the shared `title-sm`, `label-md`, `body-md`, `caption`, and `button` roles from
+`DESIGN.md`, without local fluid sizes or custom heavy weights.
 
 When the workspace does not already supply a `coachReport`, the panel makes one top-level
 authenticated request to `GET /api/ai-coach/reports/latest`. Child pages never fetch their
@@ -597,7 +614,8 @@ Production report의 decision checklist는 post-market input archive에 실제�
 evidence를 tooltip과 chart marker에 보강할 수 있지만 그 evidence가
 `checked`/`unchecked`를 바꾸지는 않는다. 기록이 없는 체결은 UI가 임의로
 `미확인`으로 채우지 않고 `확인 기록 없음`을 표시한다. Historical cases keep their
-own decision-check records; a case switch must not reuse the selected current fill's checks.
+own decision-check records in `TradeCase.checklist`; a case switch must not reuse the selected
+current fill's checks.
 Decision evidence is bounded by `decisionAt`, while chart outcomes are anchored at
 `filledAt` and stop at the report request cutoff.
 
