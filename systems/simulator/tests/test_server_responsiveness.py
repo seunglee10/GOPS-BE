@@ -48,6 +48,8 @@ class _BlockingReplayController:
             "datasetId": self.source.dataset_id,
             "mode": "simulation",
             "state": self.state,
+            "runId": "run-1",
+            "virtualTime": "2026-07-15T00:00:00+09:00",
             "totalEventCount": self.source.total_events,
         }
 
@@ -87,6 +89,23 @@ class SimulatorServerResponsivenessTests(unittest.TestCase):
         self.assertNotIn("/api/control/orders", paths)
         self.assertNotIn("/api/control/conditions", paths)
         self.assertIn("/api/control/order-flow", paths)
+
+    def test_indices_expose_the_fixed_july_15_snapshot_without_future_data(self) -> None:
+        controller = _BlockingReplayController()
+        app = create_app(replay_controller=controller)
+
+        with TestClient(app) as client:
+            response = client.get("/api/control/indices")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["source"], "simulation_replay")
+        self.assertEqual(payload["datasetId"], controller.source.dataset_id)
+        self.assertEqual(payload["period"], "2026-07-15-kst")
+        self.assertEqual(payload["updatedAt"], "2026-07-15T00:00:00+09:00")
+        self.assertEqual(payload["virtualTime"], "2026-07-15T00:00:00+09:00")
+        self.assertEqual(payload["coverage"]["priced"], payload["coverage"]["total"])
+        self.assertIn("^GSPC", {item["symbol"] for item in payload["items"]})
 
 
 if __name__ == "__main__":

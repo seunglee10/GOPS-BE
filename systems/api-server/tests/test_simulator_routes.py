@@ -92,6 +92,42 @@ class FakeSimulatorGateway:
         self.calls.append(("symbols", query, limit))
         return {"source": "simulation_replay", "symbols": [{"symbol": "NVDA"}]}
 
+    def indices(self):
+        self.calls.append(("indices",))
+        return {
+            "source": "simulation_replay",
+            "cacheStatus": "fresh",
+            "warning": None,
+            "updatedAt": "2026-07-15T00:00:00+09:00",
+            "refreshSeconds": 60,
+            "staleRefreshSeconds": 300,
+            "period": "2026-07-15-kst",
+            "interval": "snapshot",
+            "coverage": {"total": 1, "priced": 1, "missing": []},
+            "items": [{
+                "symbol": "^GSPC",
+                "name": "S&P 500",
+                "assetClass": "equity_index",
+                "group": "US",
+                "currency": "USD",
+                "unit": "points",
+                "price": 6300.0,
+                "open": 6290.0,
+                "high": 6310.0,
+                "low": 6280.0,
+                "previousClose": 6285.0,
+                "change": 15.0,
+                "changePercent": 0.24,
+                "sparkline": [6285.0, 6300.0],
+                "updatedAt": "2026-07-15T00:00:00+09:00",
+                "status": "ok",
+            }],
+            "datasetId": "sp500-top20-plus-amd-mu-20260715-kst-v2",
+            "simulation": True,
+            "runId": "run-1",
+            "virtualTime": self.virtual_time,
+        }
+
     def order_flow(self, symbol):
         self.calls.append(("order-flow", symbol))
         return {
@@ -269,6 +305,19 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertIn(("order-flow", "NVDA"), self.gateway.calls)
         self.assertEqual(daily.status_code, 409)
         self.assertEqual(daily.json()["detail"], "simulation_data_unavailable")
+
+    def test_simulation_market_indices_use_the_fixed_replay_snapshot(self):
+        self.gateway.mode = "simulation"
+
+        response = self.client.get("/api/market/indices")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["source"], "simulation_replay")
+        self.assertEqual(payload["period"], "2026-07-15-kst")
+        self.assertEqual(payload["items"][0]["symbol"], "^GSPC")
+        self.assertEqual(payload["virtualTime"], "2026-07-15T00:00:00+09:00")
+        self.assertIn(("indices",), self.gateway.calls)
 
     def test_simulation_holdings_use_shared_diversified_paper_account(self):
         self.gateway.mode = "simulation"
