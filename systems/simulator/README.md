@@ -30,8 +30,10 @@ manifest와 ClickHouse 상태를 `FAILED`로 남기며 시뮬레이터는 실행
 
 ## 재생과 공통 paper 원장
 
-SIM 진입 시 가상시각 `2026-07-15 00:00 KST`의 새 `runId`를 만든다. 사용자 계좌는
-Postgres의 영구 paper 원장을 계속 사용한다. 시작 상태는 `ready`, 기본 배속은 `1×`이며 `1·5·20·60·300×`를
+시작 스크립트는 simulator와 backend 연결만 준비하고 전역 상태를 `LIVE/idle`에 둔다.
+화면 상단의 플레이 버튼을 누르면 `start` action이 가상시각 `2026-07-15 00:00 KST`의
+새 `runId`를 만들고 같은 응답에서 `running`으로 전환한다. 사용자 계좌는
+Postgres의 영구 paper 원장을 계속 사용한다. 기본 배속은 `1×`이며 `1·5·20·60·300×`를
 실행 중 바꿀 수 있다. 처리량이 부족하면 가상시계가 늦어질 뿐 틱은 버리지 않는다.
 ClickHouse 청크 조회와 이벤트 처리는 HTTP 이벤트 루프 밖의 작업 스레드에서 수행하고,
 status와 health는 마지막 완료 스냅샷을 즉시 반환한다. 따라서 큰 청크를 처리하는 동안에도
@@ -50,7 +52,7 @@ Kubernetes probe와 웹의 SIM 상태 폴링이 차단되지 않는다.
 ```text
 GET  /api/control/status
 PUT  /api/control/mode       {"mode":"live"|"simulation"}
-POST /api/control/action     {"action":"pause"|"resume"|"restart"}
+POST /api/control/action     {"action":"start"|"pause"|"resume"|"restart"}
 PUT  /api/control/speed      {"speed":1|5|20|60|300}
 GET  /api/control/candles
 GET  /api/control/symbols
@@ -83,7 +85,8 @@ read-only로 추출하고 cutoff-safe 추천 결과를 검증하는 별도 오�
 ## dev EKS
 
 `Deployment/gops-simulator`는 평소 `replicas: 0`이다. 시작 스크립트는 ClickHouse
-스키마와 `READY` 데이터셋을 확인한 뒤 simulator와 backend의 전역 모드만 전환한다.
+스키마와 `READY` 데이터셋을 확인한 뒤 simulator Pod와 backend 연결만 준비한다.
+스크립트 완료 시에는 `LIVE/idle`이며 화면의 플레이 버튼을 누르기 전에는 run이나 replay가 시작되지 않는다.
 Alpaca ingestor, market processor, 실시간 Redis/Kafka는 변경하지 않는다.
 
 ```sh

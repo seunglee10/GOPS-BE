@@ -78,8 +78,9 @@ AND이며 값이 없는 종목은 해당 범위에서 제외한다. RSI는 heatm
 action, decision, sizing, key evidence, 점수와 설명을 읽는다. 별도 report를 만들거나
 주문을 실행하지 않는다.
 
-상단 LIVE/SIM 컨트롤은 `2026-07-15 KST` 실제 틱 replay를 제어한다. SIM 진입 직후
-`ready` 상태의 재생 버튼은 활성화되어야 하며, KST 가상시각·진행률·요청 배속·실효
+상단 LIVE/SIM 컨트롤은 `2026-07-15 KST` 실제 틱 replay를 제어한다. 시작 스크립트가
+연결을 준비한 `LIVE/idle` 상태에서도 플레이 버튼을 표시한다. 사용자가 플레이를 누르면
+`start` action 하나로 새 run을 준비하고 즉시 `running`으로 전환한다. KST 가상시각·진행률·요청 배속·실효
 배속과 `재생/일시정지/재시작`을 표시한다. 배속은 `1·5·20·60·300×`이고 서버 status를
 진실의 원천으로 사용한다. 진행 중인 차트 봉의 남은 시간도 LIVE에서는 실제 시각,
 SIM에서는 status의 `virtualTime`과 `effectiveSpeed`를 사용하며 일시정지 중에는 함께

@@ -21,7 +21,7 @@ class ModeRequest(BaseModel):
 
 
 class ActionRequest(BaseModel):
-    action: Literal["pause", "resume", "restart"]
+    action: Literal["start", "pause", "resume", "restart"]
 
 
 class SpeedRequest(BaseModel):
@@ -108,7 +108,9 @@ def create_app(
     @app.post("/api/control/action")
     def replay_action(payload: ActionRequest) -> dict[str, object]:
         try:
-            if payload.action == "pause":
+            if payload.action == "start":
+                result = controller.start()
+            elif payload.action == "pause":
                 result = controller.pause()
             elif payload.action == "resume":
                 result = controller.resume()
