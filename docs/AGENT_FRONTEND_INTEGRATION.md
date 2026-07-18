@@ -120,6 +120,12 @@ fixture를 남기지 않고 `simulation_data_unavailable` 상태를 표시한다
 추천·뉴스·AI 보고서를 만들지 않는다. 차트는 서버가 반환한
 과거+replay candle과 replay WebSocket만 사용한다.
 
+Order Flow 패널과 Bid/Ask 차트는 SIM에서 기존 intraday API와
+`/ws/charts?orderFlow=true`를 사용한다. 캐시는 `mode + datasetId + runId + virtual NY
+date + symbol`로 격리하고 mode/run 변경 시 폐기한다. 새 `sessionDate`가 오면 이전
+minute map을 먼저 비우며, Bid/Ask 캔들은 해당 세션의 정규장 구간만 표시한다.
+오더플로우 조회 실패는 빈 데이터가 아니라 명시적 error 상태로 렌더링한다.
+
 차트의 실적·뉴스 DOM 마커는 Canvas scene 좌표를 chart container의 local 좌표로
 환산하고 대응 봉의 x 중심을 그대로 사용한다. 같은 봉의 여러 이벤트는 좌우로 벌리지
 않고 세로로 쌓아 UI scale·pan·zoom 중에도 봉과 시간축에서 분리되지 않게 한다.

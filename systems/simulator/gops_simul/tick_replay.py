@@ -12,6 +12,7 @@ from typing import Callable, Iterable, Protocol
 from zoneinfo import ZoneInfo
 
 from gops_simul.dataset import ALLOWED_SPEEDS, DATASET_END, DATASET_ID, DATASET_START, REPLAY_SYMBOLS, in_half_open_window, parse_timestamp
+from gops_simul.order_flow import ReplayOrderFlowProjection
 from gops_simul.state_store import ReplayStateStore
 
 
@@ -39,6 +40,7 @@ class ReplayEventSource(Protocol):
     dataset_id: str
     total_events: int
     def events_after(self, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]: ...
+    def events_for_symbol_after(self, symbol: str, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]: ...
     def candle_snapshot(self, symbol: str, interval: str, through: datetime, limit: int) -> dict[str, object]: ...
 
 
@@ -54,6 +56,16 @@ class InMemoryReplayEventSource:
 
     def events_after(self, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]:
         return [event for event in self._events if event.sequence > sequence and event.timestamp <= through][:limit]
+
+    def events_for_symbol_after(self, symbol: str, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]:
+        normalized = symbol.strip().upper()
+        return [
+            event for event in self._events
+            if event.sequence > sequence
+            and event.timestamp <= through
+            and str(event.payload.get("S") or "").upper() == normalized
+            and event.payload.get("T") in {"q", "t"}
+        ][:limit]
 
     def candle_snapshot(self, symbol: str, interval: str, through: datetime, limit: int) -> dict[str, object]:
         from gops_simul.clickhouse import INTERVAL_SECONDS, replay_candle_payload
@@ -108,6 +120,7 @@ class ReplayController:
         self._latest_quotes: dict[str, dict[str, object]] = {}
         self._latest_trades: dict[str, float] = {}
         self._daily_candles: dict[str, dict[str, dict[str, object]]] = {}
+        self._order_flow = ReplayOrderFlowProjection(source)
         self._restore_state()
         self._status_snapshot = self._status()
 
@@ -121,6 +134,7 @@ class ReplayController:
             else:
                 old_run = self.run_id
                 self.mode, self.state, self.run_id = "live", "idle", None
+                self._order_flow.reset()
                 if old_run and self.state_store:
                     self.state_store.delete(old_run)
             return self._capture_status()
@@ -236,12 +250,31 @@ class ReplayController:
                 return self._daily_candle_snapshot(symbol, interval, limit)
             return self.source.candle_snapshot(symbol, interval, self.cursor, limit)
 
+    def order_flow_snapshot(
+        self,
+        symbol: str,
+        *,
+        after_sequence: int | None = None,
+        latest_only: bool = False,
+    ) -> dict[str, object]:
+        with self._lock:
+            self._pump()
+            self._require_simulation()
+            return self._order_flow.snapshot(
+                symbol,
+                through=self.cursor,
+                run_id=str(self.run_id),
+                after_sequence=after_sequence,
+                latest_only=latest_only,
+            )
+
     def _new_run(self) -> None:
         if self.run_id and self.state_store:
             self.state_store.delete(self.run_id)
         self.mode, self.state, self.run_id = "simulation", "ready", str(uuid.uuid4())
         self.requested_speed, self.cursor, self.last_sequence = self.default_speed, DATASET_START, 0
         self._emitted.clear(); self._latest_quotes.clear(); self._latest_trades.clear(); self._daily_candles.clear()
+        self._order_flow.reset(self.run_id)
         self._run_started_wall = None
         self._reset_anchor(); self._persist()
 

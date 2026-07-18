@@ -57,6 +57,7 @@ POST /api/control/action     {"action":"start"|"pause"|"resume"|"restart"}
 PUT  /api/control/speed      {"speed":1|5|20|60}
 GET  /api/control/candles
 GET  /api/control/symbols
+GET  /api/control/order-flow?symbol=...
 GET  /api/control/execution-events?runId=...&afterSequence=...&limit=...
 ```
 
@@ -64,6 +65,13 @@ Simulator는 계좌·주문·조건 control API를 제공하지 않는다. `simu
 execution event를 순서대로 페이지 조회하고 공통 Postgres 원장을 갱신한다.
 
 SIM 차트는 재생 시작 전 정상 과거 캔들과 현재 가상시각까지의 replay 캔들만 합친다.
+Bid/Ask 차트와 Order Flow 패널은 `simulation_replay_events`의 quote/trade를 종목별로
+cursor까지만 읽어 `orderflow-estimated-v2` minute profile을 만든다. 정규장 체결만
+집계하고 장외에는 직전 정규장 profile을 유지하되 현재 bid/ask는 계속 replay cursor의
+호가를 사용한다. 최대 8종목 projection만 메모리에 두며 eviction 또는 Pod 복구 뒤에는
+불변 replay 원본과 저장된 cursor로 다시 계산한다. 이 데이터는 LIVE Redis/Kafka나
+`trade_ticks`·`quote_ticks`에 기록하지 않는다.
+
 일봉은 UTC 자정이 아니라 `America/New_York` 시장 날짜의 자정을 canonical timestamp로
 사용한다. 같은 시장 날짜의 과거 완성 봉과 replay 진행 봉은 하나로 합치고 replay 봉이
 우선한다. 현재 시장 날짜의 일봉은 `isClosed=false`이며 다음 뉴욕 시장 날짜가 시작된

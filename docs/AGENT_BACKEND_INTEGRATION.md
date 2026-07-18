@@ -137,6 +137,11 @@ quote replay만 소유하고, 계좌·주문·가격조건은 Postgres paper 원
 `GET /api/charts/candles`는 replay 시작 전 정상 과거 봉과 현재 가상시각까지의 replay
 봉만 합친다. `/ws/charts`도 simulator candle snapshot을 묶어서 보내며 실시간 Redis
 WebSocket 경로를 사용하지 않는다. SIM 심볼 검색은 manifest의 23개 티커로 제한한다.
+`GET /api/charts/order-flow/symbols|intraday`는 SIM safe-read이며 LIVE Redis 대신
+simulator의 종목별 replay projection을 사용한다. projection은 원본 quote/trade를
+`virtualTime`까지만 sequence 순서로 읽고 정규장 체결만 `orderflow-estimated-v2`로
+집계한다. `/api/charts/order-flow/daily`는 cutoff-safe SIM 구현이 없으므로 계속 409다.
+`/ws/charts?orderFlow=true`는 SIM minute/quote 변경만 replay provenance와 함께 전송한다.
 빠른 주문은 `GET /api/simulator/quote`로 현재 replay bid/ask를 읽고 기존
 `POST /api/orders`를 통해 공통 paper 주문 원장에 `execution_mode=simulation`과
 `runId`를 붙여 기록한다. SIM에 존재하지 않는

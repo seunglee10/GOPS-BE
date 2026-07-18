@@ -226,6 +226,12 @@ legacy default visible-bar query limit.
   and `1h` display buckets.
 - `OrderFlowPanel` reads only today's intraday Redis data and owns its symbol,
   aggregation window, and display resolution independently from chart panels.
+- In SIM, the same public intraday routes read a bounded per-symbol projection of
+  immutable `simulation_replay_events` through replay `virtualTime`; they never
+  fall through to LIVE Redis. Regular-session profiles retain the most recently
+  replayed regular day until the next regular-session trade starts a new profile.
+- SIM chart sockets request `orderFlow=true` only for Bid/Ask and OrderFlow
+  consumers and receive replay `ORDER_FLOW_BINS_UPDATE` plus `LIVE_QUOTE_UPDATE`.
 - Daily rows are also retained for audit and existing agent chart context.
   They are not the Bid/Ask chart or `OrderFlowPanel` source.
 - Side classification is fixed by the order-flow API metadata. Candle volume

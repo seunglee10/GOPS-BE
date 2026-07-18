@@ -15,8 +15,10 @@ os.environ["SIM_ENV_FILE"] = "/tmp/gops-simulator-test-no-env"
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SIMULATOR_ROOT = REPO_ROOT / "systems" / "simulator"
-if str(SIMULATOR_ROOT) not in sys.path:
-    sys.path.insert(0, str(SIMULATOR_ROOT))
+MARKET_DATA_SHARED_ROOT = REPO_ROOT / "systems" / "market-data" / "shared"
+for source_root in (SIMULATOR_ROOT, MARKET_DATA_SHARED_ROOT):
+    if str(source_root) not in sys.path:
+        sys.path.insert(0, str(source_root))
 
 from systems.simulator.gops_simul.server import create_app
 
@@ -84,6 +86,7 @@ class SimulatorServerResponsivenessTests(unittest.TestCase):
         self.assertNotIn("/api/control/account", paths)
         self.assertNotIn("/api/control/orders", paths)
         self.assertNotIn("/api/control/conditions", paths)
+        self.assertIn("/api/control/order-flow", paths)
 
 
 if __name__ == "__main__":

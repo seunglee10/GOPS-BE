@@ -1320,6 +1320,11 @@ deployment는 변경하지 않는다. simulator는 ClickHouse를 chunk 조회하
 순서형 `/api/control/execution-events`만 제공한다. 실행별 계좌·주문·가격조건은 Postgres
 paper 원장이 보유한다.
 
+SIM Order Flow는 같은 simulator image가 `systems/market-data/shared`의 분류 계약을
+읽어 `simulation_replay_events`에서 요청 종목만 cursor-safe하게 투영한다. 최대 8종목
+LRU이며 LIVE Redis/Kafka와 tick table에는 쓰지 않는다. shared 코드 변경은 simulator
+image도 rebuild하며, Bid/Ask/OrderFlow 소켓만 `orderFlow=true`로 이 projection을 구독한다.
+
 SIM 차트 자동 작도는 별도 Deployment, Job, migration을 추가하지 않는다. backend의
 `GET /api/charts/analysis-assets`가 프런트가 요청한 현재 interval 하나에 대해서만 기존
 ClickHouse 과거 봉과 simulator replay 완료 봉을 합쳐 비영속 Geometry 자산을 만든다.

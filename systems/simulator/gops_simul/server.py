@@ -160,6 +160,23 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.get("/api/control/order-flow")
+    def replay_order_flow(
+        symbol: str = Query(min_length=1, max_length=12),
+        afterSequence: int | None = Query(default=None, ge=0),
+        latestOnly: bool = Query(default=False),
+    ) -> dict[str, object]:
+        if controller.mode != "simulation":
+            raise HTTPException(status_code=409, detail="simulation mode is not active")
+        try:
+            return controller.order_flow_snapshot(
+                symbol,
+                after_sequence=afterSequence,
+                latest_only=latestOnly,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/api/control/symbols")
     def replay_symbols(q: str = "", limit: int = Query(default=100, ge=1, le=100)) -> dict[str, object]:
         query = q.strip().upper()
