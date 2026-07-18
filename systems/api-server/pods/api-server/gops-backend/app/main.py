@@ -15,6 +15,7 @@ from app.market_data.query.routes import router as market_query_router
 from app.recommendations.routes import router as recommendations_router
 from app.recommendations.fixed_replay import (
     FixedReplayProviderError,
+    fixed_replay_available_at,
     fixed_replay_enabled,
     fixed_replay_provider,
     prepare_fixed_replay_provider,
@@ -67,12 +68,25 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def reject_future_data_in_simulation(request: Request, call_next):
         if requires_point_in_time_data(request.url.path, request.method):
-            from app.routes.simulator import simulator_mode_active
+            from app.routes.simulator import simulator_gateway_from_app
+            from app.services.simulator_gateway import SimulatorUnavailable
 
-            if await asyncio.to_thread(simulator_mode_active, request.app):
+            try:
+                simulator_status = await asyncio.to_thread(simulator_gateway_from_app(request.app).status)
+            except SimulatorUnavailable:
+                simulator_status = {}
+            if simulator_status.get("mode") == "simulation":
                 if request.url.path.startswith("/api/recommendations/stocks") and fixed_replay_enabled():
                     try:
-                        fixed_replay_provider(request.app)
+                        provider = fixed_replay_provider(request.app)
+                        if provider is None or not fixed_replay_available_at(
+                            provider,
+                            simulator_status.get("virtualTime"),
+                        ):
+                            return JSONResponse(
+                                status_code=409,
+                                content={"detail": "simulation_data_unavailable"},
+                            )
                     except FixedReplayProviderError:
                         return JSONResponse(
                             status_code=503,

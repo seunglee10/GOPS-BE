@@ -75,12 +75,19 @@ SIM 뉴스 패널은 live Redis 캐시 대신 ClickHouse만 읽는다. 최신 �
 point-in-time 조회를 보장하지 못하는 뉴스 watchlist·추천·기업정보·AI 분석은
 `simulation_data_unavailable`을 반환한다.
 
+SIM 가상계좌 평가는 replay bid/ask만 사용한다. replay 호가가 없으면 LIVE Redis,
+최신 캔들, demo 가격으로 대체하지 않고 `simulation_data_unavailable`을 반환한다.
+배당·52주 통계 같은 LIVE 보강은 실행하지 않으며 계좌 성과 이력은 `virtualTime` 이하의
+스냅샷만 포함한다. 기업저널 report/evidence도 cutoff 조회가 구현되기 전까지 차단한다.
+
 ## 오프라인 V3 추천 fixture
 
 `tools/recommendation_v3_fixture.py`는 AWS ClickHouse의 2026-07-14 실제 데이터를
 read-only로 추출하고 cutoff-safe 추천 결과를 검증하는 별도 오프라인 도구다.
 생성 파일은 저장소에 자동 포함되지 않으며 현재 tick replay runtime API에는 연결되지
 않는다. fixture가 없을 때 synthetic 추천으로 대체하지 않는다.
+검증된 fixed recommendation artifact가 배포된 경우에도 replay cursor가 artifact의
+`evidenceAsOf`에 도달하기 전에는 추천 API가 409를 반환한다.
 
 ## dev EKS
 

@@ -312,7 +312,7 @@ class SimulatorRoutesTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(read_snapshots.call_args.args[1], "2026-07-07T15:00:00+00:00")
-        self.assertEqual(response.json()["asOf"], "2026-07-14T14:00:00+00:00")
+        self.assertEqual(response.json()["asOf"], "2026-07-14T14:00:00Z")
         self.assertEqual(len(response.json()["portfolio"]["points"]), 1)
         benchmark_provider.assert_not_called()
 

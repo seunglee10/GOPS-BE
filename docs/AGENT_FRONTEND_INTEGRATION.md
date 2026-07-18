@@ -107,7 +107,8 @@ limit-only 계약을 유지한다. 주문 상태는 `/ws/orders/{order_id}`의 S
 프런트가 가상시각을 query로 보내거나 live Redis 결과와 합치지 않는다. 일별 뉴스 API와
 차트의 `GET /api/charts/events`도 `generated_at <= virtualTime`인 저장 스냅샷만
 반환한다. 추천 패널은 검증된 fixed replay provider가 켜진 배포에서 LIVE와 같은
-recommendation API를 다시 조회한다. 차트 자동 작도는 현재 symbol과 interval을
+recommendation API를 다시 조회한다. 다만 replay cursor가 artifact의 근거시각보다 이르면
+`simulation_data_unavailable`을 표시한다. 차트 자동 작도는 현재 symbol과 interval을
 `GET /api/charts/analysis-assets`에 보내며, 서버가 replay cursor까지의 실제 완료 봉으로
 만든 비영속 Geometry 자산만 표시한다. 저장된 자산의 `asOf`가 cursor보다 미래이면
 표시하지 않는다. 기업정보·AI 코치 등 point-in-time 데이터가 없는 나머지 기능은 기존
@@ -1086,8 +1087,9 @@ headline, keywords, 탭별 자연어, 최근 움직임과 안정성 문장은 �
 종목·S&P 500·섹터 ETF 상대수익률/거래량 차트를 함께 제공한다. 기업저널 내부 뉴스 탭은 두지
 않지만 뉴스는 저장형 문장을 만드는 입력 근거로 계속 사용할 수 있다. 오른쪽 설명의 hover/focus는
 관련 차트 계열을 강조하며 선택된 재무 용어는 공통 사전 tooltip으로 설명한다.
-전용 evidence route는 replay simulation 중 일반 `/api/market/*`가 409를 반환할 때도 기업저널
-근거만 제공하며 다른 패널은 계속 기존 simulation guard를 따른다.
+전용 evidence route도 아직 cutoff 조회를 보장하지 못하므로 replay simulation 중에는
+기업저널 report route와 함께 409를 반환한다. 프런트는 LIVE 최신 report나 fixture를 남기지 않고
+`simulation_data_unavailable` 상태를 표시한다.
 
 어려운 재무 용어는 공통 `GlossaryText`를 사용하므로 hover, focus, Enter/Space에서 같은
 설명을 제공한다. `companyJournalPreview=1` fixture는 `import.meta.env.DEV`일 때만 활성화된다.

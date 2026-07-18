@@ -164,6 +164,17 @@ def decision_v1_enabled() -> bool:
     return os.getenv(DECISION_ENABLED_ENV, "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def fixed_replay_available_at(provider: FixedReplayRecommendationProvider, virtual_time: object) -> bool:
+    try:
+        cutoff = datetime.fromisoformat(str(provider.payload["evidenceAsOf"]).replace("Z", "+00:00"))
+        cursor = datetime.fromisoformat(str(virtual_time or "").replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FixedReplayProviderError("fixed recommendation cutoff is unavailable") from exc
+    if cutoff.tzinfo is None or cursor.tzinfo is None:
+        raise FixedReplayProviderError("fixed recommendation cutoff must be timezone-aware")
+    return cursor >= cutoff
+
+
 def configured_artifact_path() -> Path:
     configured = os.getenv(ARTIFACT_PATH_ENV, "").strip()
     return Path(configured) if configured else DEFAULT_ARTIFACT_PATH

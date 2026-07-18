@@ -6,6 +6,7 @@ UNSAFE_SIMULATION_PREFIXES = (
     "/api/agent/",
     "/api/agents/",
     "/api/ai-coach/",
+    "/api/company-journal/",
     "/api/llm/",
     "/api/charts/analysis-assets",
     "/api/charts/backfill",
