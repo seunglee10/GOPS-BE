@@ -244,6 +244,33 @@ fi
         self.assertEqual(reminder_pod["nodeSelector"]["karpenter.sh/nodepool"], "app-agent")
         self.assertEqual(reminder_pod["tolerations"][0]["value"], "app-agent")
 
+    def test_interactive_company_journal_processing_reuses_app_capacity(self):
+        manifest_path = (
+            REPO_ROOT / "infra/k8s/overlays/aws/scheduled/cronjob-company-journal-worker.yaml"
+        )
+        resources = [
+            item
+            for item in yaml.safe_load_all(manifest_path.read_text(encoding="utf-8"))
+            if item
+        ]
+        process_template = next(
+            item
+            for item in resources
+            if item.get("kind") == "CronJob"
+            and item.get("metadata", {}).get("name") == "gops-company-journal-process-template"
+        )
+        job_spec = process_template["spec"]["jobTemplate"]["spec"]
+        processor_pod = job_spec["template"]["spec"]
+
+        self.assertEqual(processor_pod["nodeSelector"]["karpenter.sh/nodepool"], "app-agent")
+        self.assertEqual(processor_pod["tolerations"][0]["value"], "app-agent")
+        self.assertGreaterEqual(job_spec["ttlSecondsAfterFinished"], 7 * 24 * 60 * 60)
+
+        post_market = load_yaml("infra/k8s/overlays/aws/scheduled/cronjob-company-journal-post-market.yaml")
+        post_market_pod = post_market["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        self.assertEqual(post_market_pod["nodeSelector"]["karpenter.sh/nodepool"], "batch")
+        self.assertEqual(post_market_pod["tolerations"][0]["value"], "batch")
+
     def test_right_sized_nodeclasses_and_stateful_pools(self):
         app_nodeclass = load_yaml("infra/k8s/base/platform/nodeclass-app-agent.yaml")
         state_nodeclass = load_yaml("infra/k8s/base/platform/nodeclass-stateful.yaml")

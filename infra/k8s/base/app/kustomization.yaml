@@ -29,6 +29,7 @@ resources:
   - deployment-clickhouse-loader.yaml
   - deployment-news-intelligence-worker.yaml
   - deployment-news-daily-summary-worker.yaml
+  - deployment-heatmap-projection-worker.yaml
   - deployment-alert-evaluator.yaml
   - deployment-trade-condition-executor.yaml
   - deployment-recommendation-worker.yaml

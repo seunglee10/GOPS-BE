@@ -159,7 +159,12 @@ source, capture timestamp를 보내지 않으며 서버가 검증·보강한 fil
 `/api/paper/*`와 `/ws/paper/*`만 호출하며 LIVE/SIM 모두 같은 영구 paper 계좌를 갱신한다.
 가상 빠른 주문은 `/api/paper/symbols/search`의 전체 활성 미국 주식/ETF를 선택할 수 있고 유효한 bid/ask가
 없으면 전송을 비활성화한다. 일반 가상 주문은 호가가 없어도 지정가를 대기 주문으로
-접수한다. `가상계좌`는 현금, 평가손익, 보유종목, 미체결 취소, 거래내역을 제공한다.
+접수한다. paper 전용 패널과 SIM의 일반 주문 패널에서 생성된 가상 주문의 접수 성공은
+주문 ticket 안에 주문번호·접수 상태를 남기거나 주문별
+WebSocket을 새로 열지 않는다. 최상위 `PaperAccountProvider`의 `open_orders`에 응답을 즉시
+낙관 반영하고 계좌 snapshot을 재조회하며, 화면에 `가상계좌` 패널이 있으면 `예약 매매` 탭으로
+전환한다. 이 탭의 표는 접수된 대기 주문을 기존 가격 조건보다 먼저 표시하고 같은 행에서 취소할
+수 있다. `가상계좌`는 현금, 평가손익, 보유종목, 미체결 취소, 거래내역을 제공한다.
 첫 번째 `예약 매매` 탭은 기존 `/api/trade-conditions` 목록·등록·일시정지·알림·삭제
 기능을 가상계좌 표 스타일 안에서 제공하며, 조건 충족 주문은 기존 영구 가상계좌
 실행 경로를 그대로 사용한다. 가격 조건 화면은 별도 패널에 중복 표시하지 않는다.
@@ -830,6 +835,10 @@ panel의 symbol/interval/coverage 상태와 연결하지 않는다. 응답의 `r
 `popularStocks`는 호환 입력으로만 받아 `recommendationsList`와 인기 Top 15 초기
 필터로 변환한다. 통합 패널은 App이 이미 폴링 중인
 `GET /api/market/heatmap?universe=sp500` items와 점수가 계산된 전체 추천 item을 symbol로 결합한다.
+heatmap items는 트리맵 렌더링용 최소 필드만 포함하며, 재무 시계열은 선택한 symbol에
+대해 fundamentals endpoint를 별도로 조회한다.
+heatmap 응답의 `cacheStatus`는 `fresh`, `stale`, `seed` 중 하나다. 프런트는 stale이나
+seed 응답도 즉시 렌더링하고 `quoteAsOf`를 최신 시세처럼 다시 계산하지 않는다.
 섹터 컬럼은 GraphDB `gops:sector` canonical 값의 `sectorLabelKo` 한글 라벨을 사용한다.
 히트맵/트리맵도 grouping key는 canonical `sector`를 유지하고, 섹터 타일과 hover
 표시는 같은 `sectorLabelKo` 한글 라벨을 사용한다. LIVE 등락률은 API가 제공하는

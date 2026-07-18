@@ -1,0 +1,28 @@
+# 역할: S&P 500 heatmap projection을 미리 계산해 Redis에 저장합니다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gops-heatmap-projection-worker
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gops-heatmap-projection-worker
+  template:
+    metadata:
+      labels:
+        app: gops-heatmap-projection-worker
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: heatmap-projection-worker
+          image: YOUR_ECR_REPOSITORY/gops-api-server:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "-m", "app.market_data.heatmap.worker"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-clickhouse-secret
+                optional: true

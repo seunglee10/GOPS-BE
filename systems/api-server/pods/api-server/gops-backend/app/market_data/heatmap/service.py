@@ -33,15 +33,40 @@ class MarketHeatmapService:
         self.provider = provider or get_market_data_provider()
         self.fundamentals_adapter = fundamentals_adapter or build_fundamentals_adapter(provider=self.provider)
 
-    def snapshot(self, universe: str = DEFAULT_HEATMAP_UNIVERSE) -> dict[str, Any]:
+    def snapshot(
+        self,
+        universe: str = DEFAULT_HEATMAP_UNIVERSE,
+        *,
+        allow_rebuild: bool = True,
+    ) -> dict[str, Any]:
         universe_name = normalize_universe(universe)
         fresh_cache_key = heatmap_cache_key(universe_name)
         stale_cache_key = heatmap_stale_cache_key(universe_name)
         cached = self._cache_get(fresh_cache_key)
         if cached:
-            return normalize_heatmap_sector_fields(cached)
+            return heatmap_cache_response(cached, "fresh")
 
         previous = self._cache_get(stale_cache_key) or {}
+        if not allow_rebuild:
+            if previous:
+                return heatmap_cache_response(previous, "stale")
+            return seed_fallback_payload(universe_name)
+
+        return self.rebuild(universe_name, previous=previous)
+
+    def rebuild(
+        self,
+        universe: str = DEFAULT_HEATMAP_UNIVERSE,
+        *,
+        previous: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Force a full projection refresh and replace both Redis cache entries."""
+        universe_name = normalize_universe(universe)
+        fresh_cache_key = heatmap_cache_key(universe_name)
+        stale_cache_key = heatmap_stale_cache_key(universe_name)
+        if previous is None:
+            previous = self._cache_get(stale_cache_key) or {}
+
         previous_items = items_by_symbol(previous.get("items"))
         seed_items = load_heatmap_seed_items(universe_name)
         symbols = [item["symbol"] for item in seed_items]
@@ -67,6 +92,7 @@ class MarketHeatmapService:
         payload = {
             "source": "market-heatmap-projection",
             "universe": universe_name,
+            "generatedAt": isoformat_z(now),
             "layoutAsOf": layout_as_of_text,
             "quoteAsOf": isoformat_z(quote_as_of),
             "quoteRefreshSeconds": read_positive_int("HEATMAP_QUOTE_REFRESH_SECONDS", DEFAULT_QUOTE_REFRESH_SECONDS),
@@ -77,7 +103,7 @@ class MarketHeatmapService:
         }
         self._cache_set(fresh_cache_key, payload, read_positive_int("HEATMAP_CACHE_TTL_SECONDS", DEFAULT_CACHE_TTL_SECONDS))
         self._cache_set(stale_cache_key, payload, read_positive_int("HEATMAP_STALE_CACHE_TTL_SECONDS", DEFAULT_STALE_CACHE_TTL_SECONDS))
-        return normalize_heatmap_sector_fields(payload)
+        return heatmap_cache_response(payload, "fresh")
 
     def _redis(self):
         redis_provider = getattr(self.provider, "redis_provider", None)
@@ -369,6 +395,80 @@ def heatmap_cache_key(universe: str) -> str:
 
 def heatmap_stale_cache_key(universe: str) -> str:
     return redis_key(f"heatmap:{universe}:last")
+
+
+def heatmap_cache_response(payload: dict[str, Any], status: str) -> dict[str, Any]:
+    response = normalize_heatmap_sector_fields(payload)
+    response["cacheStatus"] = status
+    return response
+
+
+def compact_heatmap_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return only the fields required to render the public market heatmap.
+
+    The cached projection also contains fundamentals used by internal callers.
+    The browser does not need those fields to size, color, or label the tiles,
+    so keep the HTTP response deliberately smaller.
+    """
+    response = {
+        key: payload.get(key)
+        for key in (
+            "source",
+            "cacheStatus",
+            "universe",
+            "generatedAt",
+            "layoutAsOf",
+            "quoteAsOf",
+            "quoteRefreshSeconds",
+            "layoutRefreshSeconds",
+            "fundamentalsSource",
+        )
+        if key in payload
+    }
+    response["items"] = [
+        {
+            key: item.get(key)
+            for key in (
+                "symbol",
+                "companyName",
+                "sector",
+                "sectorLabelKo",
+                "industry",
+                "marketCap",
+                "layoutMarketCap",
+                "lastPrice",
+                "previousClose",
+                "volume",
+                "sessionDollarVolume",
+                "changePercent",
+            )
+            if key in item
+        }
+        for item in payload.get("items", [])
+        if isinstance(item, dict)
+    ]
+    if "coverage" in payload:
+        response["coverage"] = payload["coverage"]
+    return response
+
+
+def seed_fallback_payload(universe: str = DEFAULT_HEATMAP_UNIVERSE) -> dict[str, Any]:
+    """Return a fast, renderable fallback while the projection worker warms Redis."""
+    now = utc_now()
+    items = normalize_heatmap_sector_fields({"items": load_heatmap_seed_items(universe)}).get("items", [])
+    return {
+        "source": "market-heatmap-seed",
+        "cacheStatus": "seed",
+        "universe": universe,
+        "layoutAsOf": "",
+        "quoteAsOf": "",
+        "generatedAt": isoformat_z(now),
+        "quoteRefreshSeconds": read_positive_int("HEATMAP_QUOTE_REFRESH_SECONDS", DEFAULT_QUOTE_REFRESH_SECONDS),
+        "layoutRefreshSeconds": read_positive_int("HEATMAP_LAYOUT_REFRESH_SECONDS", DEFAULT_LAYOUT_REFRESH_SECONDS),
+        "fundamentalsSource": "seed",
+        "items": items,
+        "coverage": coverage(items, 0, 0),
+    }
 
 
 def redis_key(value: str) -> str:

@@ -31,7 +31,7 @@ Vite build 시점에 값이 정적 asset 안으로 들어가며, free/commercial
 
 `helix/front`의 `mock_backend/`, `agent_backend/`, 더미 환경변수는 프론트 시연과 개발 검증을 위한 참조 자산이었고 이번 병합에는 들이지 않았다. 실제 데이터 소스와 운영 환경변수는 현재 GOPS backend/API server 기준을 따른다.
 
-현재 TreeMap은 첫 렌더만 `apps/gops-frontend/src/market/sp500Universe.seed.ts`의 `sp500UniverseSeed`를 fallback으로 사용한다. 기본 데이터 경로는 `GET /api/market/heatmap?universe=sp500`이며, 백엔드가 latest fundamentals의 `sharesOutstanding/sector/industry/companyName`과 시장 가격을 결합해 `marketCap/changePercent/layoutMarketCap` projection을 내려준다. 프론트는 quote/color/current marketCap을 1분 주기로 갱신하고, 백엔드 `layoutAsOf`가 바뀌는 5분 경계에서만 `layoutMarketCap` 기준 타일 크기를 갱신한다.
+현재 TreeMap은 첫 렌더만 `apps/gops-frontend/src/market/sp500Universe.seed.ts`의 `sp500UniverseSeed`를 fallback으로 사용한다. 기본 데이터 경로는 `GET /api/market/heatmap?universe=sp500`이며, 백엔드는 트리맵에 필요한 `symbol/companyName/sector/industry/marketCap/layoutMarketCap/lastPrice/previousClose/changePercent`와 hover용 거래량만 compact projection으로 내려준다. 상세 재무 필드는 종목 선택 뒤 symbol별 fundamentals endpoint에서 조회한다. 프론트는 quote/color/current marketCap을 1분 주기로 갱신하고, 백엔드 `layoutAsOf`가 바뀌는 5분 경계에서만 `layoutMarketCap` 기준 타일 크기를 갱신한다.
 
 ## 화면 구조
 

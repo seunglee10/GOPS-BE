@@ -1151,11 +1151,20 @@ GRAPHDB_SPARQL_URL
 GRAPHDB_REPOSITORY
 SEC_USER_AGENT
 HEATMAP_UNIVERSE_REGISTRY_PATH
+HEATMAP_PROJECTION_ENABLED
+HEATMAP_PROJECTION_INTERVAL_SECONDS
+HEATMAP_PROJECTION_LOCK_SECONDS
 COACH_CURRENT_QUOTE_MAX_AGE_MINUTES
 COACH_NEWS_LOOKBACK_DAYS
 COACH_NEWS_ITEMS_PER_FILL
 COACH_FUNDAMENTAL_METRICS_PER_FILL
 ```
+
+`Deployment/gops-heatmap-projection-worker` uses the backend image and keeps
+the Redis heatmap projection warm outside the HTTP request path. Backend image
+rollouts must update this deployment together with `gops-backend`; its Redis
+owner-token lock expires automatically and prevents overlapping workers from
+rebuilding the same S&P 500 payload.
 
 `HEATMAP_UNIVERSE_REGISTRY_PATH` points at the timestamped seed copied into the agent
 image. `COACH_CURRENT_QUOTE_MAX_AGE_MINUTES` defaults to `5760` (96 hours); older values
@@ -1353,7 +1362,8 @@ overlay의 기존 이름 `gops-company-journal-worker`는 매분 30분을 제외
 Dispatcher다. 항상 켜진 `general-purpose` NodePool에서 ClickHouse pending 한 건의 존재 여부만
 확인하고, 요청이 있을 때만 `gops-company-journal-process-template`의 선언형 spec을 실제 Job으로
 복제한다. 이 템플릿 CronJob 자체는 항상 `suspend: true`이며, 실제 처리 Job만 API 이미지와
-ClickHouse/OpenAI secret을 사용해 동적 `batch` NodePool에서 최대 25건을 처리한다.
+ClickHouse/OpenAI secret을 사용해 상시 `app-agent` 여유 용량에서 최대 25건을 처리한다.
+무거운 post-market·migration·backfill Job은 계속 동적 `batch` NodePool에서 실행한다.
 
 Dispatcher는 전용 namespace Role로 processor label의 Job 조회·생성과 지정된 template CronJob
 조회만 허용된다. 활성 processor Job이 있으면 새 Job을 만들지 않고, Job 이름은 UTC 분 단위로

@@ -408,9 +408,19 @@ Redis/ClickHouse 최신 candle 일치, 신뢰도 70 이상 후보 15개를 activ
 직접 추천 v1은 migration `0015_direct_recommendation_v1.sql`의 profile history,
 확장 action check와 `decision_json`을 사용한다.
 
-S&P 500 heatmap은 상세 탐색 필터를 위해 기존 공시 재무 필드와 함께 `rsi14`를
-반환한다. ClickHouse provider는 완료 일봉 15개를 symbol 전체에 대해 단일 batch로
-읽어 RSI를 계산한다. 데이터가 부족하면 null을 유지하며 중립값으로 채우지 않는다.
+S&P 500 heatmap HTTP 응답은 브라우저 렌더링에 필요한 최소 필드만 반환한다:
+`symbol`, `companyName`, `sector`, `sectorLabelKo`, `industry`, `marketCap`,
+`layoutMarketCap`, `lastPrice`, `previousClose`, `volume`, `sessionDollarVolume`,
+`changePercent`. 상세 공시 재무 필드와 `rsi14`는 내부 projection에 보존하지만
+heatmap 응답에는 포함하지 않는다. 상세 재무·수익 시계열은 symbol별 fundamentals
+endpoint에서 지연 조회한다. ClickHouse provider는 완료 일봉 15개를 symbol 전체에
+대해 단일 batch로 읽어 RSI를 계산한다. 데이터가 부족하면 null을 유지하며 중립값으로
+채우지 않는다.
+HTTP 조회는 503종목 projection을 직접 재계산하지 않는다. 전용
+`gops-heatmap-projection-worker`가 Redis 분산 lock을 획득한 경우에만 60초마다
+fresh/stale projection을 갱신한다. API는 fresh가 없으면 stale을 즉시 반환하고,
+둘 다 없으면 seed를 반환한다. 응답의 `cacheStatus`는 `fresh`, `stale`, `seed` 중
+하나이며 `quoteAsOf`와 `generatedAt`으로 데이터 시점을 함께 전달한다.
 `0016_recommendation_narrative_context.sql`은 동일 evidence slot에서 회사 설명이 바뀌지 않도록
 cutoff 이하 10-K·뉴스·기업 품질 context를 candidate별 JSONB로 저장한다. 10-K가 없거나 미래
 filing이면 업종 기반 `partial` context로 degrade하며 추천 계산은 계속한다.

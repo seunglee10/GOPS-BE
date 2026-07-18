@@ -12,7 +12,7 @@ from app.market_data.backfill.service import get_backfill_service
 from app.market_data.fill.service import get_on_demand_fill_service
 from app.market_data.derived.service import DerivedCalculationService
 from app.market_data.fundamentals.service import build_fundamentals_adapter
-from app.market_data.heatmap.service import get_heatmap_service
+from app.market_data.heatmap.service import compact_heatmap_payload, get_heatmap_service
 from app.market_data.indices.related import build_related_indices_payload
 from app.market_data.indices.service import get_indices_service
 from app.market_data.query.canonical import CanonicalCandleQuery
@@ -155,7 +155,11 @@ class MarketDataQueryService:
 
     def heatmap(self, universe: str) -> dict[str, Any]:
         try:
-            return get_heatmap_service(self.provider).snapshot(universe)
+            # Interactive requests never rebuild the 500-symbol projection. The
+            # background projection worker owns cache warming; stale/seed data
+            # keeps the endpoint fast when the fresh key is missing.
+            payload = get_heatmap_service(self.provider).snapshot(universe, allow_rebuild=False)
+            return compact_heatmap_payload(payload)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
