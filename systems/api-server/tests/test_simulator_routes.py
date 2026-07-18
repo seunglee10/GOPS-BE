@@ -664,19 +664,25 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"], "simulation_data_unavailable")
 
-    def test_company_journal_is_blocked_until_point_in_time_provider_exists(self):
+    def test_company_journal_uses_simulator_virtual_time_without_live_enqueue(self):
         self.gateway.mode = "simulation"
         service = SimpleNamespace(
-            latest=Mock(return_value={"analysisAsOf": "2026-07-18"}),
+            latest=Mock(return_value={
+                "analysisAsOf": "2026-07-13",
+                "sourceMode": "historical_reconstruction",
+                "sourceCutoff": "2026-07-14T15:00:00+00:00",
+            }),
             enqueue_if_stale=Mock(),
         )
         self.app.dependency_overrides[get_company_journal_service] = lambda: service
 
         response = self.client.get("/api/company-journal/NVDA")
 
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["detail"], "simulation_data_unavailable")
-        service.latest.assert_not_called()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ready")
+        self.assertEqual(response.json()["report"]["analysisAsOf"], "2026-07-13")
+        cutoff = service.latest.call_args.kwargs["cutoff"]
+        self.assertEqual(cutoff.isoformat(), "2026-07-14T15:00:00+00:00")
         service.enqueue_if_stale.assert_not_called()
 
     def test_fixed_recommendations_are_available_for_the_entire_simulation(self):
