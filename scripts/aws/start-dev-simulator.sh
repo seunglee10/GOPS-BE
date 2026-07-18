@@ -6,7 +6,7 @@ AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-<aws-account-id>}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-gops-eks-cluster}"
 K8S_NAMESPACE="${K8S_NAMESPACE:-alfaka-market-data}"
-DATASET_ID="${SIM_REPLAY_DATASET_ID:-sp500-top20-20260715-kst-v1}"
+DATASET_ID="${SIM_REPLAY_DATASET_ID:-sp500-top20-plus-amd-mu-20260715-kst-v2}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLICKHOUSE_SCHEMA="${REPO_ROOT}/infra/k8s/base/platform/clickhouse-initdb/01-market-data.sql"
 

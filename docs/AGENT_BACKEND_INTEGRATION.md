@@ -123,7 +123,7 @@ market correlation/relative-strength context로만 계산한다. context가 없�
 
 ## Tick Replay Simulator Boundary
 
-`GOPS_SIMULATOR_URL`은 고정 데이터셋 `sp500-top20-20260715-kst-v1`을 읽는 별도
+`GOPS_SIMULATOR_URL`은 고정 데이터셋 `sp500-top20-plus-amd-mu-20260715-kst-v2`를 읽는 별도
 서비스를 가리킨다. 백엔드는 `/api/simulator/status|mode|action|speed`만 공개하며
 기존 phase, 합성 news, basket 경로는 제공하지 않는다. 가상시각은 KST
 `2026-07-15 00:00`에서 시작하고 모든 사용자에게 동일하다. Simulator는 시계·캔들·
@@ -136,7 +136,7 @@ quote replay만 소유하고, 계좌·주문·가격조건은 Postgres paper 원
 
 `GET /api/charts/candles`는 replay 시작 전 정상 과거 봉과 현재 가상시각까지의 replay
 봉만 합친다. `/ws/charts`도 simulator candle snapshot을 묶어서 보내며 실시간 Redis
-WebSocket 경로를 사용하지 않는다. SIM 심볼 검색은 manifest의 21개 티커로 제한한다.
+WebSocket 경로를 사용하지 않는다. SIM 심볼 검색은 manifest의 23개 티커로 제한한다.
 빠른 주문은 `GET /api/simulator/quote`로 현재 replay bid/ask를 읽고 기존
 `POST /api/orders`를 통해 공통 paper 주문 원장에 `execution_mode=simulation`과
 `runId`를 붙여 기록한다. SIM에 존재하지 않는

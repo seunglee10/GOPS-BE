@@ -1284,15 +1284,17 @@ AGENT_SNAPSHOT_TOTAL_DEADLINE_MS
 
 `gops-simulator`는 AWS app overlay에서 `replicas: 1`로 일반 app 배포와 함께 유지한다.
 실제 원본은 S3의
-`simulator/replay/v1/dataset=sp500-top20-20260715-kst/` gzip JSONL과 ClickHouse의
+`simulator/replay/v2/dataset=sp500-top20-plus-amd-mu-20260715-kst/` gzip JSONL과 ClickHouse의
 TTL 없는 `simulation_replay_events`, `simulation_replay_candles_1m`에 저장한다.
 manifest hash·크기·종목별 trade/quote 수와 ClickHouse 건수가 모두 일치한 데이터셋만
 `simulation_replay_datasets.status=READY`가 된다.
 
-최초 적재는 `scripts/aws/run-simulator-replay-import.sh`가 suspend 상태의 전용 Job을
+적재는 `scripts/aws/run-simulator-replay-import.sh`가 suspend 상태의 전용 Job을
 생성한 뒤 실행한다. Job은 `alfaka-market-data-sa`의 S3 권한, 기존 Alpaca·ClickHouse
 Secret을 사용하며 파일별 S3 검증이 끝나면 로컬 gzip을 지워 임시 디스크 사용량을
-제한한다. `READY` 데이터셋이 이미 있으면 다시 수집하지 않는다.
+제한한다. `READY` 데이터셋이 이미 있으면 다시 수집하지 않는다. simulator image가
+선택된 로컬·GitHub 배포는 새 image로 이 import gate를 app rollout 전에 자동 실행한다.
+따라서 새 데이터셋이 준비되기 전에 기존 READY Pod를 교체하지 않는다.
 
 일반 배포는 ConfigMap의 `GOPS_SIMULATOR_URL`을 backend에 주입하고 simulator rollout도
 필수 gate로 기다린다. 별도 시작 스크립트는 필요 없다. 새 Pod는 `LIVE/idle`로 시작하고,

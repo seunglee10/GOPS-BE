@@ -6,7 +6,7 @@ AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-<aws-account-id>}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-gops-eks-cluster}"
 K8S_NAMESPACE="${K8S_NAMESPACE:-alfaka-market-data}"
-DATASET_ID="${SIM_REPLAY_DATASET_ID:-sp500-top20-20260715-kst-v1}"
+DATASET_ID="${SIM_REPLAY_DATASET_ID:-sp500-top20-plus-amd-mu-20260715-kst-v2}"
 JOB_NAME="gops-simulator-replay-import"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 JOB_MANIFEST="${REPO_ROOT}/infra/k8s/base/job-simulator-replay-import.yaml"
@@ -47,9 +47,12 @@ if [[ "${current_status%%:*}" == "READY" && "${current_status##*:}" =~ ^[1-9][0-
   exit 0
 fi
 
-simulator_image="$(kubectl get deployment/gops-simulator -n "${K8S_NAMESPACE}" -o jsonpath='{.spec.template.spec.containers[0].image}')"
+simulator_image="${SIMULATOR_IMAGE:-}"
 if [[ -z "${simulator_image}" ]]; then
-  printf 'gops-simulator image is unavailable; deploy the simulator first.\n' >&2
+  simulator_image="$(kubectl get deployment/gops-simulator -n "${K8S_NAMESPACE}" -o jsonpath='{.spec.template.spec.containers[0].image}')"
+fi
+if [[ -z "${simulator_image}" ]]; then
+  printf 'gops-simulator image is unavailable; set SIMULATOR_IMAGE or deploy the simulator first.\n' >&2
   exit 1
 fi
 

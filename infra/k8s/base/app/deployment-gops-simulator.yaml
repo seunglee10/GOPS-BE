@@ -32,7 +32,7 @@ spec:
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
             - name: SIM_REPLAY_DATASET_ID
-              value: sp500-top20-20260715-kst-v1
+              value: sp500-top20-plus-amd-mu-20260715-kst-v2
             - name: CLICKHOUSE_URL
               value: http://clickhouse:8123
             - name: CLICKHOUSE_DATABASE

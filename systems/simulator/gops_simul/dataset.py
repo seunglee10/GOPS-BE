@@ -1,4 +1,4 @@
-"""Immutable contract for the 2026-07-15 KST S&P top-company replay."""
+"""Immutable contract for the 2026-07-15 KST S&P replay with AMD and Micron."""
 
 from __future__ import annotations
 
@@ -7,8 +7,9 @@ from datetime import UTC, datetime
 from typing import Final
 
 
-DATASET_ID: Final = "sp500-top20-20260715-kst-v1"
-DATASET_SCHEMA_VERSION: Final = 1
+DATASET_ID: Final = "sp500-top20-plus-amd-mu-20260715-kst-v2"
+DATASET_SCHEMA_VERSION: Final = 2
+DATASET_S3_PREFIX: Final = "simulator/replay/v2/dataset=sp500-top20-plus-amd-mu-20260715-kst"
 DATASET_START: Final = datetime(2026, 7, 14, 15, 0, tzinfo=UTC)
 DATASET_END: Final = datetime(2026, 7, 15, 15, 0, tzinfo=UTC)
 MARKET_CAP_SNAPSHOT_DATE: Final = "2026-06-30"
@@ -16,6 +17,7 @@ MARKET_CAP_SNAPSHOT_DATE: Final = "2026-06-30"
 REPLAY_SYMBOLS: Final = (
     "NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "GOOGL", "GOOG", "BRK.B",
     "TSLA", "LLY", "JPM", "WMT", "V", "ORCL", "MA", "NFLX", "XOM", "COST", "HD", "JNJ",
+    "AMD", "MU",
 )
 
 COMPANY_BY_SYMBOL: Final = {
@@ -24,7 +26,8 @@ COMPANY_BY_SYMBOL: Final = {
     "BRK.B": "Berkshire Hathaway", "TSLA": "Tesla", "LLY": "Eli Lilly",
     "JPM": "JPMorgan Chase", "WMT": "Walmart", "V": "Visa", "ORCL": "Oracle",
     "MA": "Mastercard", "NFLX": "Netflix", "XOM": "Exxon Mobil", "COST": "Costco",
-    "HD": "Home Depot", "JNJ": "Johnson & Johnson",
+    "HD": "Home Depot", "JNJ": "Johnson & Johnson", "AMD": "Advanced Micro Devices",
+    "MU": "Micron Technology",
 }
 
 

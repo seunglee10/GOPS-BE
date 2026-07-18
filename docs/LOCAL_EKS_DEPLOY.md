@@ -142,14 +142,14 @@ FORCE_SERVICES=simulator AWS_PROFILE=gops-dev ./scripts/aws/deploy-dev-local.sh
 ```
 
 일반 app 배포가 simulator Pod와 backend 연결을 같이 올리므로 별도 시작 명령은 없다.
-최초 한 번만 실제 틱 데이터셋을 적재한다.
+simulator image가 선택되면 새 image로 실제 틱 데이터셋을 app rollout 전에 자동 적재한다.
+수동 복구나 사전 점검이 필요할 때만 아래 명령을 직접 실행한다.
 
 ```bash
 AWS_PROFILE=gops-dev ./scripts/aws/run-simulator-replay-import.sh
 ```
 
-기존 `READY` 데이터셋이 있으면 이 명령도 다시 실행하지 않는다. 완전히 새 클러스터에서
-데이터셋이 없으면 import 후 일반 배포를 다시 실행한다. 필요할 때
+기존 `READY` 데이터셋이 있으면 이 명령도 다시 실행하지 않는다. 필요할 때
 `start-dev-simulator.sh`는 readiness 점검, `stop-dev-simulator.sh`는 LIVE 전환에만 쓰며
 둘 다 replica나 backend 연결을 변경하지 않는다.
 
