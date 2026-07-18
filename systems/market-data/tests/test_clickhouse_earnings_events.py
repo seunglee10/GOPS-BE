@@ -62,6 +62,31 @@ def test_chart_news_events_limit_snapshots_to_the_replay_cursor() -> None:
     assert provider.parameters["asOf"] == "2026-07-14T15:00:00.000Z"
 
 
+def test_reconstructed_daily_news_requires_every_source_before_replay_cursor() -> None:
+    provider = RecordingClickHouseProvider()
+
+    assert provider.company_daily_news_summaries_reconstructed_between(
+        "NVDA",
+        "2026-06-14",
+        "2026-07-14",
+        as_of="2026-07-14T15:00:00.000Z",
+    ) == []
+
+    assert "summaries.version = 'v2'" in provider.query
+    assert "arrayAll(" in provider.query
+    assert "localizations.published_at <= parseDateTime64BestEffort({asOf:String})" in provider.query
+    assert "localizations.target_symbol = {symbol:String}" in provider.query
+    assert "'historical_reconstruction' AS sourceMode" in provider.query
+    assert provider.parameters == {
+        "symbol": "NVDA",
+        "locale": "ko-KR",
+        "fromDate": "2026-06-14",
+        "toDate": "2026-07-14",
+        "limit": 370,
+        "asOf": "2026-07-14T15:00:00.000Z",
+    }
+
+
 def test_localized_news_as_of_excludes_articles_after_the_replay_cursor() -> None:
     provider = RecordingClickHouseProvider()
 

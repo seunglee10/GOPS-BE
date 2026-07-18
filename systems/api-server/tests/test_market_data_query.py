@@ -1825,6 +1825,57 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "as_of": "2026-07-14T15:00:00.000Z",
         }])
 
+    def test_simulation_daily_news_prefers_reconstruction_when_all_sources_precede_cursor(self):
+        provider = FakeNewsProvider(clickhouse_daily_rows=[
+            {
+                "date": "2026-07-13",
+                "symbol": "NVDA",
+                "summary": "생성 시점이 커서 이전인 기존 요약",
+                "keyPoints": ["기존 문장형 핵심 내용"],
+                "version": "v1",
+            },
+            {
+                "date": "2026-07-12",
+                "symbol": "NVDA",
+                "summary": "12일 기존 요약",
+                "version": "v1",
+            },
+        ])
+        reconstructed = mock.Mock(return_value=[{
+            "date": "2026-07-13",
+            "symbol": "NVDA",
+            "summary": "원문 시각 검증을 통과한 키워드 요약",
+            "keyPoints": ["AI 수요|positive", "수출 규제|negative"],
+            "version": "v2",
+            "sourceMode": "historical_reconstruction",
+            "sourceCutoff": "2026-07-14T15:00:00.000Z",
+        }])
+        provider.clickhouse_provider.company_daily_news_summaries_reconstructed_between = reconstructed
+        service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
+        cursor = datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc)
+
+        payload = service.daily_news("nvda", limit=5, now=cursor)
+
+        self.assertEqual(
+            [row["date"] for row in payload["dailySummaries"]],
+            ["2026-07-13", "2026-07-12"],
+        )
+        self.assertEqual(payload["dailySummaries"][0]["summary"], "원문 시각 검증을 통과한 키워드 요약")
+        self.assertEqual(payload["dailySummaries"][0]["keywordTags"], [
+            {"label": "AI 수요", "direction": "positive"},
+            {"label": "수출 규제", "direction": "negative"},
+        ])
+        self.assertEqual(payload["dailySummaries"][0]["sourceMode"], "historical_reconstruction")
+        self.assertEqual(payload["dailySummaries"][0]["sourceCutoff"], "2026-07-14T15:00:00.000Z")
+        reconstructed.assert_called_once_with(
+            "NVDA",
+            "2026-06-14",
+            "2026-07-14",
+            limit=30,
+            locale="ko-KR",
+            as_of="2026-07-14T15:00:00.000Z",
+        )
+
     def test_agent_chat_without_openai_key_returns_503(self):
         request = AgentChatRequest(
             agentIds=["agent-01"],
