@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 역할: dev EKS에서 READY 실제 틱 데이터셋을 확인한 뒤 전역 SIM 모드만 켭니다.
+# 역할: dev EKS에서 READY 실제 틱 데이터셋과 연결만 준비하고 화면의 플레이 입력을 기다립니다.
 set -Eeuo pipefail
 
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-<aws-account-id>}"
@@ -96,8 +96,9 @@ verify_simulator_health
 kubectl set env deployment/gops-backend -n "${K8S_NAMESPACE}" \
   GOPS_SIMULATOR_URL=http://gops-simulator:8765
 kubectl rollout status deployment/gops-backend -n "${K8S_NAMESPACE}" --timeout=300s
-set_simulator_mode simulation
+set_simulator_mode live
 
 trap - ERR
-printf 'dev EKS tick replay is READY in SIM mode: %s\n' "${DATASET_ID}"
+printf 'dev EKS tick replay is READY in LIVE 대기 상태: %s\n' "${DATASET_ID}"
+printf '화면 상단의 플레이 버튼을 누르면 새 run을 준비하고 즉시 재생합니다.\n'
 printf 'LIVE 복귀: AWS_PROFILE=%s scripts/aws/stop-dev-simulator.sh\n' "${AWS_PROFILE:-gops-dev}"

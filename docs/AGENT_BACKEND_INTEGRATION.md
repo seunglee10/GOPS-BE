@@ -130,6 +130,10 @@ market correlation/relative-strength context로만 계산한다. context가 없�
 quote replay만 소유하고, 계좌·주문·가격조건은 Postgres paper 원장에서 `userId`와
 `runId`로 격리한다.
 
+시작 스크립트 완료 상태는 `LIVE/idle`이다. 프런트 플레이 버튼의
+`POST /api/simulator/action {"action":"start"}`가 새 `runId` 준비와 `running` 전환을
+한 번에 수행한다. 스크립트나 backend 연결만으로 simulation run을 만들거나 틱을 진행하지 않는다.
+
 `GET /api/charts/candles`는 replay 시작 전 정상 과거 봉과 현재 가상시각까지의 replay
 봉만 합친다. `/ws/charts`도 simulator candle snapshot을 묶어서 보내며 실시간 Redis
 WebSocket 경로를 사용하지 않는다. SIM 심볼 검색은 manifest의 21개 티커로 제한한다.

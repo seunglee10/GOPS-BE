@@ -114,11 +114,21 @@ def test_account_performance_route_uses_user_daily_snapshots_and_benchmark() -> 
     repository = InMemoryRecommendationRepository()
     repository.upsert_portfolio_snapshot(
         "dev-auth-disabled",
-        {"asOf": "2026-07-14T00:00:00Z", "account": {"unrealizedPnlRate": 10}, "positions": []},
+        {
+            "asOf": "2026-07-14T00:00:00Z",
+            "source": "account-history",
+            "account": {"unrealizedPnlRate": 10},
+            "positions": [],
+        },
     )
     repository.upsert_portfolio_snapshot(
         "dev-auth-disabled",
-        {"asOf": "2026-07-15T00:00:00Z", "account": {"unrealizedPnlRate": 21}, "positions": []},
+        {
+            "asOf": "2026-07-15T00:00:00Z",
+            "source": "account-history",
+            "account": {"unrealizedPnlRate": 21},
+            "positions": [],
+        },
     )
     app.state.recommendation_repository = repository
     app.state.portfolio_performance_now_provider = lambda: datetime(2026, 7, 16, tzinfo=timezone.utc)
@@ -141,3 +151,35 @@ def test_account_performance_route_uses_user_daily_snapshots_and_benchmark() -> 
     assert payload["status"] == "ready"
     assert payload["portfolio"]["points"][-1]["returnPercent"] == 10
     assert payload["benchmark"]["points"][-1]["returnPercent"] == 4
+
+
+def test_daily_paper_history_filters_stale_kis_rows_before_selecting_day_latest() -> None:
+    repository = InMemoryRecommendationRepository()
+    repository.upsert_portfolio_snapshot(
+        "user-1",
+        {
+            "asOf": "2026-07-15T10:00:00Z",
+            "source": "account-history",
+            "account": {"unrealizedPnlRate": 5},
+            "positions": [],
+        },
+    )
+    repository.upsert_portfolio_snapshot(
+        "user-1",
+        {
+            "asOf": "2026-07-15T11:00:00Z",
+            "source": "kis-demo",
+            "account": {"unrealizedPnlRate": 90},
+            "positions": [],
+        },
+    )
+
+    rows = repository.list_daily_portfolio_snapshots_for_sources(
+        "user-1",
+        None,
+        ("paper-shared", "account-history", "seeded-demo"),
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["payload"]["source"] == "account-history"
+    assert rows[0]["payload"]["account"]["unrealizedPnlRate"] == 5

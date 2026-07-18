@@ -255,6 +255,26 @@ class ReplayControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.latest_quote("NVDA"), {"bid": 99.0, "ask": 100.0})
         self.assertEqual(self.controller.emitted_events()[0].payload["t"], "2026-07-14T15:00:01+00:00")
 
+    def test_start_from_live_creates_a_run_and_immediately_plays(self):
+        started = self.controller.start()
+
+        self.assertEqual(started["mode"], "simulation")
+        self.assertEqual(started["state"], "running")
+        self.assertIsNotNone(started["runId"])
+        self.assertEqual(started["virtualTime"], "2026-07-15T00:00:00+09:00")
+
+        self.clock.value += 1.1
+        running = self.controller.status()
+
+        self.assertEqual(running["processedEventCount"], 2)
+        self.assertEqual(self.controller.latest_quote("NVDA"), {"bid": 99.0, "ask": 100.0})
+
+    def test_start_rejects_an_empty_dataset(self):
+        controller = ReplayController(InMemoryReplayEventSource([]), clock=self.clock)
+
+        with self.assertRaisesRegex(ValueError, "dataset is not READY"):
+            controller.start()
+
     def test_daily_snapshot_is_built_from_processed_ticks_without_a_clickhouse_rescan(self):
         class NoDailyRescanSource(InMemoryReplayEventSource):
             def candle_snapshot(self, symbol, interval, through, limit):

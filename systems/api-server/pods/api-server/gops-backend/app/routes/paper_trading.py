@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -36,6 +37,7 @@ from kis_trader.security.validation import assert_no_forbidden_fields
 
 
 router = APIRouter(tags=["paper-trading"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/api/paper/symbols/search")
@@ -57,7 +59,9 @@ def paper_account(
     current_user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     repository = paper_repository_from_app(request.app)
-    return jsonable_encoder(_enriched_account_snapshot(request.app, repository, current_user.sub))
+    snapshot = _enriched_account_snapshot(request.app, repository, current_user.sub)
+    _sync_paper_portfolio_snapshot(request.app, repository, current_user.sub, snapshot)
+    return jsonable_encoder(snapshot)
 
 
 @router.get("/api/paper/account/balance")
@@ -95,7 +99,9 @@ async def reset_paper_account(
     except PaperOrderError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     _sync_paper_subscriptions(request.app, repository)
-    return jsonable_encoder(_enriched_account_snapshot(request.app, repository, current_user.sub))
+    snapshot = _enriched_account_snapshot(request.app, repository, current_user.sub)
+    _sync_paper_portfolio_snapshot(request.app, repository, current_user.sub, snapshot)
+    return jsonable_encoder(snapshot)
 
 
 @router.post("/api/paper/risk/pretrade")
@@ -244,8 +250,14 @@ async def paper_account_socket(websocket: WebSocket) -> None:
     try:
         repository = paper_repository_from_app(websocket.app)
         last_fingerprint: str | None = None
+        last_portfolio_fingerprint: str | None = None
         while True:
-            account = jsonable_encoder(_enriched_account_snapshot(websocket.app, repository, user.sub))
+            raw_account = _enriched_account_snapshot(websocket.app, repository, user.sub)
+            portfolio_fingerprint = _paper_portfolio_state_fingerprint(raw_account)
+            if portfolio_fingerprint != last_portfolio_fingerprint:
+                _sync_paper_portfolio_snapshot(websocket.app, repository, user.sub, raw_account)
+                last_portfolio_fingerprint = portfolio_fingerprint
+            account = jsonable_encoder(raw_account)
             payload = {"type": "snapshot" if last_fingerprint is None else "update", "account": account}
             fingerprint = _fingerprint(payload)
             if fingerprint != last_fingerprint:
@@ -275,6 +287,44 @@ def paper_repository_from_app(app: Any) -> PaperTradingRepository:
         repository = PostgresPaperTradingRepository.from_env()
     app.state.paper_trading_repository = repository
     return repository
+
+
+def _sync_paper_portfolio_snapshot(
+    app: Any,
+    repository: PaperTradingRepository,
+    user_id: str,
+    snapshot: dict[str, Any],
+) -> None:
+    try:
+        from app.routes.account import _paper_portfolio_payload, _remember_portfolio_holdings_snapshot
+
+        payload = _paper_portfolio_payload(app, repository, user_id, snapshot)
+        _remember_portfolio_holdings_snapshot(app, user_id, payload)
+    except Exception:
+        logger.exception("failed to synchronize paper account with portfolio snapshot")
+
+
+def _paper_portfolio_state_fingerprint(snapshot: dict[str, Any]) -> str:
+    account = snapshot.get("account") or {}
+    return _fingerprint({
+        "generation": account.get("generation"),
+        "cash": account.get("cash_balance"),
+        "reservedCash": account.get("reserved_cash"),
+        "positions": [
+            [
+                position.get("symbol"),
+                position.get("qty"),
+                position.get("reserved_qty"),
+                position.get("average_price"),
+                position.get("realized_pnl"),
+            ]
+            for position in snapshot.get("positions") or []
+        ],
+        "openOrders": [
+            [order.get("order_id"), order.get("status"), order.get("qty")]
+            for order in snapshot.get("open_orders") or []
+        ],
+    })
 
 
 def _validate_paper_order_payload(payload: dict[str, Any]):

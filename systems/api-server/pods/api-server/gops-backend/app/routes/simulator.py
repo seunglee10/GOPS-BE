@@ -18,7 +18,7 @@ class SimulatorModeRequest(BaseModel):
 
 
 class SimulatorActionRequest(BaseModel):
-    action: Literal["pause", "resume", "restart"]
+    action: Literal["start", "pause", "resume", "restart"]
 
 
 class SimulatorSpeedRequest(BaseModel):
@@ -58,7 +58,7 @@ def simulator_mode(payload: SimulatorModeRequest, request: Request) -> dict[str,
 
 @router.post("/action")
 def simulator_action(payload: SimulatorActionRequest, request: Request) -> dict[str, Any]:
-    if payload.action == "restart":
+    if payload.action in {"start", "restart"}:
         _cancel_previous_simulation_run(request.app)
     return _call_simulator(lambda gateway: gateway.action(payload.action), request)
 

@@ -125,6 +125,17 @@ class ReplayController:
                     self.state_store.delete(old_run)
             return self._capture_status()
 
+    def start(self) -> dict[str, object]:
+        if self.source.total_events <= 0:
+            raise ValueError(f"replay dataset is not READY: {self.source.dataset_id}")
+        with self._lock:
+            self._new_run()
+            self._reset_anchor()
+            self.state = "running"
+            self._run_started_wall = self.clock()
+            self._persist()
+            return self._capture_status()
+
     def resume(self) -> dict[str, object]:
         with self._lock:
             self._require_simulation()

@@ -1295,7 +1295,8 @@ Secret을 사용하며 파일별 S3 검증이 끝나면 로컬 gzip을 지워 �
 
 `scripts/aws/start-dev-simulator.sh`는 ClickHouse schema를 idempotent하게 적용하고
 고정 dataset의 `READY`와 0보다 큰 event 수를 확인한 뒤 simulator를 1개로 올린다.
-그 후 backend의 `GOPS_SIMULATOR_URL`과 simulator 전역 mode만 바꾼다. SIP/BOATS
+그 후 backend의 `GOPS_SIMULATOR_URL`을 연결하고 simulator는 `LIVE/idle`로 둔다.
+화면의 플레이 버튼이 `start` action을 호출하기 전에는 새 run을 만들거나 재생하지 않는다. SIP/BOATS
 ingestor, market processor, order-flow pin, 실시간 Redis/Kafka, trade-condition
 deployment는 변경하지 않는다. simulator는 ClickHouse를 chunk 조회하고 시계·캔들·quote와
 순서형 `/api/control/execution-events`만 제공한다. 실행별 계좌·주문·가격조건은 Postgres

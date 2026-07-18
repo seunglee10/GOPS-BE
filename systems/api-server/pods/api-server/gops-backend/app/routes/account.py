@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,6 +20,9 @@ from kis_trader.kis.fake import KisConnectionReset, KisExplicitReject, KisHttpEr
 
 
 router = APIRouter(tags=["account"])
+logger = logging.getLogger(__name__)
+
+PAPER_PERFORMANCE_SOURCES = frozenset({"paper-shared", "account-history", "seeded-demo"})
 
 
 @router.get("/api/account/holdings")
@@ -80,10 +84,20 @@ def account_performance(
         from app.recommendations.routes import _repository_from_app
 
         repository = _repository_from_app(request.app)
-        snapshots = repository.list_daily_portfolio_snapshots(
-            user.sub,
-            start_at.isoformat() if start_at is not None else None,
-        )
+        source_reader = getattr(repository, "list_daily_portfolio_snapshots_for_sources", None)
+        if callable(source_reader):
+            snapshots = source_reader(
+                user.sub,
+                start_at.isoformat() if start_at is not None else None,
+                tuple(sorted(PAPER_PERFORMANCE_SOURCES)),
+            )
+        else:
+            snapshots = _paper_performance_snapshots(
+                repository.list_daily_portfolio_snapshots(
+                    user.sub,
+                    start_at.isoformat() if start_at is not None else None,
+                )
+            )
     except RecommendationSchemaUnavailable as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     if not snapshots:
@@ -230,6 +244,17 @@ def _performance_data_origin(snapshots: list[dict[str, Any]]) -> str:
     return "account-history"
 
 
+def _paper_performance_snapshots(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result = []
+    for row in snapshots:
+        payload = row.get("payload") if isinstance(row, dict) else None
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("source") in PAPER_PERFORMANCE_SOURCES:
+            result.append(row)
+    return result
+
+
 def _kis_client_from_app(app: Any) -> Any:
     existing = getattr(app.state, "kis_client", None)
     if existing is not None:
@@ -248,19 +273,21 @@ def _kis_client_from_app(app: Any) -> Any:
 def _remember_portfolio_holdings_snapshot(app: Any, user_sub: str, payload: dict[str, Any]) -> None:
     if not isinstance(payload, dict):
         return
+    normalized_payload = jsonable_encoder(payload)
     snapshots = getattr(app.state, "portfolio_holdings_snapshots", None)
     if not isinstance(snapshots, dict):
         snapshots = {}
         app.state.portfolio_holdings_snapshots = snapshots
-    snapshots[user_sub] = payload
+    snapshots[user_sub] = normalized_payload
     try:
         from app.recommendations.routes import _repository_from_app
 
         repository = _repository_from_app(app)
         upsert_snapshot = getattr(repository, "upsert_portfolio_snapshot", None)
         if callable(upsert_snapshot):
-            upsert_snapshot(user_sub, payload)
+            upsert_snapshot(user_sub, normalized_payload)
     except Exception:
+        logger.exception("failed to persist normalized portfolio holdings snapshot")
         return
 
 
