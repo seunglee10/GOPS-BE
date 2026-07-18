@@ -1,6 +1,8 @@
 import json
 import sys
+import threading
 import types
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -20,24 +22,29 @@ from app.market_data.heatmap.worker import warm_once  # noqa: E402
 class FakeRedis:
     def __init__(self):
         self.values = {}
+        self._lock = threading.Lock()
 
     def get(self, key):
-        return self.values.get(key)
+        with self._lock:
+            return self.values.get(key)
 
     def set(self, key, value, ex=None, nx=False):
-        if nx and key in self.values:
-            return False
-        self.values[key] = value
-        return True
+        with self._lock:
+            if nx and key in self.values:
+                return False
+            self.values[key] = value
+            return True
 
     def delete(self, key):
-        self.values.pop(key, None)
+        with self._lock:
+            self.values.pop(key, None)
 
     def eval(self, _script, _key_count, key, expected_value):
-        if self.values.get(key) != expected_value:
-            return 0
-        self.delete(key)
-        return 1
+        with self._lock:
+            if self.values.get(key) != expected_value:
+                return 0
+            self.values.pop(key, None)
+            return 1
 
 
 class FakeProvider:
@@ -106,3 +113,53 @@ def test_projection_worker_does_not_delete_a_new_owners_lock():
 
     assert warm_once(service, "sp500") is True
     assert redis_client.values[lock_key] == "new-owner"
+
+
+def test_ten_concurrent_warmers_build_the_projection_once():
+    provider = FakeProvider()
+    redis_client = provider.redis_provider.redis
+    barrier = threading.Barrier(10)
+    refresh_started = threading.Event()
+    release_refresh = threading.Event()
+
+    class BlockingService:
+        def __init__(self):
+            self.rebuild_count = 0
+            self._count_lock = threading.Lock()
+
+        def _redis(self):
+            return redis_client
+
+        def rebuild(self, _universe):
+            with self._count_lock:
+                self.rebuild_count += 1
+            refresh_started.set()
+            assert release_refresh.wait(timeout=2)
+            return {"items": []}
+
+    service = BlockingService()
+
+    def run_warmer():
+        barrier.wait(timeout=2)
+        return warm_once(service, "sp500")
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(run_warmer) for _ in range(10)]
+        assert refresh_started.wait(timeout=2)
+        release_refresh.set()
+        results = [future.result(timeout=2) for future in futures]
+
+    assert sum(results) == 1
+    assert service.rebuild_count == 1
+
+
+def test_projection_worker_is_rendered_and_redeployed_with_the_backend_image():
+    deployment = (ROOT / "infra" / "k8s" / "base" / "app" / "deployment-heatmap-projection-worker.yaml").read_text(encoding="utf-8")
+    kustomization = (ROOT / "infra" / "k8s" / "base" / "app" / "kustomization.yaml").read_text(encoding="utf-8")
+    image_helpers = (ROOT / "scripts" / "aws" / "lib-gops-images.sh").read_text(encoding="utf-8")
+    backend_env = (ROOT / "systems" / "api-server" / ".env.example").read_text(encoding="utf-8")
+
+    assert "name: gops-heatmap-projection-worker" in deployment
+    assert "deployment-heatmap-projection-worker.yaml" in kustomization
+    assert "gops-heatmap-projection-worker" in image_helpers
+    assert "HEATMAP_CACHE_TTL_SECONDS=70" in backend_env
