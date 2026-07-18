@@ -5,15 +5,15 @@
 
 ## 고정 데이터셋
 
-- ID: `sp500-top20-20260715-kst-v1`
+- ID: `sp500-top20-plus-amd-mu-20260715-kst-v2`
 - 시간: KST `[2026-07-15 00:00, 2026-07-16 00:00)`
 - UTC: `[2026-07-14 15:00, 2026-07-15 15:00)`
 - 시총 기준일: `2026-06-30`
-- 20개 기업·21개 티커: `NVDA, MSFT, AAPL, AMZN, META, AVGO, GOOGL, GOOG, BRK.B, TSLA, LLY, JPM, WMT, V, ORCL, MA, NFLX, XOM, COST, HD, JNJ`
+- 기존 20개 기업에 AMD·Micron을 더한 22개 기업·23개 티커: `NVDA, MSFT, AAPL, AMZN, META, AVGO, GOOGL, GOOG, BRK.B, TSLA, LLY, JPM, WMT, V, ORCL, MA, NFLX, XOM, COST, HD, JNJ, AMD, MU`
 - feed: `SIP 15:00–00:00 UTC`, `BOATS 00:00–08:00 UTC`, `SIP 08:00–15:00 UTC`
 
 원본 gzip JSONL은
-`s3://$S3_BUCKET/simulator/replay/v1/dataset=sp500-top20-20260715-kst/`에 두고,
+`s3://$S3_BUCKET/simulator/replay/v2/dataset=sp500-top20-plus-amd-mu-20260715-kst/`에 두고,
 ClickHouse의 TTL 없는 `simulation_replay_events`와
 `simulation_replay_candles_1m`에 별도로 적재한다. 실시간 `trade_ticks`와
 `quote_ticks`에는 넣지 않는다.

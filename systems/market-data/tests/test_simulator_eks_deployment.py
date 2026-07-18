@@ -13,7 +13,8 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         dataset_source = (SIMULATOR_ROOT / "gops_simul" / "dataset.py").read_text(encoding="utf-8")
         schema = (REPO_ROOT / "infra" / "clickhouse" / "initdb" / "01-market-data.sql").read_text(encoding="utf-8")
 
-        self.assertIn('DATASET_ID: Final = "sp500-top20-20260715-kst-v1"', dataset_source)
+        self.assertIn('DATASET_ID: Final = "sp500-top20-plus-amd-mu-20260715-kst-v2"', dataset_source)
+        self.assertIn('"AMD", "MU"', dataset_source)
         self.assertIn("simulation_replay_events", schema)
         self.assertIn("simulation_replay_candles_1m", schema)
         replay_schema = schema.split("CREATE TABLE IF NOT EXISTS market_data.trade_ticks", 1)[0]
@@ -74,8 +75,9 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("gops-simulator --replicas=1", start_script)
-        self.assertIn("GOPS_SIMULATOR_URL=http://gops-simulator:8765", start_script)
+        self.assertIn("rollout status deployment/gops-simulator", start_script)
+        self.assertNotIn("kubectl scale deployment/gops-simulator", start_script)
+        self.assertNotIn("kubectl set env deployment/gops-backend", start_script)
         self.assertIn("simulation_replay_datasets", start_script)
         self.assertIn('"READY"', start_script)
         self.assertIn("/api/control/mode", start_script)
@@ -86,8 +88,8 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         self.assertNotIn("alfaka-market-processor", start_script)
         self.assertNotIn("trade-condition-executor", start_script)
 
-        self.assertIn("GOPS_SIMULATOR_URL-", stop_script)
-        self.assertIn("gops-simulator --replicas=0", stop_script)
+        self.assertNotIn("kubectl scale deployment/gops-simulator", stop_script)
+        self.assertNotIn("kubectl set env deployment/gops-backend", stop_script)
         self.assertIn("simulator:replay:active-run", stop_script)
         self.assertNotIn("alfaka-alpaca-ingestor", stop_script)
         self.assertNotIn("alfaka-market-processor", stop_script)
@@ -121,6 +123,16 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         self.assertNotIn('kubectl set image "job/${JOB_NAME}"', runner)
         self.assertIn("condition=complete", runner)
         self.assertIn("simulation_replay_datasets", runner)
+        self.assertIn('simulator_image="${SIMULATOR_IMAGE:-}"', runner)
+
+        local_deploy = (REPO_ROOT / "scripts" / "aws" / "deploy-dev-local.sh").read_text(
+            encoding="utf-8"
+        )
+        workflow = (REPO_ROOT / ".github" / "workflows" / "deploy-dev.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("run_simulator_replay_import_if_selected", local_deploy)
+        self.assertIn("run-simulator-replay-import.sh", workflow)
 
     def test_local_deploy_can_target_a_committed_local_ref(self):
         deploy_script = (REPO_ROOT / "scripts" / "aws" / "deploy-dev-local.sh").read_text(

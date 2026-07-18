@@ -35,7 +35,7 @@ def simulator_status(request: Request) -> dict[str, Any]:
             "mode": "live",
             "state": "idle",
             "detail": str(exc),
-            "datasetId": "sp500-top20-20260715-kst-v1",
+            "datasetId": "sp500-top20-plus-amd-mu-20260715-kst-v2",
             "runId": None,
             "virtualTime": "2026-07-15T00:00:00+09:00",
             "startTime": "2026-07-15T00:00:00+09:00",

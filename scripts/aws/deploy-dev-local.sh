@@ -676,6 +676,31 @@ run_migrations_if_requested() {
   fi
 }
 
+run_simulator_replay_import_if_selected() {
+  local simulator_image
+
+  if ! service_selected "simulator"; then
+    return 0
+  fi
+  if is_true "${DRY_RUN}"; then
+    printf 'DRY_RUN=true: skipping simulator replay dataset import.\n'
+    return 0
+  fi
+
+  simulator_image="$(
+    cd "${WORKTREE_DIR}"
+    # shellcheck source=scripts/aws/lib-gops-images.sh
+    source scripts/aws/lib-gops-images.sh
+    gops_image_url_for_key simulator
+  )"
+  (
+    cd "${WORKTREE_DIR}"
+    SIMULATOR_IMAGE="${simulator_image}:${IMAGE_TAG}" \
+      K8S_NAMESPACE="${K8S_NAMESPACE}" \
+      scripts/aws/run-simulator-replay-import.sh
+  )
+}
+
 verify_ai_coach_snapshot_archive() {
   if ! service_selected "agent-orchestrator"; then
     return 0
@@ -859,6 +884,7 @@ main() {
     K8S_NAMESPACE="${K8S_NAMESPACE}" scripts/aws/validate-dedicated-platform.sh
   )
 
+  run_simulator_replay_import_if_selected
   run_migrations_if_requested
   deploy_app_workloads
   verify_simulator_rollout

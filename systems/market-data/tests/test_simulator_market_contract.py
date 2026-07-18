@@ -21,7 +21,7 @@ def simulator_payload(message_type: str) -> dict[str, object]:
         "t": "2026-07-14T15:00:01Z",
         "simulator": {
             "source": "gops-simulator",
-            "datasetId": "sp500-top20-20260715-kst-v1",
+            "datasetId": "sp500-top20-plus-amd-mu-20260715-kst-v2",
             "runId": "sim-test",
             "marketSession": "regular",
         },
@@ -40,7 +40,7 @@ def test_simulation_metadata_survives_trade_normalization():
     assert envelope["marketSession"] == "regular"
     assert envelope["simulation"]["runId"] == "sim-test"
     assert trade["marketSession"] == "regular"
-    assert trade["simulation"]["datasetId"] == "sp500-top20-20260715-kst-v1"
+    assert trade["simulation"]["datasetId"] == "sp500-top20-plus-amd-mu-20260715-kst-v2"
 
 
 def test_simulation_metadata_survives_quote_normalization_for_paper_matching():

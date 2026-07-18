@@ -41,7 +41,7 @@ class FakeSimulatorGateway:
             "available": True,
             "mode": self.mode,
             "state": self.state,
-            "datasetId": "sp500-top20-20260715-kst-v1",
+            "datasetId": "sp500-top20-plus-amd-mu-20260715-kst-v2",
             "runId": "run-1" if self.mode == "simulation" else None,
             "virtualTime": self.virtual_time,
             "startTime": "2026-07-15T00:00:00+09:00",

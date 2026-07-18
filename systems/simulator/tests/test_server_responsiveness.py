@@ -24,7 +24,7 @@ from systems.simulator.gops_simul.server import create_app
 class _BlockingReplayController:
     def __init__(self) -> None:
         self.source = SimpleNamespace(
-            dataset_id="sp500-top20-20260715-kst-v1",
+            dataset_id="sp500-top20-plus-amd-mu-20260715-kst-v2",
             total_events=1,
         )
         self.state = "running"

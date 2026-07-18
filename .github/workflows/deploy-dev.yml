@@ -241,6 +241,12 @@ jobs:
           SERVICES: ${{ steps.changes.outputs.services }}
         run: ./scripts/aws/update-ci-image-tags.sh
 
+      - name: Import simulator replay dataset
+        if: steps.changes.outputs.has_services == 'true' && contains(steps.changes.outputs.services, 'simulator')
+        env:
+          SIMULATOR_IMAGE: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-simulator:${{ env.IMAGE_TAG }}
+        run: ./scripts/aws/run-simulator-replay-import.sh
+
       - name: Run order database migrations
         if: steps.changes.outputs.has_services == 'true' && (steps.changes.outputs.order_migrations_required == 'true' || github.event.inputs.run_order_migrations == 'true')
         run: ./scripts/aws/run-order-migrations-job.sh

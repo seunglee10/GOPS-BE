@@ -14,7 +14,15 @@ from threading import Event
 from typing import Any, Iterator
 
 from gops_simul.config import PROJECT_ROOT
-from gops_simul.dataset import DATASET_ID, FEED_SEGMENTS, REPLAY_SYMBOLS, FeedSegment, dataset_manifest_template, isoformat_z
+from gops_simul.dataset import (
+    DATASET_ID,
+    DATASET_S3_PREFIX,
+    FEED_SEGMENTS,
+    REPLAY_SYMBOLS,
+    FeedSegment,
+    dataset_manifest_template,
+    isoformat_z,
+)
 from gops_simul.env import load_env_file
 from gops_simul.errors import BadRequest
 from gops_simul.storage import normalize_symbols
@@ -347,7 +355,7 @@ def first_env(*names: str) -> str | None:
 
 def default_replay_s3_uri() -> str | None:
     if os.getenv("SIM_REPLAY_S3_URI"): return os.getenv("SIM_REPLAY_S3_URI")
-    return f"s3://{os.getenv('S3_BUCKET')}/simulator/replay/v1/dataset=sp500-top20-20260715-kst" if os.getenv("S3_BUCKET") else None
+    return f"s3://{os.getenv('S3_BUCKET')}/{DATASET_S3_PREFIX}" if os.getenv("S3_BUCKET") else None
 
 
 def utc_regular_open(value: date) -> str: return datetime.combine(value, time(13, 30), tzinfo=UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")

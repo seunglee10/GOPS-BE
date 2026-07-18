@@ -16,7 +16,9 @@ if str(SIMULATOR_ROOT) not in sys.path:
 from gops_simul.dataset import (
     DATASET_END,
     DATASET_ID,
+    DATASET_S3_PREFIX,
     DATASET_START,
+    COMPANY_BY_SYMBOL,
     FEED_SEGMENTS,
     REPLAY_SYMBOLS,
     in_half_open_window,
@@ -157,13 +159,17 @@ class DatasetContractTests(unittest.TestCase):
             Path("/app/.env"),
         )
 
-    def test_dataset_is_the_fixed_kst_day_and_twenty_companies(self):
-        self.assertEqual(DATASET_ID, "sp500-top20-20260715-kst-v1")
+    def test_dataset_is_the_fixed_kst_day_with_amd_and_micron(self):
+        self.assertEqual(DATASET_ID, "sp500-top20-plus-amd-mu-20260715-kst-v2")
+        self.assertEqual(DATASET_S3_PREFIX, "simulator/replay/v2/dataset=sp500-top20-plus-amd-mu-20260715-kst")
         self.assertEqual(DATASET_START, datetime(2026, 7, 14, 15, 0, tzinfo=UTC))
         self.assertEqual(DATASET_END, datetime(2026, 7, 15, 15, 0, tzinfo=UTC))
-        self.assertEqual(len(REPLAY_SYMBOLS), 21)
+        self.assertEqual(len(REPLAY_SYMBOLS), 23)
         self.assertEqual(REPLAY_SYMBOLS[:4], ("NVDA", "MSFT", "AAPL", "AMZN"))
-        self.assertEqual(REPLAY_SYMBOLS[-2:], ("HD", "JNJ"))
+        self.assertEqual(REPLAY_SYMBOLS[-2:], ("AMD", "MU"))
+        self.assertEqual(COMPANY_BY_SYMBOL["AMD"], "Advanced Micro Devices")
+        self.assertEqual(COMPANY_BY_SYMBOL["MU"], "Micron Technology")
+        self.assertEqual(len(set(COMPANY_BY_SYMBOL.values())), 22)
         self.assertEqual([segment.feed for segment in FEED_SEGMENTS], ["sip", "boats", "sip"])
 
     def test_half_open_filter_rejects_the_exact_end_boundary(self):
