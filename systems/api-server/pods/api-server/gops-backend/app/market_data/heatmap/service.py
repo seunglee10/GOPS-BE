@@ -403,6 +403,55 @@ def heatmap_cache_response(payload: dict[str, Any], status: str) -> dict[str, An
     return response
 
 
+def compact_heatmap_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return only the fields required to render the public market heatmap.
+
+    The cached projection also contains fundamentals used by internal callers.
+    The browser does not need those fields to size, color, or label the tiles,
+    so keep the HTTP response deliberately smaller.
+    """
+    response = {
+        key: payload.get(key)
+        for key in (
+            "source",
+            "cacheStatus",
+            "universe",
+            "generatedAt",
+            "layoutAsOf",
+            "quoteAsOf",
+            "quoteRefreshSeconds",
+            "layoutRefreshSeconds",
+            "fundamentalsSource",
+        )
+        if key in payload
+    }
+    response["items"] = [
+        {
+            key: item.get(key)
+            for key in (
+                "symbol",
+                "companyName",
+                "sector",
+                "sectorLabelKo",
+                "industry",
+                "marketCap",
+                "layoutMarketCap",
+                "lastPrice",
+                "previousClose",
+                "volume",
+                "sessionDollarVolume",
+                "changePercent",
+            )
+            if key in item
+        }
+        for item in payload.get("items", [])
+        if isinstance(item, dict)
+    ]
+    if "coverage" in payload:
+        response["coverage"] = payload["coverage"]
+    return response
+
+
 def seed_fallback_payload(universe: str = DEFAULT_HEATMAP_UNIVERSE) -> dict[str, Any]:
     """Return a fast, renderable fallback while the projection worker warms Redis."""
     now = utc_now()

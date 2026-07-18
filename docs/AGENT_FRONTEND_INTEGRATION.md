@@ -824,6 +824,8 @@ panel의 symbol/interval/coverage 상태와 연결하지 않는다. 응답의 `r
 `popularStocks`는 호환 입력으로만 받아 `recommendationsList`와 인기 Top 15 초기
 필터로 변환한다. 통합 패널은 App이 이미 폴링 중인
 `GET /api/market/heatmap?universe=sp500` items와 점수가 계산된 전체 추천 item을 symbol로 결합한다.
+heatmap items는 트리맵 렌더링용 최소 필드만 포함하며, 재무 시계열은 선택한 symbol에
+대해 fundamentals endpoint를 별도로 조회한다.
 heatmap 응답의 `cacheStatus`는 `fresh`, `stale`, `seed` 중 하나다. 프런트는 stale이나
 seed 응답도 즉시 렌더링하고 `quoteAsOf`를 최신 시세처럼 다시 계산하지 않는다.
 섹터 컬럼은 GraphDB `gops:sector` canonical 값의 `sectorLabelKo` 한글 라벨을 사용한다.

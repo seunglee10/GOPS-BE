@@ -87,9 +87,13 @@ the frontend TreeMap. It reads the fundamentals store produced by
 the result in Redis. It does not collect SEC filings directly; that remains a
 separate worker/store responsibility.
 
-The expected minimum data is a `shares_outstanding` metric plus symbol identity.
-`companyName`, `sector`, `industry`, `cik`, `periodEndDate`, and `filedAt` are
-used when available; seed classification remains the fallback.
+The public response is intentionally compact for the browser: each item contains
+symbol identity, company/sector/industry labels, `marketCap`, `layoutMarketCap`,
+current quote fields (`lastPrice`, `previousClose`, `changePercent`), and the
+volume fields used by the TreeMap hover panel. The Redis projection may retain
+additional fundamentals for internal consumers, but those fields are not sent
+through this endpoint. Detailed fundamentals and time series are fetched through
+the symbol-specific fundamentals endpoints when a company is selected.
 
 ## Imports
 

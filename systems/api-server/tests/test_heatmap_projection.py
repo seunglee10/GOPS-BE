@@ -15,7 +15,7 @@ for path in (str(BACKEND), str(MARKET_SHARED)):
 
 sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **kwargs: None))
 
-from app.market_data.heatmap.service import MarketHeatmapService  # noqa: E402
+from app.market_data.heatmap.service import MarketHeatmapService, compact_heatmap_payload  # noqa: E402
 from app.market_data.heatmap.worker import warm_once  # noqa: E402
 from app.market_data.query.service import MarketDataQueryService  # noqa: E402
 
@@ -91,13 +91,59 @@ def test_http_query_path_never_rebuilds_the_projection():
     query_service = object.__new__(MarketDataQueryService)
     query_service.provider = FakeProvider()
     heatmap = Mock()
-    heatmap.snapshot.return_value = {"cacheStatus": "stale", "items": []}
+    heatmap.snapshot.return_value = {
+        "cacheStatus": "stale",
+        "items": [{"symbol": "AAPL", "marketCap": 10, "revenue": 5}],
+    }
 
     with patch("app.market_data.query.service.get_heatmap_service", return_value=heatmap):
         payload = query_service.heatmap("sp500")
 
     assert payload["cacheStatus"] == "stale"
+    assert payload["items"] == [{"symbol": "AAPL", "marketCap": 10}]
     heatmap.snapshot.assert_called_once_with("sp500", allow_rebuild=False)
+
+
+def test_compact_heatmap_payload_keeps_render_fields_and_drops_fundamentals():
+    payload = {
+        "source": "market-heatmap-projection",
+        "cacheStatus": "fresh",
+        "universe": "sp500",
+        "layoutAsOf": "2026-07-18T11:40:00Z",
+        "items": [{
+            "symbol": "AAPL",
+            "companyName": "Apple Inc.",
+            "sector": "Information Technology",
+            "sectorLabelKo": "정보기술",
+            "industry": "Technology Hardware",
+            "marketCap": 3_000_000,
+            "layoutMarketCap": 3_000_000,
+            "lastPrice": 195.2,
+            "previousClose": 193.8,
+            "volume": 1_000,
+            "sessionDollarVolume": 195_200,
+            "changePercent": 0.72,
+            "revenue": 383_000,
+            "financialSeries": [{"period": "2026Q1"}],
+        }],
+    }
+
+    compact = compact_heatmap_payload(payload)
+
+    assert compact["items"] == [{
+        "symbol": "AAPL",
+        "companyName": "Apple Inc.",
+        "sector": "Information Technology",
+        "sectorLabelKo": "정보기술",
+        "industry": "Technology Hardware",
+        "marketCap": 3_000_000,
+        "layoutMarketCap": 3_000_000,
+        "lastPrice": 195.2,
+        "previousClose": 193.8,
+        "volume": 1_000,
+        "sessionDollarVolume": 195_200,
+        "changePercent": 0.72,
+    }]
 
 
 def test_projection_worker_uses_lock_and_forces_a_fresh_projection():
