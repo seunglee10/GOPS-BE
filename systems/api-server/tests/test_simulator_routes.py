@@ -337,6 +337,27 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(payload["virtualTime"], "2026-07-15T00:00:00+09:00")
         self.assertIn(("indices",), self.gateway.calls)
 
+    def test_simulation_related_indices_use_the_fixed_replay_snapshot(self):
+        self.gateway.mode = "simulation"
+        status = self.gateway.status()
+        self.gateway.status = Mock(return_value={
+            **status,
+            "symbols": [{"symbol": "AAPL", "price": 201.0, "changePercent": 1.25}],
+        })
+
+        response = self.client.get("/api/market/indices/related?symbol=AAPL")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["source"], "simulation_replay_related")
+        self.assertTrue(payload["simulation"])
+        self.assertEqual(payload["runId"], "run-1")
+        self.assertEqual(payload["virtualTime"], "2026-07-15T00:00:00+09:00")
+        self.assertEqual(payload["items"][0]["symbol"], "^GSPC")
+        self.assertEqual(payload["items"][0]["companyChangePercent"], 1.25)
+        self.assertIsNone(payload["items"][0]["correlation60d"])
+        self.assertIn(("indices",), self.gateway.calls)
+
     def test_simulation_holdings_use_shared_diversified_paper_account(self):
         self.gateway.mode = "simulation"
 
