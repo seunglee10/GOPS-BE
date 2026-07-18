@@ -57,12 +57,18 @@ POST /api/control/action     {"action":"start"|"pause"|"resume"|"restart"}
 PUT  /api/control/speed      {"speed":1|5|20|60}
 GET  /api/control/candles
 GET  /api/control/symbols
+GET  /api/control/indices
 GET  /api/control/order-flow?symbol=...
 GET  /api/control/execution-events?runId=...&afterSequence=...&limit=...
 ```
 
 Simulator는 계좌·주문·조건 control API를 제공하지 않는다. `simulation-paper-matcher`가
 execution event를 순서대로 페이지 조회하고 공통 Postgres 원장을 갱신한다.
+
+지수 패널은 SIM에서 LIVE Yahoo 캐시를 사용하지 않는다. `GET /api/control/indices`가
+재생 시작 시각 `2026-07-15 00:00 KST` 직전까지 관측된 15개 지수·시장지표의 불변
+스냅샷을 반환한다. 따라서 같은 데이터셋의 모든 run이 같은 값을 표시하고 미래 값이
+재생 화면에 섞이지 않는다.
 
 SIM 차트는 재생 시작 전 정상 과거 캔들과 현재 가상시각까지의 replay 캔들만 합친다.
 Bid/Ask 차트와 Order Flow 패널은 `simulation_replay_events`의 quote/trade를 종목별로

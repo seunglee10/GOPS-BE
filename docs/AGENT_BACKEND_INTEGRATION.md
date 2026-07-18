@@ -127,8 +127,8 @@ market correlation/relative-strength context로만 계산한다. context가 없�
 서비스를 가리킨다. 백엔드는 `/api/simulator/status|mode|action|speed`만 공개하며
 기존 phase, 합성 news, basket 경로는 제공하지 않는다. 가상시각은 KST
 `2026-07-15 00:00`에서 시작하고 모든 사용자에게 동일하다. Simulator는 시계·캔들·
-quote replay만 소유하고, 계좌·주문·가격조건은 Postgres paper 원장에서 `userId`와
-`runId`로 격리한다.
+quote replay와 재생 시작 직전의 불변 지수 snapshot을 소유한다. 계좌·주문·가격조건은
+Postgres paper 원장에서 `userId`와 `runId`로 격리한다.
 
 시작 스크립트 완료 상태는 `LIVE/idle`이다. 프런트 플레이 버튼의
 `POST /api/simulator/action {"action":"start"}`가 새 `runId` 준비와 `running` 전환을
@@ -375,6 +375,9 @@ Finance snapshot을 Redis에 fresh/stale 캐시한다. 백엔드는 fresh 캐시
 즉시 반환하고, fresh가 없을 때만 짧은 refresh lock을 잡아 Yahoo Finance를
 조회한다. refresh 중이거나 Yahoo Finance가 timeout/rate-limit/failure를 반환하면
 마지막 성공 snapshot을 `cacheStatus="stale"`로 반환할 수 있다.
+SIM에서는 같은 공개 route가 simulator의 `GET /api/control/indices`를 사용한다.
+이 응답은 `2026-07-15 00:00 KST` 직전까지 관측된 고정 snapshot이며 LIVE Yahoo
+캐시로 fallback하지 않는다.
 
 통합 추천 패널은 recommendation API를 사용한다. `PUT /api/recommendations/profile`은
 필수 투자 설정을 저장하고, score-profile CRUD/active API는 사용자 가중치를 저장한다.

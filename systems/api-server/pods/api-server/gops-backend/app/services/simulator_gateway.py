@@ -66,6 +66,9 @@ class SimulatorGateway:
         encoded = urllib.parse.urlencode({"q": query, "limit": limit})
         return self._request("GET", f"/api/control/symbols?{encoded}")
 
+    def indices(self) -> dict[str, Any]:
+        return self._request("GET", "/api/control/indices")
+
     def _request(
         self,
         method: str,

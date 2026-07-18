@@ -58,7 +58,17 @@ def market_fundamentals_earnings(
 
 
 @router.get("/api/market/indices")
-def market_indices(background_tasks: BackgroundTasks) -> dict[str, Any]:
+def market_indices(request: Request, background_tasks: BackgroundTasks) -> dict[str, Any]:
+    gateway = simulator_gateway_from_app(request.app)
+    simulation_active = False
+    try:
+        simulation_active = gateway.status().get("mode") == "simulation"
+        if simulation_active:
+            return gateway.indices()
+    except SimulatorUnavailable as exc:
+        last_status = getattr(gateway, "last_status", None) or {}
+        if simulation_active or last_status.get("mode") == "simulation":
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     return get_query_service().indices(background_tasks=background_tasks)
 
 

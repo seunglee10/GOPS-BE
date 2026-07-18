@@ -848,7 +848,9 @@ market indices panel은 `panelType="marketIndices"`/`kind="indices"`로 표현�
 현재 `gops-frontend`는 이 패널에서 `GET /api/market/indices`만 호출하며, 차트
 panel의 symbol/interval/coverage 상태와 연결하지 않는다. 응답의 `refreshSeconds`,
 `cacheStatus`, `warning`, `items[]`를 사용해 자동 새로고침, stale 표시, 행별 가격과
-변동률을 렌더링한다.
+변동률을 렌더링한다. LIVE에서는 Yahoo fresh/stale snapshot, SIM에서는
+`2026-07-15 00:00 KST` 재생 시작 직전의 고정 snapshot을 같은 응답 계약으로 받으므로
+프런트가 mode별 데이터 소스를 선택하지 않는다.
 
 독립 `popularStocks`/`popular` 패널은 없다. 저장 레이아웃과 Agent 명령의
 `popularStocks`는 호환 입력으로만 받아 `recommendationsList`와 인기 Top 15 초기
