@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 역할: dev EKS에서 READY 실제 틱 데이터셋과 연결만 준비하고 화면의 플레이 입력을 기다립니다.
+# 역할: 자동 배포된 dev EKS simulator의 데이터셋과 LIVE 대기 상태를 수동 점검합니다.
 set -Eeuo pipefail
 
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-<aws-account-id>}"
@@ -73,32 +73,16 @@ if not payload.get("datasetReady"):
 print(f"simulator health ok: {payload.get('"'"'datasetId'"'"')} events={payload.get('"'"'totalEventCount'"'"')}")'
 }
 
-cleanup_failed_start() {
-  local exit_code="$1"
-  trap - ERR
-  set +e
-  set_simulator_mode live >/dev/null 2>&1
-  kubectl set env deployment/gops-backend -n "${K8S_NAMESPACE}" GOPS_SIMULATOR_URL- >/dev/null 2>&1
-  kubectl scale deployment/gops-simulator --replicas=0 -n "${K8S_NAMESPACE}" >/dev/null 2>&1
-  exit "${exit_code}"
-}
-
 require_command aws
 require_command kubectl
 configure_cluster
-trap 'cleanup_failed_start $?' ERR
 apply_replay_schema
 require_ready_dataset
 
-kubectl scale deployment/gops-simulator --replicas=1 -n "${K8S_NAMESPACE}"
 kubectl rollout status deployment/gops-simulator -n "${K8S_NAMESPACE}" --timeout=300s
 verify_simulator_health
-kubectl set env deployment/gops-backend -n "${K8S_NAMESPACE}" \
-  GOPS_SIMULATOR_URL=http://gops-simulator:8765
-kubectl rollout status deployment/gops-backend -n "${K8S_NAMESPACE}" --timeout=300s
 set_simulator_mode live
 
-trap - ERR
 printf 'dev EKS tick replay is READY in LIVE 대기 상태: %s\n' "${DATASET_ID}"
+printf '일반 app 배포가 simulator Pod와 backend 연결을 선언적으로 유지합니다.\n'
 printf '화면 상단의 플레이 버튼을 누르면 새 run을 준비하고 즉시 재생합니다.\n'
-printf 'LIVE 복귀: AWS_PROFILE=%s scripts/aws/stop-dev-simulator.sh\n' "${AWS_PROFILE:-gops-dev}"

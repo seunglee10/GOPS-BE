@@ -1,5 +1,5 @@
 # 역할: READY 상태의 실제 틱 데이터셋을 ClickHouse에서 순서대로 재생합니다.
-# 기본 replicas=0이며 scripts/aws/start-dev-simulator.sh가 필요할 때 1로 올립니다.
+# portable base는 비활성이고, AWS app overlay가 일반 배포에서 replicas=1로 올립니다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
