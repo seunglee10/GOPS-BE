@@ -123,7 +123,7 @@ gops_deployments_for_service() {
         deep-analysis-worker
       ;;
     backend)
-      printf '%s\n' alert-evaluator gops-backend recommendation-worker
+      printf '%s\n' alert-evaluator gops-backend gops-heatmap-projection-worker recommendation-worker
       ;;
     frontend)
       printf '%s\n' gops-frontend

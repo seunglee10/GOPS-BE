@@ -17,12 +17,15 @@ sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **k
 
 from app.market_data.heatmap.service import MarketHeatmapService  # noqa: E402
 from app.market_data.heatmap.worker import warm_once  # noqa: E402
+from app.market_data.query.service import MarketDataQueryService  # noqa: E402
 
 
 class FakeRedis:
     def __init__(self):
         self.values = {}
         self._lock = threading.Lock()
+        self.set_calls = 0
+        self.ten_set_attempts = threading.Event()
 
     def get(self, key):
         with self._lock:
@@ -30,6 +33,9 @@ class FakeRedis:
 
     def set(self, key, value, ex=None, nx=False):
         with self._lock:
+            self.set_calls += 1
+            if self.set_calls >= 10:
+                self.ten_set_attempts.set()
             if nx and key in self.values:
                 return False
             self.values[key] = value
@@ -79,6 +85,19 @@ def test_api_snapshot_marks_seed_fallback_without_rebuilding():
     assert payload["source"] == "market-heatmap-seed"
     assert payload["cacheStatus"] == "seed"
     adapter.latest_for_symbols.assert_not_called()
+
+
+def test_http_query_path_never_rebuilds_the_projection():
+    query_service = object.__new__(MarketDataQueryService)
+    query_service.provider = FakeProvider()
+    heatmap = Mock()
+    heatmap.snapshot.return_value = {"cacheStatus": "stale", "items": []}
+
+    with patch("app.market_data.query.service.get_heatmap_service", return_value=heatmap):
+        payload = query_service.heatmap("sp500")
+
+    assert payload["cacheStatus"] == "stale"
+    heatmap.snapshot.assert_called_once_with("sp500", allow_rebuild=False)
 
 
 def test_projection_worker_uses_lock_and_forces_a_fresh_projection():
@@ -146,6 +165,7 @@ def test_ten_concurrent_warmers_build_the_projection_once():
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = [executor.submit(run_warmer) for _ in range(10)]
         assert refresh_started.wait(timeout=2)
+        assert redis_client.ten_set_attempts.wait(timeout=2)
         release_refresh.set()
         results = [future.result(timeout=2) for future in futures]
 

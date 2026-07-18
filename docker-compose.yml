@@ -1643,7 +1643,7 @@ services:
       HEATMAP_UNIVERSE_REGISTRY_PATH: "${HEATMAP_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-heatmap-seed.json}"
       HEATMAP_QUOTE_REFRESH_SECONDS: "${HEATMAP_QUOTE_REFRESH_SECONDS:-60}"
       HEATMAP_LAYOUT_REFRESH_SECONDS: "${HEATMAP_LAYOUT_REFRESH_SECONDS:-300}"
-      HEATMAP_CACHE_TTL_SECONDS: "${HEATMAP_CACHE_TTL_SECONDS:-55}"
+      HEATMAP_CACHE_TTL_SECONDS: "${HEATMAP_CACHE_TTL_SECONDS:-70}"
       HEATMAP_STALE_CACHE_TTL_SECONDS: "${HEATMAP_STALE_CACHE_TTL_SECONDS:-900}"
       MARKET_CALENDAR_PROVIDER: "configured-nyse"
       MARKET_TIMEZONE: "America/New_York"
@@ -1681,6 +1681,40 @@ services:
     volumes:
       - ${HOME}/.aws:/root/.aws:ro
       - kis_token_cache:/kis-cache
+    restart: unless-stopped
+    networks:
+      - app_net
+      - data_net
+
+  heatmap-projection-worker:
+    image: gops-api-server
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-backend
+    container_name: alfaka-heatmap-projection-worker
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "${CLICKHOUSE_USER:-alfaka}"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-alfaka}"
+      HEATMAP_UNIVERSE: "${HEATMAP_UNIVERSE:-sp500}"
+      HEATMAP_UNIVERSE_REGISTRY_PATH: "${HEATMAP_UNIVERSE_REGISTRY_PATH:-systems/market-data/config/sp500-heatmap-seed.json}"
+      HEATMAP_QUOTE_REFRESH_SECONDS: "${HEATMAP_QUOTE_REFRESH_SECONDS:-60}"
+      HEATMAP_LAYOUT_REFRESH_SECONDS: "${HEATMAP_LAYOUT_REFRESH_SECONDS:-300}"
+      HEATMAP_CACHE_TTL_SECONDS: "${HEATMAP_CACHE_TTL_SECONDS:-70}"
+      HEATMAP_STALE_CACHE_TTL_SECONDS: "${HEATMAP_STALE_CACHE_TTL_SECONDS:-900}"
+      HEATMAP_PROJECTION_ENABLED: "${HEATMAP_PROJECTION_ENABLED:-true}"
+      HEATMAP_PROJECTION_INTERVAL_SECONDS: "${HEATMAP_PROJECTION_INTERVAL_SECONDS:-60}"
+      HEATMAP_PROJECTION_LOCK_SECONDS: "${HEATMAP_PROJECTION_LOCK_SECONDS:-90}"
+      FUNDAMENTALS_SOURCE: "${FUNDAMENTALS_SOURCE:-store}"
+    command: ["python", "-u", "-m", "app.market_data.heatmap.worker"]
     restart: unless-stopped
     networks:
       - app_net

@@ -731,7 +731,18 @@ HEATMAP_QUOTE_REFRESH_SECONDS
 HEATMAP_LAYOUT_REFRESH_SECONDS
 HEATMAP_CACHE_TTL_SECONDS
 HEATMAP_STALE_CACHE_TTL_SECONDS
+HEATMAP_PROJECTION_ENABLED
+HEATMAP_PROJECTION_INTERVAL_SECONDS
+HEATMAP_PROJECTION_LOCK_SECONDS
 ```
+
+The heatmap projection worker warms the full S&P 500 payload in Redis every 60
+seconds by default. The API serves the fresh projection directly and falls back
+to the stale projection or seed without rebuilding all symbols inside the HTTP
+request. `HEATMAP_PROJECTION_LOCK_SECONDS` prevents concurrent warmers from
+rebuilding the same payload. The lock stores a unique owner token and only that
+owner may release it; otherwise Redis expiry allows a later worker to recover.
+Responses identify the served layer with `cacheStatus=fresh|stale|seed`.
 
 The fundamentals store must expose `shares_outstanding` in the summary metrics
 or in `sec_financial_facts`. `companyName`, `sector`, `industry`, `cik`,

@@ -1151,11 +1151,20 @@ GRAPHDB_SPARQL_URL
 GRAPHDB_REPOSITORY
 SEC_USER_AGENT
 HEATMAP_UNIVERSE_REGISTRY_PATH
+HEATMAP_PROJECTION_ENABLED
+HEATMAP_PROJECTION_INTERVAL_SECONDS
+HEATMAP_PROJECTION_LOCK_SECONDS
 COACH_CURRENT_QUOTE_MAX_AGE_MINUTES
 COACH_NEWS_LOOKBACK_DAYS
 COACH_NEWS_ITEMS_PER_FILL
 COACH_FUNDAMENTAL_METRICS_PER_FILL
 ```
+
+`Deployment/gops-heatmap-projection-worker` uses the backend image and keeps
+the Redis heatmap projection warm outside the HTTP request path. Backend image
+rollouts must update this deployment together with `gops-backend`; its Redis
+owner-token lock expires automatically and prevents overlapping workers from
+rebuilding the same S&P 500 payload.
 
 `HEATMAP_UNIVERSE_REGISTRY_PATH` points at the timestamped seed copied into the agent
 image. `COACH_CURRENT_QUOTE_MAX_AGE_MINUTES` defaults to `5760` (96 hours); older values

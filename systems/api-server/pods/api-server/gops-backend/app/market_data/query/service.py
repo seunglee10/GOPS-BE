@@ -155,7 +155,10 @@ class MarketDataQueryService:
 
     def heatmap(self, universe: str) -> dict[str, Any]:
         try:
-            return get_heatmap_service(self.provider).snapshot(universe)
+            # Interactive requests never rebuild the 500-symbol projection. The
+            # background projection worker owns cache warming; stale/seed data
+            # keeps the endpoint fast when the fresh key is missing.
+            return get_heatmap_service(self.provider).snapshot(universe, allow_rebuild=False)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
