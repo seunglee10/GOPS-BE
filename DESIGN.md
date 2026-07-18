@@ -294,8 +294,8 @@ row in `recommendationsList` uses a white paper surface with black ink. The
 locked dark hierarchy. This exception does not authorize white cards or
 alternate structural surfaces in other panels; blue remains the focus/action
 color and market status keeps its semantic green, red, and caution colors.
-Recommendation score pills and selected score-profile presets use the same
-white fill with black ink. Score hover details stay on the locked `#1b1b1b`
+Recommendation scores use plain blue text without a fill; selected
+score-profile presets retain the white fill with black ink. Score hover details stay on the locked `#1b1b1b`
 header surface with a `#333333` hairline. Recommendation weight segments use
 only the approved blue, yellow, orange, purple, green, and red point accents.
 
