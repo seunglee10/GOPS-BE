@@ -369,6 +369,20 @@ class ReplayControllerTests(unittest.TestCase):
         self.assertEqual(running["processedEventCount"], 2)
         self.assertEqual(self.controller.latest_quote("NVDA"), {"bid": 99.0, "ask": 100.0})
 
+    def test_status_exposes_change_from_the_first_replay_trade(self):
+        self.controller.set_mode("simulation")
+        self.controller.resume()
+        self.clock.value += 4
+
+        status = self.controller.status()
+        nvda = next(item for item in status["symbols"] if item["symbol"] == "NVDA")
+        msft = next(item for item in status["symbols"] if item["symbol"] == "MSFT")
+
+        self.assertEqual(nvda["price"], 101.5)
+        self.assertAlmostEqual(nvda["changePercent"], 2.01005, places=5)
+        self.assertIsNone(msft["price"])
+        self.assertIsNone(msft["changePercent"])
+
     def test_start_rejects_an_empty_dataset(self):
         controller = ReplayController(InMemoryReplayEventSource([]), clock=self.clock)
 
@@ -420,6 +434,8 @@ class ReplayControllerTests(unittest.TestCase):
         self.assertEqual(payload["candles"][0]["open"], 99.5)
         self.assertEqual(payload["candles"][0]["close"], 101.5)
         self.assertFalse(payload["candles"][0]["isClosed"])
+        nvda = next(item for item in restored.status()["symbols"] if item["symbol"] == "NVDA")
+        self.assertAlmostEqual(nvda["changePercent"], 2.01005, places=5)
 
     def test_speed_can_change_mid_run_without_dropping_events(self):
         self.controller.set_mode("simulation")

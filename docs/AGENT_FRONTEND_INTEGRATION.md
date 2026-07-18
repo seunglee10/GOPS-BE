@@ -88,9 +88,10 @@ action, decision, sizing, key evidence, 점수와 설명을 읽는다. 별도 re
 배속과 `재생/일시정지/재시작`을 표시한다. 배속은 `1·5·20·60·300×`이고 서버 status를
 진실의 원천으로 사용한다. 진행 중인 차트 봉의 남은 시간도 LIVE에서는 실제 시각,
 SIM에서는 status의 `virtualTime`과 `effectiveSpeed`를 사용하며 일시정지 중에는 함께
-멈춘다. LIVE에서 SIM으로 처음 전환되면 메인 화면은 증시지도(TreeMap)로 이동하고,
-status의 replay 가격과 등락률을 해당 종목 타일에 반영한다. 일시정지·재개·같은 모드의
-run 갱신은 사용자가 보고 있는 화면을 강제로 바꾸지 않는다. phase, 합성 news, basket UI는 없다.
+멈춘다. SIM 전환은 사용자가 보고 있는 화면을 강제로 바꾸지 않는다. 증시지도를 보고
+있다면 전체 LIVE universe 대신 replay manifest의 23종목만 표시하고, status의 replay
+가격과 dataset 첫 체결가 기준 등락률을 해당 타일에 반영한다. 새 run에서는 이전 run의
+가격·등락률을 재사용하지 않는다. phase, 합성 news, basket UI는 없다.
 
 상태는 실행 중 1초, LIVE·ready·paused·completed·연결 불가에서는 30초 간격으로
 확인한다. 이전 요청이 끝난 뒤 다음 요청을 예약하고 숨겨진 브라우저 탭에서는 polling을
@@ -98,15 +99,17 @@ run 갱신은 사용자가 보고 있는 화면을 강제로 바꾸지 않는다
 WebSocket 컴포넌트, 포트폴리오 snapshot을 초기화한다. 이 규칙은 LIVE 전환뿐 아니라
 SIM 재시작에도 적용되어 이전 실행의 미래 봉이 남지 않게 한다.
 
-SIM 검색·주문 후보는 manifest의 21개 티커만 사용한다. 주문 ticket은 SIM에서
+SIM 검색·주문 후보는 manifest의 23개 티커만 사용한다. 주문 ticket은 SIM에서
 `market|limit`을 제공하고 market은 price를 보내지 않는다. LIVE KIS 화면은 기존
 limit-only 계약을 유지한다. 주문 상태는 `/ws/orders/{order_id}`의 SIM 원장을 읽고,
 가격조건 UI는 기존 `/api/trade-conditions`를 그대로 사용한다.
 
-뉴스 패널은 LIVE에서 `/api/market/news/daily`, SIM에서
-`/api/market/news/latest`를 호출한다. SIM 응답은 서버가 ClickHouse에서
-`published_at`과 `localized_at`이 모두 `virtualTime` 이하인 기사만 고른 결과이며,
-프런트가 가상시각을 query로 보내거나 live Redis 결과와 합치지 않는다. 일별 뉴스 API와
+기사 뉴스 패널은 LIVE에서 `/api/market/news/daily`, SIM에서
+`/api/market/news/latest`를 호출한다. 데일리 뉴스 키워드 패널은 LIVE/SIM 모두
+`/api/market/news/daily`를 호출한다. SIM 응답은 서버가 ClickHouse에서
+기사의 `published_at`과 `localized_at`, 일별 요약의 `generated_at`을 각각
+`virtualTime` 이하로 제한한 결과이며, 프런트가 가상시각을 query로 보내거나 live Redis
+결과와 합치지 않는다. 일별 뉴스 API와
 차트의 `GET /api/charts/events`도 `generated_at <= virtualTime`인 저장 스냅샷만
 반환한다. 추천 패널은 SIM 전 구간에서 기존 recommendation API를 다시 조회하고 서버가
 번들된 검증 fixed replay provider를 사용하므로 `simulation_data_unavailable`을 표시하지 않는다.
@@ -247,6 +250,11 @@ production build에는 debug snapshot을 노출하지 않는다.
 focus/pointer 선택한 `OrderTicket`·`QuickOrderPanel`(paper 변형 포함), 또는 화면
 순서상 첫 주문 패널 하나에만 이를 typed prop으로 전달한다. 주문 패널은 종목과
 지정가만 바꾸고 수량·매수/매도 방향을 보존하며 자동 제출하지 않는다.
+현재 화면에 표시된 최종 지지·저항 horizontal line의 오른쪽 가격 pill은 같은
+snapshot 경로를 사용하는 semantic button이다. pill을 직접 선택하면 pointer의 연속
+Y 좌표가 아니라 해당 drawing anchor의 정확한 소수점 두 자리 가격으로 스냅한다.
+숨김 또는 가격 pane 밖 레벨, 추세·패턴·제안·사용자 drawing과 평균 매입가는 이 스냅
+대상이 아니며, pill 바깥의 가격축은 기존 연속 가격 선택을 유지한다.
 
 `이 가격에 예약하자`, `이 때 사자` 같은 차트 맥락 문장은 Agent/주문/알림 API보다
 먼저 로컬 확인 intent로 분기한다. 현재 `ChartTradeSetup`의 진입·목표·손절과 asset
@@ -618,7 +626,10 @@ panel uses the matching `diversified-us-v3` portfolio report instead of a stale 
 The first real user order disables that exception and restores the authenticated archive path.
 Simulator mode does not clear, refetch, or replace the resolved coach report. The same report and
 current internal page remain visible when switching between LIVE and SIM; account and order panels
-may continue refreshing independently from the common paper ledger.
+may continue refreshing independently from the common paper ledger. A runtime provider above the
+workspace owns the in-memory report and panel-page state, so the TreeMap transition may unmount the
+panel without losing either value. Loading paper account/orders is an unknown seed state and cannot
+replace the current report; only a completed non-seed order/account-generation decision may do so.
 The seeded report's entry charts embed the stored AAPL/AMZN/WMT fixed-replay daily OHLCV window at
 build time. Prices are rebased to the paper fill only because the chart is a fill-relative percent
 view; candle returns, volume, RSI(14), MACD, signal, and relative volume come from those stored rows.
@@ -627,9 +638,9 @@ a flat to-do list with status boxes and inline evidence, not as nested cards or 
 Its typography uses the shared `title-sm`, `label-md`, `body-md`, `caption`, and `button` roles from
 `DESIGN.md`, without local fluid sizes or custom heavy weights.
 
-When the workspace does not already supply a `coachReport`, the panel makes one top-level
-authenticated request to `GET /api/ai-coach/reports/latest`. Child pages never fetch their
-own data. A stored report renders immediately; no stored report renders a clear waiting
+When the runtime does not already hold a `coachReport`, the provider makes one authenticated
+request to `GET /api/ai-coach/reports/latest` for the current user/account generation. Panel
+remounts and child pages never fetch their own data. A stored report renders immediately; no stored report renders a clear waiting
 state. This keeps the post-market coach independent of Redis report delivery while
 preserving the existing polling/SSE contract for interactive agent analysis.
 

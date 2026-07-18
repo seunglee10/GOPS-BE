@@ -233,7 +233,10 @@ Any current-generation order without `seed_profile` disables this seeded-account
 fixed report is never written to Redis, ClickHouse, Kafka, PostgreSQL, or S3.
 Switching between LIVE and SIM does not clear or replace the resolved coach report. The panel keeps
 the same report and internal page in both modes; simulator status is not an AI-coach availability
-condition.
+condition. `AiCoachRuntimeProvider` lives above the chart/TreeMap workspace switch and owns this
+state in memory. Paper-account refresh loading is not a source change; only a completed account
+generation or non-seed-order decision may replace the seeded report. The runtime is reset when the
+authenticated account changes and is never written into shared layout storage.
 For the seeded report only, page-1 chart series are built from the repository's stored fixed-replay
 AAPL/AMZN/WMT daily candles. The fill-relative view rebases OHLC prices to the ledger fill while
 preserving actual returns and volumes, and computes RSI/MACD from those stored closes. Confirmation
