@@ -157,6 +157,49 @@
     "commentaryV2": {
       "type": "object",
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"promptVersion": {"const": "chart-commentary.ko.v4"}}},
+          "then": {"properties": {"indicatorRecommendations": {"maxItems": 2}}}
+        },
+        {
+          "if": {"properties": {"promptVersion": {"const": "chart-commentary.ko.v5"}}},
+          "then": {
+            "properties": {
+              "indicatorRecommendations": {
+                "maxItems": 3,
+                "items": {
+                  "properties": {
+                    "layer": {"enum": ["volume-profile", "rsi:14", "macd:12:26:9", "bollinger:20:2", "sma:20", "sma:60", "sma:120", "ema:20"]}
+                  }
+                }
+              },
+              "paragraphs": {
+                "items": {
+                  "properties": {
+                    "segments": {
+                      "items": {
+                        "properties": {
+                          "link": {
+                            "not": {
+                              "type": "object",
+                              "required": ["kind", "layer"],
+                              "properties": {
+                                "kind": {"const": "indicator"},
+                                "layer": {"const": "volume"}
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
       "required": [
         "version", "status", "generatedAt", "model", "promptVersion",
         "sourceIdentity", "paragraphs", "indicatorRecommendations", "references", "limitations"
@@ -166,7 +209,7 @@
         "status": {"const": "ready"},
         "generatedAt": {"type": "string", "format": "date-time"},
         "model": {"type": "string", "minLength": 1},
-        "promptVersion": {"enum": ["chart-commentary.ko.v2", "chart-commentary.ko.v3"]},
+        "promptVersion": {"enum": ["chart-commentary.ko.v2", "chart-commentary.ko.v3", "chart-commentary.ko.v4", "chart-commentary.ko.v5"]},
         "sourceIdentity": {"$ref": "#/$defs/commentaryV1/properties/sourceIdentity"},
         "paragraphs": {
           "type": "array",

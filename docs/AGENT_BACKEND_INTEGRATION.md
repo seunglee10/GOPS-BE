@@ -838,8 +838,12 @@ Geometry v6 payload는 기존 패턴 필드와 함께 optional `trends`, `primar
 동일 완료 봉의 geometry/indicator와 cutoff-safe 저장 뉴스·실적에서 사전 생성한
 `chart-commentary.v2`이며 사용자·계좌·포트폴리오 필드는 없다. v2는 세 문단의 연속형
 본문과 검증된 inline reference segment를 저장하고 v1 payload도 읽기 호환한다.
-`chart-commentary.ko.v3` prompt는 linked segment를 36자 이하의 명사구로 제한하며 문장 전체
-링크를 후검증에서 거절한다. 저장 drawing은 levels 4,
+`chart-commentary.ko.v5` prompt는 전체 fact pack에서 핵심 작도, 대표 완료 봉 1개,
+추천 지표 기본 2개·최대 3개, 뉴스·실적 최대 1개만 선택해 280~360자·4문장을 목표로 작성한다.
+거래량 수치는 fact pack에 유지하지만 거래량 막대 `volume`은 추천·indicator link에서 제외하고
+Volume Profile은 계속 허용한다. 세 번째 추천은 앞선 지표와 다른 확인 근거일 때만 허용한다.
+본문은 220~500자만 저장 가능하고 linked segment는 36자 이하의 명사구, 전체 링크는
+최대 6개다. 문장 전체 링크는 후검증에서 거절하며 v2/v3/v4 자산은 계속 읽는다. 저장 drawing은 levels 4,
 pattern 3, trend/channel 1의 합계 최대 8개이고 canonical UTF-8 JSON은 256 KiB 이하다.
 trace v2는 detector의 ranked 후보와 접촉 episode를 생략하지 않고 detected/stored
 completeness를 검증한다. 전체 payload가 초과하면 후보를 제거하지 않고 저장을

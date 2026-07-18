@@ -17,6 +17,7 @@ from .commentary import (
     ClickHouseChartCommentaryContextLoader,
     build_chart_commentary_fact_pack,
     build_chart_commentary_writer_from_env,
+    commentary_output_metrics,
     commentary_required_from_env,
     generate_chart_commentary,
 )
@@ -329,6 +330,7 @@ class ChartAssetBuilder:
                     "newsAsOf": source_identity.get("newsAsOf"),
                     "earningsAsOf": source_identity.get("earningsAsOf"),
                     "latencyMs": commentary_latency_ms,
+                    **commentary_output_metrics(commentary),
                 },
             }
         try:

@@ -662,8 +662,12 @@ API, DB, thread ID를 만들지 않고 과거 답변을 다음 Agent 요청 `mes
 표시한다. 이 조회 결과는 저장 해설, LLM 입력, context digest나 규칙 기반 종합 문장에
 합치지 않으며 종합 해설 자체는 모든 사용자에게 동일한 비개인화 콘텐츠로 유지한다.
 
-`chart-commentary.v2` 저장 해설은 세 문단의 연속 본문으로 표시하고 별도 tag/pill 행을
-만들지 않는다. 서버가 검증한 본문 segment만 상시 signal 색의 실선 밑줄 링크로 보이고,
+`chart-commentary.v2` 저장 해설은 처음에는 본문에서 파생한 고유 차트 연동 링크만
+`링크 · 링크` 형태의 흰색 평문형 링크로 표시한다. `종합 해설 보기`를 누르면 링크 행을
+숨기고 세 문단의 연속 본문을 펼치며, 본문 안의 링크는 기존 signal 색을 사용한다.
+펼침·접힘은 작도 고정, 지표, 봉, 이벤트 상태를 바꾸지 않고 commentary identity나 연결
+차트·symbol·interval이 바뀌면 접힌 상태로 초기화한다. 별도 tag/pill 행은 만들지 않는다.
+서버가 검증한 본문 segment만 연동 링크로 보이고,
 용어 설명만 있는 glossary 점선과 구분한다. drawing 문구는 기존 focus와
 click 고정을, indicator 문구는 hover/focus 이유와 해당 `chartDocumentId`의
 `chart.layer.visibility.set` user command, news/earnings 문구는 필요 layer를 켠 뒤 해당
@@ -672,7 +676,12 @@ viewport와 기존 event popover, candle 문구는 현재 로드된 실제 봉�
 유지한다. Volume Profile과 서버 지표는 off/loading/ready/empty/error/unavailable 상태를
 본문에 동기화하며 실행 가능한 링크가 조용히 실패하지 않게 한다. 로드되지 않은 참조 문구는
 본문에 남되 disabled 상태이며 가짜 선택을 만들지 않는다.
-v1 block은 `구조+작도 / 지표+이벤트 / 다음 조건` 세 평문으로 합치고 기존 tag는 표시하지 않는다. 이벤트는
+본문의 candle·news·earnings 링크를 처음 열 때는 대상 봉 또는 이벤트 marker를 가격 plot의
+수평 중앙으로 이동한 새 scene이 준비된 뒤 선택·popover를 연다. 1D 예정 실적은 가짜 봉 없이
+예정 시장일의 미래 slot을 중앙에 두고, intraday 예정 실적은 먼 빈 구간으로 이동하지 않고
+현재 plot 중앙을 popover 기준점으로 사용한다.
+정확한 inline 위치가 없는 v1 block과 규칙 기반 fallback은 토글 없이 기존 전체 평문을
+표시한다. v1 block은 `구조+작도 / 지표+이벤트 / 다음 조건` 세 평문으로 합치고 기존 tag는 표시하지 않는다. 이벤트는
 typed `gops:chart-commentary-reference-open`, 지표는
 `gops:chart-commentary-indicator-toggle` 요청으로 연결하며 DOM을 검색해 click하지 않는다.
 

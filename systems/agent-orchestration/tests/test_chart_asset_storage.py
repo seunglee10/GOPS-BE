@@ -44,7 +44,11 @@ class ChartAssetStorageTest(unittest.TestCase):
     def test_schema_and_postgres_round_trip_preserve_optional_commentary(self):
         commentary_v3 = _commentary_v2()
         commentary_v3["promptVersion"] = "chart-commentary.ko.v3"
-        for commentary in (_commentary(), _commentary_v2(), commentary_v3):
+        commentary_v4 = _commentary_v2()
+        commentary_v4["promptVersion"] = "chart-commentary.ko.v4"
+        commentary_v5 = _commentary_v2()
+        commentary_v5["promptVersion"] = "chart-commentary.ko.v5"
+        for commentary in (_commentary(), _commentary_v2(), commentary_v3, commentary_v4, commentary_v5):
             asset = _asset()
             asset["commentary"] = commentary
             _validate_asset_schema(asset)
@@ -55,6 +59,64 @@ class ChartAssetStorageTest(unittest.TestCase):
 
             self.assertEqual(loaded["commentary"], asset["commentary"])
             self.assertEqual(loaded["commentary"]["sourceIdentity"]["geometryInputDigest"], asset["inputDigest"])
+
+    def test_v4_schema_limits_recommendations_without_rejecting_v3_assets(self):
+        recommendations = [
+            {
+                "layer": layer,
+                "label": label,
+                "reason": "저장된 근거를 함께 확인합니다.",
+                "referenceIds": ["candle:indicator"],
+            }
+            for layer, label in (
+                ("rsi:14", "상대강도지수"),
+                ("volume", "거래량"),
+                ("sma:20", "SMA20"),
+            )
+        ]
+        legacy = _asset()
+        legacy["commentary"] = _commentary_v2()
+        legacy["commentary"]["promptVersion"] = "chart-commentary.ko.v3"
+        legacy["commentary"]["indicatorRecommendations"] = recommendations
+        _validate_asset_schema(legacy)
+
+        concise = _asset()
+        concise["commentary"] = _commentary_v2()
+        concise["commentary"]["promptVersion"] = "chart-commentary.ko.v4"
+        concise["commentary"]["indicatorRecommendations"] = recommendations
+        with self.assertRaisesRegex(ValueError, "schema validation failed"):
+            _validate_asset_schema(concise)
+
+    def test_v5_schema_accepts_three_non_volume_recommendations_and_rejects_volume(self):
+        asset = _asset()
+        asset["commentary"] = _commentary_v2()
+        asset["commentary"]["promptVersion"] = "chart-commentary.ko.v5"
+        asset["commentary"]["indicatorRecommendations"] = [
+            {
+                "layer": layer, "label": label, "reason": "서로 다른 저장 근거를 확인합니다.",
+                "referenceIds": ["candle:indicator"],
+            }
+            for layer, label in (
+                ("rsi:14", "상대강도지수"),
+                ("volume-profile", "거래량 프로파일"),
+                ("bollinger:20:2", "볼린저 밴드"),
+            )
+        ]
+        _validate_asset_schema(asset)
+
+        invalid_recommendation = _asset()
+        invalid_recommendation["commentary"] = _commentary_v2()
+        invalid_recommendation["commentary"]["promptVersion"] = "chart-commentary.ko.v5"
+        invalid_recommendation["commentary"]["indicatorRecommendations"][0]["layer"] = "volume"
+        with self.assertRaisesRegex(ValueError, "schema validation failed"):
+            _validate_asset_schema(invalid_recommendation)
+
+        invalid_link = _asset()
+        invalid_link["commentary"] = _commentary_v2()
+        invalid_link["commentary"]["promptVersion"] = "chart-commentary.ko.v5"
+        invalid_link["commentary"]["paragraphs"][1]["segments"][2]["link"]["layer"] = "volume"
+        with self.assertRaisesRegex(ValueError, "schema validation failed"):
+            _validate_asset_schema(invalid_link)
 
     def test_trade_plan_schema_accepts_buy_and_exit_long_but_rejects_short(self):
         for action, direction in (("buy_candidate", "long"), ("sell_candidate", "exit_long")):

@@ -155,7 +155,7 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         self.assertEqual(ready["version"], "chart-commentary.v2")
         self.assertEqual(len(ready["paragraphs"]), 3)
         self.assertEqual(ready["sourceIdentity"]["contextDigest"], fact_pack["contextDigest"])
-        self.assertLessEqual(sum(ref["type"] == "candle" for ref in ready["references"]), 3)
+        self.assertLessEqual(sum(ref["type"] == "candle" for ref in ready["references"]), 1)
 
         bad_reference = FixtureWriter(mutation="reference")
         with self.assertRaisesRegex(ChartCommentaryGenerationError, "unknown evidence"):
@@ -177,7 +177,7 @@ class ChartAssetCommentaryTest(unittest.TestCase):
 
         generic_user = FixtureWriter().generate(fact_pack)
         generic_user["paragraphs"][0]["segments"][0]["text"] = generic_user["paragraphs"][0]["segments"][0]["text"].replace(
-            "저장된 완료 봉", "사용자가 확인하는 완료 봉",
+            "현재 가격 구조", "사용자가 확인하는 가격 구조",
         )
         generic_ready = commentary_module.validate_chart_commentary_output(
             generic_user,
@@ -256,6 +256,153 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         indicator_link = next(link for link in links if link["kind"] == "indicator")
         self.assertEqual(indicator_link["referenceIds"], [candle_link["referenceId"]])
 
+    def test_v4_rejects_more_than_one_major_candle_reference(self):
+        fact_pack = _fact_pack()
+        raw = FixtureWriter().generate(fact_pack)
+        candle_references = [item["id"] for item in fact_pack["references"] if item["type"] == "candle"]
+        raw["paragraphs"][1]["segments"][3]["link"]["referenceIds"] = [candle_references[1]]
+        raw["indicatorRecommendations"][0]["referenceIds"] = [candle_references[1]]
+
+        with self.assertRaisesRegex(ChartCommentaryGenerationError, "more than one major candle"):
+            commentary_module.validate_chart_commentary_output(
+                raw,
+                fact_pack=fact_pack,
+                generated_at="2025-06-11T00:00:00.000Z",
+                model="fixture-model",
+            )
+
+    def test_v5_defaults_to_two_and_accepts_one_distinct_third_indicator(self):
+        fact_pack = _fact_pack()
+        raw = FixtureWriter().generate(fact_pack)
+        candle_reference = next(item["id"] for item in fact_pack["references"] if item["type"] == "candle")
+        self.assertEqual([item["layer"] for item in raw["indicatorRecommendations"]], ["rsi:14", "volume-profile"])
+        raw["paragraphs"][1]["segments"].insert(-1, {
+            "id": "confirmation-indicator-third",
+            "text": "볼린저 밴드",
+            "link": {"kind": "indicator", "layer": "bollinger:20:2", "referenceIds": [candle_reference]},
+        })
+        raw["indicatorRecommendations"].append({
+            "layer": "bollinger:20:2",
+            "label": "볼린저 밴드",
+            "reason": "가격 분포와 다른 변동성 근거를 보완합니다.",
+            "referenceIds": [candle_reference],
+        })
+
+        ready = commentary_module.validate_chart_commentary_output(
+            raw,
+            fact_pack=fact_pack,
+            generated_at="2025-06-11T00:00:00.000Z",
+            model="fixture-model",
+        )
+        self.assertEqual(len(ready["indicatorRecommendations"]), 3)
+        self.assertLessEqual(commentary_module.commentary_output_metrics(ready)["linkCount"], 6)
+
+        fourth = copy.deepcopy(raw)
+        fourth["paragraphs"][1]["segments"].insert(-1, {
+            "id": "confirmation-indicator-fourth",
+            "text": "SMA20",
+            "link": {"kind": "indicator", "layer": "sma:20", "referenceIds": [candle_reference]},
+        })
+        fourth["indicatorRecommendations"].append({
+            "layer": "sma:20", "label": "SMA20", "reason": "추세 근거를 보완합니다.",
+            "referenceIds": [candle_reference],
+        })
+
+        with self.assertRaisesRegex(ChartCommentaryGenerationError, "indicator recommendations are invalid"):
+            commentary_module.validate_chart_commentary_output(
+                fourth,
+                fact_pack=fact_pack,
+                generated_at="2025-06-11T00:00:00.000Z",
+                model="fixture-model",
+            )
+
+    def test_v5_rejects_redundant_third_indicator_and_volume_recommendation(self):
+        fact_pack = _fact_pack()
+        candle_reference = next(item["id"] for item in fact_pack["references"] if item["type"] == "candle")
+        redundant = FixtureWriter().generate(fact_pack)
+        redundant["paragraphs"][1]["segments"].insert(-1, {
+            "id": "confirmation-indicator-redundant",
+            "text": "MACD",
+            "link": {"kind": "indicator", "layer": "macd:12:26:9", "referenceIds": [candle_reference]},
+        })
+        redundant["indicatorRecommendations"].append({
+            "layer": "macd:12:26:9", "label": "MACD", "reason": "모멘텀을 다시 확인합니다.",
+            "referenceIds": [candle_reference],
+        })
+        with self.assertRaisesRegex(ChartCommentaryGenerationError, "distinct confirmation basis"):
+            commentary_module.validate_chart_commentary_output(
+                redundant, fact_pack=fact_pack,
+                generated_at="2025-06-11T00:00:00.000Z", model="fixture-model",
+            )
+
+        volume = FixtureWriter().generate(fact_pack)
+        volume["paragraphs"][1]["segments"][3]["link"]["layer"] = "volume"
+        volume["indicatorRecommendations"][0]["layer"] = "volume"
+        with self.assertRaisesRegex(ChartCommentaryGenerationError, "indicator link is unavailable"):
+            commentary_module.validate_chart_commentary_output(
+                volume, fact_pack=fact_pack,
+                generated_at="2025-06-11T00:00:00.000Z", model="fixture-model",
+            )
+
+    def test_v5_allows_one_or_zero_recommendations_when_eligible_layers_are_limited(self):
+        one_layer = _fact_pack()
+        one_layer["indicators"] = {
+            **one_layer["indicators"],
+            "volumeProfile120": {}, "macd": {}, "bollinger20x2": {}, "movingAverages": {},
+        }
+        one_ready, _latency = generate_chart_commentary(
+            fact_pack=one_layer, writer=FixtureWriter(), generated_at="2025-06-11T00:00:00.000Z",
+        )
+        self.assertEqual([item["layer"] for item in one_ready["indicatorRecommendations"]], ["rsi:14"])
+
+        no_layers = copy.deepcopy(one_layer)
+        no_layers["indicators"]["rsi14"] = {}
+        no_ready, _latency = generate_chart_commentary(
+            fact_pack=no_layers, writer=FixtureWriter(), generated_at="2025-06-11T00:00:00.000Z",
+        )
+        self.assertEqual(no_ready["indicatorRecommendations"], [])
+
+    def test_v4_rejects_more_than_one_news_or_earnings_reference(self):
+        rows = _rows(160)
+        fact_pack = build_chart_commentary_fact_pack(
+            symbol="NVDA",
+            interval="1D",
+            candles=rows,
+            geometry=_geometry(),
+            geometry_input_digest="sha256:geometry",
+            context={
+                "news": [{
+                    "id": "news:NVDA:2025-06-10", "type": "news", "marketDate": "2025-06-10",
+                    "summary": "저장 뉴스", "keyPoints": [], "impactDirection": "neutral",
+                    "sentiment": "neutral", "articleCount": 1, "generatedAt": "2025-06-10T20:00:00.000Z",
+                }],
+                "earnings": [{
+                    "id": "earnings:NVDA:2025-06-09T20:00:00.000Z", "type": "earnings",
+                    "eventAt": "2025-06-09T20:00:00.000Z", "sourceAsOf": "2025-06-10T19:00:00.000Z",
+                }],
+                "missingData": [],
+            },
+        )
+        raw = FixtureWriter().generate(fact_pack)
+        second_event = next(
+            item for item in fact_pack["references"]
+            if item["type"] in {"news", "earnings"}
+            and item["id"] != raw["paragraphs"][2]["segments"][1]["link"]["referenceId"]
+        )
+        raw["paragraphs"][2]["segments"].insert(2, {
+            "id": "context-second-event",
+            "text": "추가 이벤트",
+            "link": {"kind": second_event["type"], "referenceId": second_event["id"]},
+        })
+
+        with self.assertRaisesRegex(ChartCommentaryGenerationError, "more than one stored event"):
+            commentary_module.validate_chart_commentary_output(
+                raw,
+                fact_pack=fact_pack,
+                generated_at="2025-06-11T00:00:00.000Z",
+                model="fixture-model",
+            )
+
     def test_v2_downgrades_a_repeated_inline_action_to_plain_text(self):
         fact_pack = _fact_pack()
 
@@ -273,24 +420,57 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         )
         self.assertNotIn("link", repeated_segment)
 
-    def test_v2_style_targets_do_not_trigger_a_second_llm_attempt(self):
+    def test_v5_target_fixture_is_concise_without_reducing_fact_pack(self):
         fact_pack = _fact_pack()
-        for mutation in ("three_sentences", "expanded_style"):
-            with self.subTest(mutation=mutation):
-                ready, _latency = generate_chart_commentary(
-                    fact_pack=fact_pack,
-                    writer=FixtureWriter(mutation=mutation),
-                    generated_at="2025-06-11T00:00:00.000Z",
-                )
-                article = "\n\n".join(
-                    "".join(segment["text"] for segment in paragraph["segments"])
-                    for paragraph in ready["paragraphs"]
-                )
-                self.assertEqual(ready["status"], "ready")
-                if mutation == "three_sentences":
-                    self.assertEqual(len(commentary_module.SENTENCE_PATTERN.findall(article)), 3)
-                else:
-                    self.assertGreater(len(article), 900)
+        before_digest = fact_pack["contextDigest"]
+
+        ready, _latency = generate_chart_commentary(
+            fact_pack=fact_pack,
+            writer=FixtureWriter(),
+            generated_at="2025-06-11T00:00:00.000Z",
+        )
+
+        article = "\n\n".join(
+            "".join(segment["text"] for segment in paragraph["segments"])
+            for paragraph in ready["paragraphs"]
+        )
+        metrics = commentary_module.commentary_output_metrics(ready)
+        self.assertEqual(ready["promptVersion"], "chart-commentary.ko.v5")
+        self.assertEqual(fact_pack["contextDigest"], before_digest)
+        self.assertIsNotNone(fact_pack["indicators"]["volume"]["current"])
+        self.assertNotIn("volume", {item["layer"] for item in ready["indicatorRecommendations"]})
+        self.assertEqual(metrics["characterCount"], len(article))
+        self.assertGreaterEqual(len(article), 280)
+        self.assertLessEqual(len(article), 360)
+        self.assertEqual(metrics["sentenceCount"], 4)
+        self.assertLessEqual(metrics["linkCount"], 6)
+        self.assertEqual(metrics["indicatorCount"], 2)
+        self.assertLessEqual(sum(ref["type"] == "candle" for ref in ready["references"]), 1)
+        self.assertLessEqual(sum(ref["type"] in {"news", "earnings"} for ref in ready["references"]), 1)
+
+    def test_v5_style_target_deviation_inside_safe_range_does_not_trigger_repair(self):
+        fact_pack = _fact_pack()
+        ready, _latency = generate_chart_commentary(
+            fact_pack=fact_pack,
+            writer=FixtureWriter(mutation="three_sentences"),
+            generated_at="2025-06-11T00:00:00.000Z",
+        )
+        article = "\n\n".join(
+            "".join(segment["text"] for segment in paragraph["segments"])
+            for paragraph in ready["paragraphs"]
+        )
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(len(commentary_module.SENTENCE_PATTERN.findall(article)), 3)
+        self.assertGreaterEqual(len(article), 220)
+        self.assertLessEqual(len(article), 500)
+
+    def test_v5_rejects_output_outside_safe_length(self):
+        with self.assertRaisesRegex(ChartCommentaryGenerationError, "safe storage range"):
+            generate_chart_commentary(
+                fact_pack=_fact_pack(),
+                writer=FixtureWriter(mutation="expanded_style"),
+                generated_at="2025-06-11T00:00:00.000Z",
+            )
 
     def test_v2_macd_period_tuple_is_valid_fact_pack_numeric_content(self):
         ready, _latency = generate_chart_commentary(
@@ -330,10 +510,10 @@ class ChartAssetCommentaryTest(unittest.TestCase):
             ],
         }]
 
-        commentary_module._limit_commentary_inline_links(paragraphs, max_links=8)
+        commentary_module._limit_commentary_inline_links(paragraphs, max_links=5)
 
         links = [segment["link"] for segment in paragraphs[0]["segments"] if segment.get("link")]
-        self.assertEqual(len(links), 8)
+        self.assertEqual(len(links), 5)
         self.assertIn("drawing", {link["kind"] for link in links})
         self.assertIn("news", {link["kind"] for link in links})
 
@@ -354,7 +534,12 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         self.assertIs(requests[0]["store"], False)
         self.assertEqual(requests[0]["text"]["format"]["type"], "json_schema")
         self.assertIs(requests[0]["text"]["format"]["strict"], True)
-        self.assertEqual(requests[0]["text"]["format"]["name"], "chart_commentary_ko_v2")
+        self.assertEqual(requests[0]["text"]["format"]["name"], "chart_commentary_ko_v5")
+        self.assertEqual(requests[0]["text"]["format"]["schema"]["properties"]["indicatorRecommendations"]["maxItems"], 3)
+        self.assertNotIn(
+            "volume",
+            requests[0]["text"]["format"]["schema"]["properties"]["indicatorRecommendations"]["items"]["properties"]["layer"]["enum"],
+        )
         self.assertNotIn("uniqueItems", json.dumps(requests[0]["text"]["format"]["schema"], sort_keys=True))
         self.assertEqual(json.loads(requests[0]["input"]), fact_pack)
 
@@ -519,7 +704,7 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         self.assertEqual(failure_log["event"], "chart_commentary_failed")
         self.assertEqual(failure_log["commentary"]["status"], "failed")
         self.assertEqual(failure_log["commentary"]["model"], "fixture-model")
-        self.assertEqual(failure_log["commentary"]["promptVersion"], "chart-commentary.ko.v3")
+        self.assertEqual(failure_log["commentary"]["promptVersion"], "chart-commentary.ko.v5")
         self.assertTrue(str(failure_log["commentary"]["contextDigest"]).startswith("sha256:"))
         self.assertEqual(set(failure_log["commentary"]), {
             "status", "failureCode", "retryable", "attempts", "model", "promptVersion",
@@ -548,7 +733,16 @@ class ChartAssetCommentaryTest(unittest.TestCase):
         parsed_logs = [json.loads(line) for line in state["logs"]]
         commentary_log = next(item for item in parsed_logs if item["event"] == "chart_commentary_saved")
         self.assertEqual(commentary_log["commentary"]["status"], "ready")
-        self.assertEqual(commentary_log["commentary"]["promptVersion"], "chart-commentary.ko.v3")
+        self.assertEqual(commentary_log["commentary"]["promptVersion"], "chart-commentary.ko.v5")
+        stored_paragraphs = storage.assets[("NVDA", "1D")]["commentary"]["paragraphs"]
+        self.assertEqual(
+            commentary_log["commentary"]["characterCount"],
+            sum(len(segment["text"]) for paragraph in stored_paragraphs for segment in paragraph["segments"])
+            + (len(stored_paragraphs) - 1) * 2,
+        )
+        self.assertEqual(commentary_log["commentary"]["sentenceCount"], 4)
+        self.assertLessEqual(commentary_log["commentary"]["linkCount"], 6)
+        self.assertEqual(commentary_log["commentary"]["indicatorCount"], 2)
         self.assertEqual(parsed_logs[-1]["event"], "chart_asset_saved")
         self.assertTrue(parsed_logs[-1]["writeVerified"])
         asset = storage.assets[("NVDA", "1D")]
@@ -567,43 +761,76 @@ class FixtureWriter:
         references = fact_pack["references"]
         candle_references = [item["id"] for item in references if item["type"] == "candle"]
         candle_reference = candle_references[0]
-        indicator_reference = candle_references[1]
+        indicator_reference = candle_reference
         drawing_reference = next((item["id"] for item in references if item["type"] == "drawing"), None)
         event = next((item for item in references if item["type"] in {"news", "earnings"}), None)
+        indicator_specs = [
+            ("rsi:14", "상대강도지수", "가격 움직임의 힘이 확장되는지 둔화되는지 함께 확인합니다."),
+            ("volume-profile", "거래량 프로파일", "최근 완료 봉 구간에서 거래가 집중된 가격대를 함께 확인합니다."),
+        ]
+        indicator_specs = [
+            item for item in indicator_specs
+            if commentary_module._indicator_available(fact_pack, item[0])
+        ]
+        confirmation_segments = [
+            {"id": "confirmation-open", "text": "그 판단을 점검할 때에는 ", "link": None},
+            {"id": "confirmation-candle", "text": "주요 완료 봉", "link": {"kind": "candle", "referenceId": candle_reference}},
+            {"id": "confirmation-middle", "text": "의 몸통·꼬리와 거래량은 경계에서 실제 수급 반응이 확인됐는지를 보여 줍니다. 여기에 ", "link": None},
+        ]
+        for index, (layer, label, _reason) in enumerate(indicator_specs):
+            if index:
+                confirmation_segments.append({
+                    "id": f"confirmation-indicator-join-{index}", "text": "와 ", "link": None,
+                })
+            confirmation_segments.append({
+                "id": f"confirmation-indicator-{index + 1}",
+                "text": label,
+                "link": {"kind": "indicator", "layer": layer, "referenceIds": [indicator_reference]},
+            })
+        confirmation_segments.append({
+            "id": "confirmation-close",
+            "text": "를 겹치면 경계를 시험하는 힘의 확장과 둔화를 구분할 수 있지만, 지표는 작도를 대신하는 결론이 아니라 반응의 질을 보완하는 근거입니다.",
+            "link": None,
+        })
         paragraphs = [
             {
                 "id": "structure",
                 "segments": [
-                    {"id": "structure-open", "text": "저장된 완료 봉과 구조 지표를 함께 놓고 보면 현재 가격은 단기 변동 하나보다 분석 시점까지 축적된 방향과 경계의 관계로 읽는 편이 타당합니다. ", "link": None},
+                    {"id": "structure-open", "text": "현재 가격 구조는 단기 등락보다 ", "link": None},
                     *([{"id": "structure-drawing", "text": "최종 작도", "link": {"kind": "drawing", "referenceIds": [drawing_reference]}}] if drawing_reference else []),
-                    {"id": "structure-close", "text": "는 가격이 어느 구간에서 반응을 반복했는지 보여 주며, 한 선의 돌파만 단독 신호로 보지 않고 반대 경계와 최근 접촉 이력을 함께 확인하게 합니다. 이 구조는 결론을 서두르기보다 완료 봉이 경계 안팎에서 자리를 잡는지 관찰하는 기준으로 기능합니다.", "link": None},
+                    {"id": "structure-close", "text": (
+                        "가 제시하는 경계와 반복 반응을 중심으로 읽고, 다음 완료 봉이 구조 안팎에서 자리를 잡는지를 핵심 기준으로 삼아야 합니다."
+                        if drawing_reference else
+                        "축적된 경계와 반복 반응을 중심으로 읽고, 다음 완료 봉이 구조 안팎에서 자리를 잡는지를 핵심 기준으로 삼아야 합니다."
+                    ), "link": None},
                 ],
             },
             {
                 "id": "confirmation",
-                "segments": [
-                    {"id": "confirmation-open", "text": "그 판단을 점검할 때에는 ", "link": None},
-                    {"id": "confirmation-candle", "text": "주요 완료 봉", "link": {"kind": "candle", "referenceId": candle_reference}},
-                    {"id": "confirmation-middle", "text": "의 몸통과 꼬리, 거래량이 경계 부근에서 남긴 반응을 먼저 살피는 것이 좋으며, 같은 위치에서 되돌림이 반복되는지도 중요합니다. 여기에 ", "link": None},
-                    {"id": "confirmation-indicator", "text": "상대강도지수", "link": {"kind": "indicator", "layer": "rsi:14", "referenceIds": [indicator_reference]}},
-                    {"id": "confirmation-close", "text": "를 겹쳐 보면 가격이 경계를 시험하는 과정에서 움직임의 힘이 확장되는지 둔화되는지를 분리해 볼 수 있습니다. 지표는 작도를 대신하는 결론이 아니라 가격 반응의 질을 확인하는 보조 근거로만 사용합니다.", "link": None},
-                ],
+                "segments": confirmation_segments,
             },
             {
                 "id": "context",
                 "segments": [
-                    {"id": "context-open", "text": "외부 맥락은 가격 움직임의 원인으로 단정하지 않고 분석 시점에 시장이 함께 소화하던 정보의 범위로만 읽습니다. ", "link": None},
+                    {"id": "context-open", "text": (
+                        "외부 맥락으로는 " if event else
+                        "외부 이벤트 자료가 제한된 경우에는 "
+                    ), "link": None},
                     *([{"id": "context-event", "text": "저장된 이벤트 맥락", "link": {"kind": event["type"], "referenceId": event["id"]}}] if event else []),
-                    {"id": "context-close", "text": "이 제한적이라면 차트 구조와 완료 봉이 제공하는 사실을 우선하고 확인되지 않은 서사를 빈칸에 채우지 않습니다. 다음 관찰에서는 가격이 최종 경계를 지킨 채 반응을 이어 가는지, 또는 반대편 경계를 넘어 기존 해석을 재검토해야 하는지를 새 완료 봉과 같은 기준으로 비교합니다.", "link": None},
+                    {"id": "context-close", "text": (
+                        "을 가격 움직임의 원인보다 동시 정보로만 보고, 다음 완료 봉이 최종 경계를 지키는지 또는 반대편을 넘어 해석을 재검토하게 하는지를 확인합니다."
+                        if event else
+                        "확인되지 않은 서사를 채우지 않고, 다음 완료 봉이 최종 경계를 지키는지 또는 반대편을 넘어 해석을 재검토하게 하는지를 확인합니다."
+                    ), "link": None},
                 ],
             },
         ]
         if self.mutation == "reference":
             paragraphs[1]["segments"][1]["link"]["referenceId"] = "missing-reference"
         if self.mutation == "personal":
-            paragraphs[0]["segments"][0]["text"] = paragraphs[0]["segments"][0]["text"].replace("저장된 완료 봉", "사용자 계좌")
+            paragraphs[0]["segments"][0]["text"] = paragraphs[0]["segments"][0]["text"].replace("현재 가격 구조", "사용자 계좌")
         if self.mutation == "number":
-            paragraphs[0]["segments"][0]["text"] = paragraphs[0]["segments"][0]["text"].replace("저장된 완료 봉", "저장된 완료 봉과 9999")
+            paragraphs[0]["segments"][0]["text"] = paragraphs[0]["segments"][0]["text"].replace("현재 가격 구조", "현재 가격 구조와 9999")
         if self.mutation == "type":
             paragraphs[1]["segments"][1]["link"]["kind"] = "news"
         if self.mutation == "markup":
@@ -633,11 +860,13 @@ class FixtureWriter:
             paragraphs[1]["segments"][-1]["text"] += " MACD(12,26,9)는 같은 가격 반응의 강도를 보조적으로 확인하는 기준입니다."
         return {
             "paragraphs": paragraphs,
-            "indicatorRecommendations": [{
-                "layer": "rsi:14", "label": "상대강도지수",
-                "reason": "가격 움직임의 힘이 확장되는지 둔화되는지 함께 확인합니다.",
-                "referenceIds": [indicator_reference],
-            }],
+            "indicatorRecommendations": [
+                {
+                    "layer": layer, "label": label, "reason": reason,
+                    "referenceIds": [indicator_reference],
+                }
+                for layer, label, reason in indicator_specs
+            ],
             "limitations": [],
         }
 

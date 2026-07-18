@@ -151,8 +151,13 @@ OpenAI writer는 Responses API의 strict JSON Schema와 `store=false`를 사용�
 응답의 reference/drawing/indicator, 숫자·날짜, 안전 길이, 금지 투자 지시와 개인화 표현을 다시
 검증한다. 출력은 제목이나 목록이 아닌 세 문단의 연속형 한국어 해설이며, 자연스러운
 본문 segment만 drawing·indicator·candle·news·earnings reference에 연결한다.
-`chart-commentary.ko.v3` writer는 링크 segment를 36자 이하의 짧은 명사구로 제한하고
-문장 종결 부호나 개행이 포함된 문장 전체 링크를 저장 전에 거절한다. 뉴스·실적
+`chart-commentary.ko.v5` writer는 전체 fact pack을 유지하되 본문에는 가장 중요한
+작도, 대표 완료 봉 1개, 추천 지표 기본 2개·최대 3개, 뉴스·실적 이벤트 최대 1개만 선택한다.
+거래량 수치는 해석에 계속 쓰지만 거래량 막대 `volume`은 신규 추천과 indicator link에서
+제외하며 Volume Profile은 유지한다. 세 번째 추천은 가격 분포·모멘텀·변동성·추세 중
+앞선 두 지표와 다른 근거를 추가할 때만 허용한다.
+링크 segment는 36자 이하의 짧은 명사구로 제한하고 문장 종결 부호나 개행이 포함된
+문장 전체 링크를 저장 전에 거절한다. v2/v3/v4 저장 자산은 계속 읽는다. 뉴스·실적
 결측은 본문에서 자료 한계를 자연스럽게 밝히고 `limitations`에도 남기는 정상 결과지만 AWS required mode에서
 timeout, refusal, incomplete, malformed 또는 fact 검증 실패가 발생하면 item을
 `commentary_generation_failed`로 끝내고 단일 UPSERT 전에 중단하여 기존 row를 보존한다.
@@ -164,12 +169,13 @@ writer의 strict schema는 OpenAI가 지원하지 않는 JSON Schema 키워드�
 제약은 저장 전 서버 후검증이 담당한다. indicator가 주요 봉과 같은 evidence reference를
 공유하는 것은 정상으로 허용하며, 본문에서 동일한 작도·봉·이벤트·지표 동작이 반복되면
 첫 링크만 유지하고 뒤의 표현은 평문으로 결정론적으로 정규화한다.
-600~900자·6~9문장·링크 최대 8개는 writer의 문체 목표다. 글자·문장 목표 이탈은 재호출이나
-자산 폐기 사유로 삼지 않으며, 본문은 300~1600자의 안전 범위만 강제한다. 링크가 8개를
-넘으면 작도·주요 봉·이벤트와 추천 indicator 링크를 우선 보존하고 나머지를 평문으로 낮춘다.
+280~360자·3문단 4문장·링크 최대 6개는 v5 writer의 문체 목표다. 정확한 목표 이탈은
+재호출이나 자산 폐기 사유로 삼지 않으며, 본문은 220~500자의 안전 범위만 강제한다.
+링크가 6개를 넘으면 작도·주요 봉·이벤트와 최대 3개의 추천 indicator 링크를 우선
+보존하고 나머지를 평문으로 낮춘다. 주요 봉과 저장 이벤트 reference는 각각 최대 1개다.
 사실에 없는 숫자·날짜·reference, 개인화 표현과 직접 투자 지시는 계속 저장을 차단한다.
 작업 로그의 500자 상한에서 JSON이 잘리지 않도록 asset write verification, trace telemetry,
-commentary telemetry는 독립된 로그 항목으로 기록한다.
+commentary telemetry는 독립된 로그 항목으로 기록하며 글자·문장·링크·추천 지표 수를 남긴다.
 로컬 기본 provider는 disabled이며 구자산과 동일한 규칙 기반 종합 해설을 사용한다.
 
 ## 화면 레이어와 해설
@@ -181,7 +187,10 @@ SMA60/120은 차트 추가 도구가 소유하는 독립 보조지표이며 추�
 않는다. 최근 골든·데드크로스 마커만 분석 이벤트로 추세 레이어가 소유한다. 제안 OFF는
 메모리 trade plan을 삭제하지 않고 표시와 제안 가격의 Y축 반영만 중단한다.
 
-해설은 유효한 저장 `commentary`가 있으면 연속형 종합 해설을 먼저 표시하고, 없는
+해설은 유효한 구조화 `commentary`가 있으면 본문에서 파생한 차트 연동 링크만 먼저
+흰색 평문형 링크로 표시하고 `종합 해설 보기`를 눌렀을 때 세 문단 연속형 본문과 기존
+signal 색 링크를 펼친다. 펼침·접힘은 작도 고정, 지표, 봉, 이벤트 상태를 변경하지 않으며
+자산 identity가 바뀌면 다시 접힌다. commentary가 없는
 구자산은 기존 규칙 기반 종합 해설로 fallback한다. 패널 상단의 별도 표는 KIS holdings API로
 현재 종목의 보유 상태·평균 매입가·수량만 보여준다. 이 계좌 팩트는 저장 commentary,
 LLM fact pack, context digest와 규칙 기반 종합 문장에는 전달하지 않는다. 별도 참조 태그는 만들지 않고
@@ -193,6 +202,9 @@ LLM fact pack, context digest와 규칙 기반 종합 문장에는 전달하지 
 off/loading/ready/empty/error/unavailable 상태를 해설 링크에 동기화해 데이터 결측과 로드
 실패를 숨기지 않는다. v1 block은 세 문단 평문으로
 합쳐 읽되 임의 키워드 링크를 추정하지 않는다.
+봉·뉴스·실적 본문 링크는 대상 봉 또는 이벤트 marker를 가격 plot 수평 중앙에 배치한 scene이
+준비된 뒤 하이라이트나 상세를 연다. 1D 예정 실적만 실제 예정 시장일의 미래 slot으로 이동하며,
+intraday 예정 실적은 빈 미래 구간으로 pan하지 않고 현재 plot 중앙에서 상세를 연다.
 그 아래 주요 가격·시나리오와 지지·저항, 추세, 패턴 판단 근거를 유지하고 원시 metric은
 `수치 근거 자세히`에 접어 둔다. hover는 해당 작도만 강조하고 같은
 trace에서 최종 선택된 후보의 피벗·접촉·반응만 임시 overlay로 표시한다. 글로벌 해석은
