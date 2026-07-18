@@ -13,6 +13,7 @@ from app.market_data.fill.service import get_on_demand_fill_service
 from app.market_data.derived.service import DerivedCalculationService
 from app.market_data.fundamentals.service import build_fundamentals_adapter
 from app.market_data.heatmap.service import get_heatmap_service
+from app.market_data.indices.related import build_related_indices_payload
 from app.market_data.indices.service import get_indices_service
 from app.market_data.query.canonical import CanonicalCandleQuery
 from app.market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
@@ -321,11 +322,30 @@ class MarketDataQueryService:
 
     def indices(self, background_tasks=None) -> dict[str, Any]:
         try:
-            return get_indices_service(self.provider).snapshot(background_tasks=background_tasks)
+            return self.indices_snapshot(background_tasks=background_tasks)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Market indices provider failed: {exc}") from exc
+
+    def indices_snapshot(self, background_tasks=None) -> dict[str, Any]:
+        """Return the shared market-index cache payload without reshaping it."""
+        return get_indices_service(self.provider).snapshot(background_tasks=background_tasks)
+
+    def related_indices(self, symbol: str, background_tasks=None) -> dict[str, Any]:
+        try:
+            indices_payload = self.indices_snapshot(background_tasks=background_tasks)
+            return build_related_indices_payload(
+                symbol,
+                indices_payload=indices_payload,
+                provider=self.provider,
+            )
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Related market indices failed: {exc}") from exc
 
     def symbol_detail(self, symbol: str) -> dict[str, Any]:
         try:
@@ -626,7 +646,7 @@ class MarketDataQueryService:
             if now is not None
             else self._daily_news_rows(symbol, limit, locale)
         )
-        summaries = [clickhouse_row_to_daily_summary(row) for row in rows]
+        summaries = [daily_news_summary_payload(row) for row in rows]
         if now is None:
             summaries = attach_price_changes_to_daily_summaries(summaries, self._daily_news_price_candles(symbol, limit))
         payload = {
@@ -1384,7 +1404,7 @@ def is_supported_news_locale(locale: str) -> bool:
 def chart_news_days_from_rows(symbol: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     for row in rows:
-        summary = clickhouse_row_to_daily_summary(row)
+        summary = daily_news_summary_payload(row)
         day = str(summary.get("date") or "")[:10]
         if not day:
             continue
@@ -1400,6 +1420,7 @@ def chart_news_days_from_rows(symbol: str, rows: list[dict[str, Any]]) -> list[d
             "articleCount": max(int(summary.get("articleCount") or 0), len(article_ids), len(sources)),
             "summary": str(summary.get("summary") or ""),
             "keyPoints": [str(point) for point in summary.get("keyPoints") or [] if str(point).strip()][:6],
+            "keywordTags": summary.get("keywordTags") or [],
             "impactDirection": normalize_chart_news_direction(summary.get("impactDirection")),
             "sentiment": str(summary.get("sentiment") or "neutral"),
             "sources": sources,
@@ -1415,6 +1436,7 @@ def chart_news_days_from_rows(symbol: str, rows: list[dict[str, Any]]) -> list[d
             current.update({
                 "summary": item["summary"],
                 "keyPoints": item["keyPoints"],
+                "keywordTags": item["keywordTags"],
                 "impactDirection": item["impactDirection"],
                 "sentiment": item["sentiment"],
                 "_generatedAt": item["_generatedAt"],
@@ -1426,6 +1448,39 @@ def chart_news_days_from_rows(symbol: str, rows: list[dict[str, Any]]) -> list[d
         {key: value for key, value in grouped[day].items() if not key.startswith("_")}
         for day in sorted(grouped)
     ]
+
+
+def daily_news_summary_payload(row: dict[str, Any]) -> dict[str, Any]:
+    summary = clickhouse_row_to_daily_summary(row)
+    summary["keywordTags"] = news_keyword_tags_from_key_points(summary.get("keyPoints"))
+    return summary
+
+
+def news_keyword_tags_from_key_points(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    tags: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        parts = item.strip().rsplit("|", 1)
+        if len(parts) != 2:
+            continue
+        label = " ".join(parts[0].split())
+        direction = parts[1].strip().lower()
+        if not label or len(label) > 10 or "|" in label:
+            continue
+        if direction not in {"positive", "negative", "neutral"}:
+            continue
+        key = (label, direction)
+        if key in seen:
+            continue
+        tags.append({"label": label, "direction": direction})
+        seen.add(key)
+        if len(tags) == 3:
+            break
+    return tags
 
 
 def dedupe_chart_news_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:

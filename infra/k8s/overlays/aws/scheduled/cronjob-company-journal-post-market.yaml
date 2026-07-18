@@ -12,14 +12,19 @@ spec:
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
+    metadata:
+      labels:
+        app: gops-company-journal-post-market
+        gops.io/company-journal-role: processor
     spec:
-      ttlSecondsAfterFinished: 86400
+      ttlSecondsAfterFinished: 604800
       backoffLimit: 2
       activeDeadlineSeconds: 7200
       template:
         metadata:
           labels:
             app: gops-company-journal-post-market
+            gops.io/company-journal-role: processor
         spec:
           restartPolicy: Never
           nodeSelector:
@@ -45,7 +50,14 @@ spec:
                     name: alfaka-market-data-config
                 - secretRef:
                     name: alfaka-clickhouse-secret
-                    optional: true
+                    optional: false
                 - secretRef:
                     name: alfaka-openai-secret
-                    optional: true
+                    optional: false
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 512Mi
+                limits:
+                  cpu: "2"
+                  memory: 2Gi

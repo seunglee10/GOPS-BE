@@ -4,7 +4,8 @@ from app.auth.dependencies import auth_is_enabled, require_current_user
 from app.auth.models import AuthenticatedUser
 from app.contracts.chart import AgentChatRequest, ChartProposalRequest
 from app.contracts.compare import CompanyCompareRequest
-from app.services.ai_agents import openai_agent_chat, openai_chart_proposal
+from app.contracts.related_indices import RelatedIndexCommentaryRequest
+from app.services.ai_agents import openai_agent_chat, openai_chart_proposal, openai_related_index_commentary
 from app.services.company_compare import (
     company_compare_analysis,
     company_compare_candidates,
@@ -56,3 +57,14 @@ def compare_candidates(
     if auth_is_enabled():
         enforce_agent_rate_limit(http_request.app, user.sub)
     return company_compare_candidates(symbol)
+
+
+@router.post("/api/llm/related-index-commentary")
+def related_index_commentary(
+    request: RelatedIndexCommentaryRequest,
+    http_request: Request,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, object]:
+    if auth_is_enabled():
+        enforce_agent_rate_limit(http_request.app, user.sub)
+    return openai_related_index_commentary(request)

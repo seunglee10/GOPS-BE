@@ -14,6 +14,7 @@ AGENT_BODY_PATHS = frozenset({
     "/api/alerts/commands",
     "/api/llm/company-compare",
     "/api/llm/company-compare/quantitative",
+    "/api/llm/related-index-commentary",
 })
 
 

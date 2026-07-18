@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from alfaka.storage.clickhouse_loader import clickhouse_time
 
 
-SUMMARY_VERSION = "v1"
+SUMMARY_VERSION = "v2"
 SOURCE_LINK_LIMIT = 3
 
 

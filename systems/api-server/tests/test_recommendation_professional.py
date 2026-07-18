@@ -66,9 +66,9 @@ def test_style_changes_factor_ranking_without_changing_factor_set() -> None:
     assert set(momentum[0]["metricsSnapshot"]["professionalFactorScores"]) == set(
         stable[0]["metricsSnapshot"]["professionalFactorScores"]
     )
-    assert momentum[0]["metricsSnapshot"]["personalization"]["weightsVersion"] == WEIGHTS_VERSION
-    assert momentum[0]["metricsSnapshot"]["personalization"]["alphaWeight"] == 1.0
-    assert momentum[0]["metricsSnapshot"]["personalization"]["portfolioWeight"] == 0.0
+    assert momentum[0]["metricsSnapshot"]["scoring"]["weightsVersion"] == WEIGHTS_VERSION
+    assert momentum[0]["metricsSnapshot"]["scoring"]["alphaWeight"] == 1.0
+    assert momentum[0]["metricsSnapshot"]["scoring"]["portfolioWeight"] == 0.0
     assert momentum[0]["metricsSnapshot"]["predictedExcessReturnPct"] > 0
 
 

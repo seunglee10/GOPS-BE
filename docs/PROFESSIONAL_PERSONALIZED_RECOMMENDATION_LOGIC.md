@@ -1,5 +1,14 @@
 # 전문 개인화 주식 추천 알고리즘 상세 로직
 
+> **현재 규범 계약(2026-07):** 실제 추천 순위는 immutable evidence snapshot의 normalized
+> factor에 사용자가 명시적으로 저장한 `recommendation-score-profile.v1`만 적용한다.
+> 모멘텀·균형·안정은 immutable preset이고 custom profile은 최대 20개다. 모든 가중치
+> 그룹 합계는 100이며 optional 근거 누락 시 관측 가능한 항목끼리 재정규화한다.
+> hard gate, Evidence Reliability, soft penalty, 직접 매수 조건은 고정이다.
+> `continuous-personalization-v2`, fill 기반 preference/risk state와 `personalScore`는
+> 제거됐다. 아래 V1/V2 수식과 테이블 설명은 migration 이전 설계 기록이며 현재 런타임
+> 계약보다 우선하지 않는다.
+
 이 문서는 다음 세 범위를 명확히 분리하여 설명한다.
 
 1. 현재 저장소에 구현된 `professional-personalization-v1`의 실제 실행 로직
@@ -146,7 +155,7 @@ optional catalyst/fundamental 근거가 없을 때도 중립 50점을 넣지 않
 
 직접 매수 판단은 `recommendation-decision.v1`이 action, 눌림·돌파 경로, 무효화, 1.5R,
 15:50 ET 종료와 위험예산 수량을 계산한다. 자연어 설명은
-`recommendation-decision-renderer.ko.v7`가 시장 흐름·거래 참여·가격 구조와
+`recommendation-decision-renderer.ko.v8`이 시장 흐름·거래 참여·가격 구조와
 `availableBlocks`에 실제로 존재하는 뉴스·촉매, 체결 여건, 안정성·품질을 관측 수치와
 비교 기준으로 투영한다. 수치는 `metrics[]`에 두고 `interpretation`은 같은 값을 반복하지 않고
 각 비교가 시장 효과·장중 시간대·평균 체결가·체결 비용 왜곡을 어떻게 통제하는지 설명한다.
@@ -496,7 +505,8 @@ riskPenalty = min(30,
 ## 5B. 현재 v3: 결정론적 evidence 추천
 
 > 상태: 구현 완료. `professional_v3.py`, `0013_deterministic_evidence_v3.sql`,
-> `0014_recommendation_explanations.sql`이 실행·저장 계약이다. V1/V2 코드는 호환 모드로 유지된다.
+> `0014_recommendation_explanations.sql`, `0016_recommendation_narrative_context.sql`이
+> 실행·저장 계약이다. V1/V2 코드는 호환 모드로 유지된다.
 
 V3는 미래 가격, 수익률, SPY 대비 초과수익, 이익 가능성을 예측하지 않으며 미래 수익률
 label, 학습 모델, 후행 성과 기반 weight 최적화를 만들지 않는다. 세션 슬롯마다 전체 준비

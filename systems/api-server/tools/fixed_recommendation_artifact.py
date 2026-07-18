@@ -29,7 +29,10 @@ REPOSITORY_ROOT = Path(os.getenv("REPOSITORY_ROOT") or Path(__file__).resolve().
 BACKEND_ROOT = REPOSITORY_ROOT / "systems/api-server/pods/api-server/gops-backend"
 sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.recommendations.explanations import deterministic_explanation as runtime_deterministic_explanation  # noqa: E402
+from app.recommendations.explanations import (  # noqa: E402
+    compose_explanations,
+    deterministic_explanation as runtime_deterministic_explanation,
+)
 from app.recommendations import professional_v3 as professional_v3_module  # noqa: E402
 from app.recommendations.professional import parse_datetime  # noqa: E402
 from app.recommendations.professional_v2 import stable_digest  # noqa: E402
@@ -39,10 +42,11 @@ from app.recommendations.professional_v3 import (  # noqa: E402
     RULE_SET_VERSION,
     EvidenceContext,
     build_evidence_snapshot,
-    process_evidence_preference_events,
     rank_evidence_candidates,
 )
+from app.recommendations.score_profiles import system_score_profile  # noqa: E402
 from app.recommendations.decision_v1 import enrich_direct_recommendations  # noqa: E402
+from app.recommendations.narrative_context import build_narrative_context  # noqa: E402
 
 
 SCENARIO_ID = "recommendation-v3-2026-07-15"
@@ -78,14 +82,18 @@ def main() -> int:
     rebuild.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     verify = commands.add_parser("verify")
     verify.add_argument("--artifact", type=Path, default=DEFAULT_OUTPUT)
+    upgrade = commands.add_parser("upgrade-narratives")
+    upgrade.add_argument("--artifact", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     if args.command == "extract":
         authenticate(args.authorization_token)
         extract_artifact(args.output, raw_output=args.raw_output)
     elif args.command == "rebuild":
         rebuild_artifact(args.raw_input, args.output)
-    else:
+    elif args.command == "verify":
         verify_artifact(args.artifact)
+    else:
+        upgrade_narratives(args.artifact)
     return 0
 
 
@@ -170,6 +178,7 @@ def extract_artifact(output: Path, *, raw_output: Path | None) -> None:
         "dailyCandles": daily,
         "quotes": quotes,
         "news": news,
+        "companyProfiles": load_company_profiles(candidates),
     }
     payload, manifest = build_artifact(raw, metadata=metadata)
     write_artifact(output, payload, manifest)
@@ -186,6 +195,83 @@ def rebuild_artifact(raw_input: Path, output: Path) -> None:
     payload, manifest = build_artifact(raw, metadata=load_company_metadata())
     write_artifact(output, payload, manifest)
     verify_artifact(output)
+
+
+def upgrade_narratives(root: Path) -> None:
+    payload = json.loads((root / "recommendation.json").read_text(encoding="utf-8"))
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    cutoff = datetime.fromisoformat(EVIDENCE_AS_OF).astimezone(timezone.utc)
+    reconstructed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    metadata = load_company_metadata()
+    profiles = load_company_profiles([str(row.get("symbol") or "") for row in payload.get("candidatePool") or []])
+    candidates = []
+    for source in payload.get("candidatePool") or []:
+        candidate = dict(source)
+        symbol = str(candidate.get("symbol") or "")
+        info = metadata.get(symbol) or {}
+        candidate["narrativeContext"] = build_narrative_context(
+            symbol=symbol,
+            market_item={
+                **(candidate.get("marketItem") or {}),
+                "name": info.get("companyName") or symbol,
+                "sector": candidate.get("sector") or info.get("sector"),
+                "industry": candidate.get("industry") or info.get("industry"),
+            },
+            company_profile=profiles.get(symbol),
+            news=[],
+            raw_factors=candidate.get("rawFactors") or {},
+            cutoff=cutoff,
+        )
+        candidates.append(candidate)
+    candidates = freeze_candidate_narratives(candidates)
+    profile = SimpleNamespace(
+        risk_level="balanced", recommendation_style="balanced", excluded_symbols=(), excluded_sectors=()
+    )
+    ranking_options = {}
+    if "penalize_missing_portfolio" in inspect.signature(rank_evidence_candidates).parameters:
+        ranking_options["penalize_missing_portfolio"] = False
+    ranking = rank_evidence_candidates(
+        candidates,
+        profile=profile,
+        score_profile=system_score_profile("balanced", "balanced"),
+        watchlist_symbols=[],
+        portfolio_positions=[],
+        portfolio_snapshot=None,
+        position_daily_candles={},
+        active_symbol=None,
+        now=cutoff,
+        snapshot_id=None,
+        **ranking_options,
+    )
+    grounded = [{**item, "explanation": artifact_deterministic_explanation(item)} for item in ranking.items]
+    payload["candidatePool"] = candidates
+    payload["items"] = enrich_direct_recommendations(
+        grounded,
+        risk_level="balanced",
+        portfolio_snapshot=None,
+        target_session_date=TARGET_SESSION_DATE,
+        cutoff=cutoff,
+    )
+    payload["narrativeMode"] = "company_grounded"
+    payload["reconstructedAt"] = reconstructed_at
+    payload["evidencePoolDigest"] = hashlib.sha256(canonical_json(candidates)).hexdigest()
+    payload["recommendationDigest"] = recommendation_digest(payload)
+    manifest["narrativeMode"] = payload["narrativeMode"]
+    manifest["reconstructedAt"] = reconstructed_at
+    manifest["evidencePoolDigest"] = payload["evidencePoolDigest"]
+    manifest["recommendationDigest"] = payload["recommendationDigest"]
+    manifest.setdefault("sourceRowCounts", {})["companyProfiles"] = len(profiles)
+    manifest.setdefault("sourceDigests", {})["narrativeContexts"] = hashlib.sha256(canonical_json({
+        str(candidate.get("symbol")): candidate.get("narrativeContext") or {}
+        for candidate in candidates
+    })).hexdigest()
+    recommendation_bytes = pretty_json(payload)
+    manifest["files"]["recommendation.json"] = {
+        "sha256": hashlib.sha256(recommendation_bytes).hexdigest(),
+        "bytes": len(recommendation_bytes),
+    }
+    write_artifact(root, payload, manifest)
+    verify_artifact(root)
 
 
 def candidate_gate_query() -> str:
@@ -264,6 +350,11 @@ def build_artifact(raw: dict[str, Any], *, metadata: dict[str, dict[str, Any]]) 
         news_by_symbol=dict(news_by_symbol),
         fundamentals_by_symbol={},
         fundamental_provenance={"status": "historically_unavailable"},
+        company_profiles_by_symbol={
+            str(symbol).upper(): profile
+            for symbol, profile in (raw.get("companyProfiles") or {}).items()
+            if isinstance(profile, dict)
+        },
     )
     built = build_evidence_snapshot(context)
     reliability_qualified = sum(
@@ -295,7 +386,6 @@ def build_artifact(raw: dict[str, Any], *, metadata: dict[str, dict[str, Any]]) 
         excluded_symbols=(),
         excluded_sectors=(),
     )
-    preference, _events = process_evidence_preference_events(None, [], style="balanced", cutoff=cutoff)
     ranking_options = {}
     if "penalize_missing_portfolio" in inspect.signature(rank_evidence_candidates).parameters:
         ranking_options["penalize_missing_portfolio"] = False
@@ -303,11 +393,11 @@ def build_artifact(raw: dict[str, Any], *, metadata: dict[str, dict[str, Any]]) 
         {**row, "evaluatedAt": EVIDENCE_AS_OF, "sourceDigests": built.source_digests}
         for row in built.candidates
     ]
+    candidate_pool = freeze_candidate_narratives(candidate_pool)
     ranking = rank_evidence_candidates(
         candidate_pool,
         profile=profile,
-        preference_state=preference,
-        risk_state={},
+        score_profile=system_score_profile("balanced", "balanced"),
         watchlist_symbols=[],
         portfolio_positions=[],
         portfolio_snapshot=None,
@@ -382,6 +472,7 @@ def build_artifact(raw: dict[str, Any], *, metadata: dict[str, dict[str, Any]]) 
             "dailyCandles": len(raw["dailyCandles"]),
             "quotes": len(raw["quotes"]),
             "news": len(raw["news"]),
+            "companyProfiles": len(raw.get("companyProfiles") or {}),
         },
         "insertedAtRange": {
             "minimum": min(inserted_values).isoformat().replace("+00:00", "Z") if inserted_values else None,
@@ -419,6 +510,14 @@ def verify_artifact(root: Path) -> None:
     candidates = payload.get("candidatePool") or []
     if len(candidates) < 15:
         raise SystemExit("fixed recommendation candidate pool is incomplete")
+    if any(
+        not isinstance(candidate.get("narrativeContext"), dict)
+        or candidate["narrativeContext"].get("version") != "recommendation-narrative-context.v1"
+        or not candidate["narrativeContext"].get("digest")
+        or not isinstance(candidate["narrativeContext"].get("narrativeAtoms"), dict)
+        for candidate in candidates
+    ):
+        raise SystemExit("fixed recommendation narrative context is incomplete")
     evidence_pool_digest = hashlib.sha256(canonical_json(candidates)).hexdigest()
     if payload.get("evidencePoolDigest") != evidence_pool_digest or manifest.get("evidencePoolDigest") != evidence_pool_digest:
         raise SystemExit("evidence pool digest mismatch")
@@ -426,9 +525,9 @@ def verify_artifact(root: Path) -> None:
         raise SystemExit("artifact contains an item below the reliability minimum")
     for item in payload["items"]:
         primary = ((item.get("explanation") or {}).get("primary") or {})
-        if primary.get("source") != "deterministic" or primary.get("status") != "ready":
+        if primary.get("source") not in {"deterministic", "llm"} or primary.get("status") != "ready":
             raise SystemExit("artifact contains an ungrounded primary narrative")
-        if primary.get("promptVersion") != "recommendation-decision-renderer.ko.v2":
+        if primary.get("promptVersion") != "recommendation-decision-renderer.ko.v8":
             raise SystemExit("artifact narrative renderer version mismatch")
     actions = {str(item.get("symbol")): str(item.get("action")) for item in payload["items"]}
     if {symbol for symbol, action in actions.items() if action == "buy"} != {"JPM", "AMZN"}:
@@ -462,6 +561,60 @@ def load_company_metadata() -> dict[str, dict[str, Any]]:
     return {str(row.get("symbol") or "").upper(): row for row in data.get("items") or []}
 
 
+def load_company_profiles(symbols: list[str]) -> dict[str, dict[str, Any]]:
+    redis_url = os.getenv("REDIS_URL", "").strip()
+    if not redis_url:
+        return {}
+    try:
+        import redis
+
+        client = redis.from_url(
+            redis_url,
+            decode_responses=True,
+            socket_connect_timeout=float(os.getenv("REDIS_CONNECT_TIMEOUT_SECONDS", "0.2")),
+            socket_timeout=float(os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", "0.2")),
+        )
+        values = client.mget([f"profile:10k:{symbol}" for symbol in symbols])
+    except Exception:
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for symbol, value in zip(symbols, values or [], strict=False):
+        try:
+            parsed = json.loads(value) if isinstance(value, str) else value
+        except (TypeError, ValueError):
+            continue
+        if isinstance(parsed, dict):
+            result[symbol] = parsed
+    return result
+
+
+def freeze_candidate_narratives(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    pseudo_items = []
+    for rank, candidate in enumerate(candidates, start=1):
+        blocks = candidate.get("blockScores") or {}
+        pseudo_items.append({
+            "symbol": candidate["symbol"],
+            "rank": rank,
+            "score": candidate.get("baseSetupScore") or 0,
+            "confidence": float(candidate.get("evidenceReliability") or 0) / 100.0,
+            "narrativeContext": candidate.get("narrativeContext") or {},
+            "metricsSnapshot": {
+                "algorithmVersion": ALGORITHM_VERSION,
+                "ruleSetVersion": RULE_SET_VERSION,
+                "blockScores": blocks,
+                "blockContributions": {key: float(value) for key, value in blocks.items()},
+                "softPenalties": {},
+                "missingOptionalFactors": [],
+                "evidenceReliability": candidate.get("evidenceReliability") or 0,
+                "cutoff": EVIDENCE_AS_OF,
+                "inputDigest": candidate.get("inputDigest"),
+            },
+        })
+    frozen = compose_explanations(pseudo_items)
+    contexts = {str(item["symbol"]): item.get("narrativeContext") or {} for item in frozen}
+    return [{**candidate, "narrativeContext": contexts.get(str(candidate["symbol"]), {})} for candidate in candidates]
+
+
 def artifact_deterministic_explanation(item: dict[str, Any]) -> dict[str, Any]:
     module_path = os.getenv("RECOMMENDATION_EXPLANATIONS_MODULE", "").strip()
     if not module_path:
@@ -483,7 +636,7 @@ def without_common_portfolio_penalty(item: dict[str, Any]) -> dict[str, Any]:
         return result
     metrics["adjustedSetupScore"] = round(number(metrics.get("adjustedSetupScore")) + penalty, 4)
     metrics["adjustedSetupContribution"] = round(number(metrics.get("adjustedSetupContribution")) + penalty, 8)
-    metrics["personalScore"] = round(number(metrics.get("personalScore")) + penalty, 4)
+    metrics["customRankScore"] = round(number(metrics.get("customRankScore")) + penalty, 4)
     result["score"] = round(number(result.get("score")) + penalty, 4)
     result["riskWarnings"] = [
         warning

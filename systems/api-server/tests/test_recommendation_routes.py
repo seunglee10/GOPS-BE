@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import types
@@ -32,7 +33,7 @@ try:
     from app.alerts.notifications import InMemoryNotificationBroker
     from app.alerts.repository import InMemoryAlertRepository
     from app.main import create_app
-    from app.recommendations.repository import InMemoryRecommendationRepository, RecommendationSchemaUnavailable, _json_ready
+    from app.recommendations.repository import InMemoryRecommendationRepository, RecommendationRunCreate, RecommendationSchemaUnavailable, _json_ready
     from app.recommendations.service import RecommendationDataSource
     from app.recommendations.worker import RecommendationWorker
 except Exception as exc:  # pragma: no cover - dependency guard for lean envs
@@ -159,6 +160,200 @@ def test_profile_crud_and_intraday_refresh_returns_new_buy_recommendation(recomm
     assert payload["summary"]["excludedWatchlistCount"] == 1
 
 
+def test_named_score_profile_crud_validation_and_active_fallback(recommendation_app) -> None:
+    client = TestClient(recommendation_app)
+    client.put(
+        "/api/recommendations/profile",
+        json={"riskLevel": "balanced", "recommendationStyle": "balanced", "horizon": "intraday"},
+    )
+    catalog = client.get("/api/recommendations/score-profiles").json()
+    assert [row["name"] for row in catalog["presets"]] == ["모멘텀", "균형", "안정"]
+    assert catalog["active"]["name"] == "균형"
+    balanced = catalog["presets"][1]
+    body = {
+        "name": "My Balance",
+        "blockWeights": balanced["blockWeights"],
+        "factorWeights": balanced["factorWeights"],
+        "portfolioWeight": balanced["portfolioWeight"],
+        "portfolioFactorWeights": balanced["portfolioFactorWeights"],
+    }
+
+    created_response = client.post("/api/recommendations/score-profiles", json=body)
+    assert created_response.status_code == 200
+    created = created_response.json()["profile"]
+    assert created["revision"] == 1
+    assert client.post("/api/recommendations/score-profiles", json={**body, "name": "my balance"}).status_code == 409
+
+    invalid = {**body, "name": "잘못된 합계", "blockWeights": {**body["blockWeights"], "trendStrength": 99}}
+    assert client.post("/api/recommendations/score-profiles", json=invalid).status_code == 422
+    unknown = {**body, "name": "알 수 없는 키", "blockWeights": {**body["blockWeights"], "unknown": 0}}
+    assert client.post("/api/recommendations/score-profiles", json=unknown).status_code == 422
+    for name, value in (("음수", -1), ("초과", 101), ("NaN", "NaN"), ("소수 초과", 25.001)):
+        bad_number = {
+            **body,
+            "name": name,
+            "blockWeights": {**body["blockWeights"], "trendStrength": value},
+        }
+        assert client.post("/api/recommendations/score-profiles", json=bad_number).status_code == 422
+
+    activated = client.put(
+        "/api/recommendations/score-profiles/active",
+        json={"type": "custom", "profileId": created["id"]},
+    )
+    assert activated.status_code == 200
+    assert activated.json()["profile"]["activeScoreProfile"]["name"] == "My Balance"
+    active_revision = activated.json()["profile"]["profileRevision"]
+    repeated_activation = client.put(
+        "/api/recommendations/score-profiles/active",
+        json={"type": "custom", "profileId": created["id"]},
+    ).json()["profile"]
+    assert repeated_activation["profileRevision"] == active_revision
+
+    unchanged = client.put(
+        f"/api/recommendations/score-profiles/{created['id']}",
+        json=body,
+    ).json()["profile"]
+    assert unchanged["revision"] == 1
+
+    updated = client.put(
+        f"/api/recommendations/score-profiles/{created['id']}",
+        json={**body, "name": "내 안정"},
+    ).json()["profile"]
+    assert updated["revision"] == 2
+    repository = recommendation_app.state.recommendation_repository
+    assert repository.delete_score_profile("another-user", created["id"]) is False
+    assert repository.activate_score_profile("another-user", created["id"], preset_style="balanced") is None
+    assert client.delete(f"/api/recommendations/score-profiles/{created['id']}").status_code == 200
+    after_delete = client.get("/api/recommendations/score-profiles").json()
+    assert after_delete["active"]["name"] == "균형"
+
+    for index in range(20):
+        response = client.post(
+            "/api/recommendations/score-profiles",
+            json={**body, "name": f"프로필 {index + 1}"},
+        )
+        assert response.status_code == 200
+    assert client.post(
+        "/api/recommendations/score-profiles",
+        json={**body, "name": "프로필 21"},
+    ).status_code == 409
+
+
+def test_score_profile_prompt_rag_proposes_valid_unsaved_profile_with_snapshot_provenance(
+    recommendation_app, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    client = TestClient(recommendation_app)
+    client.put(
+        "/api/recommendations/profile",
+        json={"riskLevel": "balanced", "recommendationStyle": "balanced", "horizon": "intraday"},
+    )
+    repository = recommendation_app.state.recommendation_repository
+    snapshot = repository.create_evidence_snapshot({
+        "snapshotKey": "suggestion-snapshot",
+        "slotStart": REGULAR_MARKET_TIME.isoformat(),
+        "marketDate": "2026-07-07",
+        "sessionMode": "regular",
+        "cutoff": REGULAR_MARKET_TIME.isoformat(),
+        "universe": ["AAPL", "MSFT", "AVGO"],
+        "ruleSetVersion": "deterministic-evidence-v3.1",
+        "sourceDigests": {"news": "news-digest"},
+        "sourceStatus": {"news": "ready", "market": "ready"},
+        "status": "completed",
+        "inputDigest": "snapshot-digest",
+    }, [{
+        "symbol": "MSFT",
+        "sector": "Information Technology",
+        "industry": "Software",
+        "changePercent": 3.2,
+        "rawFactors": {"catalystQuality": 80},
+        "normalizedFactors": {},
+        "blockScores": {"trendStrength": 82, "catalystQuality": 76},
+        "baseSetupScore": 79,
+        "evidenceReliability": 84,
+        "reliabilityComponents": {},
+        "rejectionReasons": [],
+        "dailyReturns60": [],
+        "marketItem": {"symbol": "MSFT"},
+        "narrativeContext": {"catalysts": [{"headline": "Cloud guidance raised", "publishedAt": REGULAR_MARKET_TIME.isoformat()}]},
+        "inputDigest": "candidate-digest",
+    }])
+    repository.create_or_replace_run(RecommendationRunCreate(
+        user_sub="dev-auth-disabled",
+        run_key="suggestion-run",
+        slot_start=REGULAR_MARKET_TIME.isoformat(),
+        market_date="2026-07-07",
+        status="completed",
+        profile_snapshot={},
+        market_snapshot_time=REGULAR_MARKET_TIME.isoformat(),
+        summary={},
+        evidence_snapshot_id=snapshot["id"],
+    ), [{
+        "symbol": "MSFT", "rank": 1, "score": 84, "customRankScore": 84,
+        "confidence": 0.84, "sector": "Information Technology", "metricsSnapshot": {"blockScores": {"trendStrength": 82}},
+    }])
+
+    response = client.post(
+        "/api/recommendations/score-profiles/suggestions",
+        json={"query": "거래대금이 강하고 실적 뉴스가 있는 종목을 우선해줘"},
+    )
+
+    assert response.status_code == 200
+    suggestion = response.json()["suggestion"]
+    assert suggestion["schemaVersion"] == "recommendation-score-suggestion.v1"
+    assert suggestion["profile"]["type"] == "custom"
+    assert suggestion["profile"]["id"] is None
+    assert suggestion["provenance"]["evidenceSnapshotId"] == snapshot["id"]
+    assert suggestion["provenance"]["source"] == "deterministic"
+    assert "거래대금" in suggestion["intent"]["matchedKeywords"]
+    assert sum(suggestion["profile"]["blockWeights"].values()) == pytest.approx(100)
+    for weights in suggestion["profile"]["factorWeights"].values():
+        assert sum(weights.values()) == pytest.approx(100)
+    assert sum(suggestion["profile"]["portfolioFactorWeights"].values()) == pytest.approx(100)
+    assert repository.list_score_profiles("dev-auth-disabled") == [], "a suggestion must not be saved before user confirmation"
+
+
+def test_score_profile_prompt_uses_llm_structured_output_after_retrieval(recommendation_app) -> None:
+    client = TestClient(recommendation_app)
+    client.put(
+        "/api/recommendations/profile",
+        json={"riskLevel": "balanced", "recommendationStyle": "balanced", "horizon": "intraday"},
+    )
+    balanced = client.get("/api/recommendations/score-profiles").json()["presets"][1]
+    captured: dict[str, object] = {}
+
+    def provider(payload):
+        captured.update(payload)
+        return {
+            "name": "뉴스 유동성 로직",
+            "rationale": "최신 뉴스 촉매와 거래 참여를 함께 확인했습니다.",
+            "confidence": 0.81,
+            "evidenceRefs": [],
+            "profile": {
+                "blockWeights": balanced["blockWeights"],
+                "factorWeights": balanced["factorWeights"],
+                "portfolioWeight": balanced["portfolioWeight"],
+                "portfolioFactorWeights": balanced["portfolioFactorWeights"],
+            },
+        }
+
+    recommendation_app.state.recommendation_profile_suggestion_provider = provider
+    response = client.post(
+        "/api/recommendations/score-profiles/suggestions",
+        json={"query": "뉴스와 거래량을 같이 보는 로직"},
+    )
+
+    assert response.status_code == 200
+    suggestion = response.json()["suggestion"]
+    assert suggestion["name"] == "뉴스 유동성 로직"
+    assert suggestion["provenance"]["source"] == "llm"
+    assert captured["text"]["format"]["type"] == "json_schema"
+    context = json.loads(captured["input"])
+    assert context["retrievedIntentDocuments"]
+    assert "latestEvidence" in context
+    assert client.post("/api/recommendations/score-profiles/suggestions", json={"query": "x"}).status_code == 422
+
+
 def test_refresh_is_idempotent_within_same_market_slot(recommendation_app) -> None:
     client = TestClient(recommendation_app)
     client.put(
@@ -204,73 +399,28 @@ def test_professional_refresh_persists_versioned_scores_and_recomputes_when_styl
     second = client.post("/api/recommendations/stocks/refresh", json={}).json()
 
     assert first["status"] == "completed"
-    assert first["items"][0]["metricsSnapshot"]["personalization"]["weightsVersion"] == "professional-personalization-v1"
-    assert first["items"][0]["metricsSnapshot"]["personalScore"] == first["items"][0]["score"]
-    assert first["runKey"] == second["runKey"]
+    assert first["items"][0]["customRankScore"] == first["items"][0]["score"]
+    assert "personalization" not in first["items"][0]["metricsSnapshot"]
+    assert "personalScore" not in first["items"][0]["metricsSnapshot"]
+    assert first["runKey"] != second["runKey"]
     assert second["idempotentReplay"] is False
-    assert second["summary"]["personalization"]["recommendationStyle"] == "stable"
+    assert second["summary"]["scoring"]["recommendationStyle"] == "stable"
     stored = recommendation_app.state.recommendation_repository.latest_run("dev-auth-disabled")
     assert stored["weights_version"] == "professional-personalization-v1"
-    assert stored["personalization_input_digest"]
+    assert stored["scoring_input_digest"]
 
 
-def test_continuous_v2_ranks_with_final_score_and_persists_all_candidate_features(
+def test_continuous_v2_runtime_option_is_removed(
     recommendation_app, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("RECOMMENDATION_ALGORITHM_VERSION", "continuous-v2")
-    monkeypatch.setenv("RECOMMENDATION_PERSONALIZATION_SHADOW", "true")
-    recommendation_app.state.recommendation_daily_candles_provider = professional_daily_candles
-    recommendation_app.state.recommendation_previous_session_candles_provider = fake_candles
-
-    class FundamentalProvider:
-        def snapshots_as_of(self, symbols, cutoff):
-            return {
-                "snapshotId": "fundamental-1",
-                "schemaVersion": "fundamentals.v1",
-                "featureVersion": "features.v1",
-                "digest": "fixture-digest",
-                "sourceAsOf": (cutoff - timedelta(minutes=1)).isoformat(),
-                "snapshots": {
-                    symbol: {
-                        "value": 70,
-                        "quality": 80,
-                        "growth": 60,
-                        "earningsRevision": 50,
-                        "coverage": 1,
-                        "freshness": 1,
-                        "sourceQuality": 1,
-                    }
-                    for symbol in symbols
-                },
-            }
-
-    recommendation_app.state.recommendation_fundamental_provider = FundamentalProvider()
     client = TestClient(recommendation_app)
     client.put(
         "/api/recommendations/profile",
-        json={
-            "riskLevel": "balanced",
-            "recommendationStyle": "balanced",
-            "horizon": "intraday",
-            "maxDrawdownPct": 6,
-        },
+        json={"riskLevel": "balanced", "recommendationStyle": "balanced", "horizon": "intraday"},
     )
-
-    first = client.post("/api/recommendations/stocks/refresh", json={}).json()
-    second = client.post("/api/recommendations/stocks/refresh", json={}).json()
-
-    assert first["status"] == "completed"
-    assert first["summary"]["personalization"]["shadow"] is False
-    assert first["items"][0]["algorithmVersion"] == "continuous-personalization-v2"
-    assert first["items"][0]["score"] == pytest.approx(first["items"][0]["personalScore"], abs=0.01)
-    assert first["items"][0]["fundamentalStatus"] == "ready"
-    assert second["idempotentReplay"] is True
-    repository = recommendation_app.state.recommendation_repository
-    assert len(repository.candidate_features) >= len(first["items"])
-    assert repository.preference_states[0]["payload"]["preferenceConfidence"] == pytest.approx(0.2)
-    stored = repository.latest_run("dev-auth-disabled")
-    assert stored["algorithm_version"] == "continuous-personalization-v2"
-    assert stored["v2_input_digest"]
+    with pytest.raises(ValueError, match="must be legacy, professional-v1, or deterministic-evidence-v3"):
+        client.post("/api/recommendations/stocks/refresh", json={})
 
 
 def test_deterministic_evidence_v3_shares_full_universe_snapshot_and_returns_reliability(
@@ -342,7 +492,7 @@ def test_deterministic_evidence_v3_shares_full_universe_snapshot_and_returns_rel
     second = client.post("/api/recommendations/stocks/refresh", json={}).json()
 
     assert first["status"] == "completed", first["summary"]
-    assert first["summary"]["personalization"]["algorithmVersion"] == "deterministic-evidence-v3"
+    assert first["summary"]["scoring"]["algorithmVersion"] == "deterministic-evidence-v3"
     assert first["summary"]["ruleSetVersion"] == "deterministic-evidence-v3.1"
     assert first["summary"]["universeCount"] == 16
     assert first["summary"]["candidateCount"] == 16
@@ -361,7 +511,7 @@ def test_deterministic_evidence_v3_shares_full_universe_snapshot_and_returns_rel
     assert stored["evidence_snapshot_id"] == first["summary"]["evidenceSnapshotId"]
 
 
-def test_pre_and_regular_recommendations_use_separate_run_keys(recommendation_app) -> None:
+def test_refresh_automatically_uses_the_active_market_session(recommendation_app) -> None:
     client = TestClient(recommendation_app)
     client.put(
         "/api/recommendations/profile",
@@ -369,9 +519,9 @@ def test_pre_and_regular_recommendations_use_separate_run_keys(recommendation_ap
     )
 
     recommendation_app.state.recommendation_now_provider = lambda: PRE_MARKET_TIME
-    pre = client.post("/api/recommendations/stocks/refresh", json={"sessionMode": "pre"}).json()
+    pre = client.post("/api/recommendations/stocks/refresh", json={}).json()
     recommendation_app.state.recommendation_now_provider = lambda: REGULAR_MARKET_TIME
-    regular = client.post("/api/recommendations/stocks/refresh", json={"sessionMode": "regular"}).json()
+    regular = client.post("/api/recommendations/stocks/refresh", json={}).json()
 
     assert pre["status"] == "completed"
     assert regular["status"] == "completed"
@@ -380,7 +530,7 @@ def test_pre_and_regular_recommendations_use_separate_run_keys(recommendation_ap
     assert pre["runKey"] != regular["runKey"]
 
 
-def test_regular_refresh_before_open_does_not_create_run(recommendation_app) -> None:
+def test_public_refresh_does_not_require_a_session_selector(recommendation_app) -> None:
     recommendation_app.state.recommendation_now_provider = lambda: PRE_MARKET_TIME
     client = TestClient(recommendation_app)
     client.put(
@@ -388,11 +538,11 @@ def test_regular_refresh_before_open_does_not_create_run(recommendation_app) -> 
         json={"riskLevel": "balanced", "horizon": "intraday", "maxDrawdownPct": 6},
     )
 
-    response = client.post("/api/recommendations/stocks/refresh", json={"sessionMode": "regular"})
+    response = client.post("/api/recommendations/stocks/refresh", json={})
 
     assert response.status_code == 200
-    assert response.json()["status"] == "market_closed"
-    assert recommendation_app.state.recommendation_repository.latest_run("dev-auth-disabled") is None
+    assert response.json()["status"] == "completed"
+    assert ":pre:" in response.json()["runKey"]
 
 
 def test_profile_upsert_defaults_max_drawdown_when_omitted(recommendation_app) -> None:
@@ -478,7 +628,7 @@ def test_watchlist_holding_and_active_symbol_are_not_recommended(recommendation_
     assert "AVGO" not in symbols
 
 
-def test_refresh_registers_top_fifteen_without_score_cutoff(recommendation_app) -> None:
+def test_refresh_registers_all_scored_candidates_without_score_cutoff(recommendation_app) -> None:
     recommendation_app.state.recommendation_watchlist_provider = lambda user_sub: []
     recommendation_app.state.recommendation_market_provider = lambda: [
         {
@@ -507,14 +657,14 @@ def test_refresh_registers_top_fifteen_without_score_cutoff(recommendation_app) 
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "completed"
-    assert [item["symbol"] for item in payload["items"]] == [f"LOW{index:02d}" for index in range(1, 16)]
-    assert len(payload["items"]) == 15
+    assert [item["symbol"] for item in payload["items"]] == [f"LOW{index:02d}" for index in range(1, 17)]
+    assert len(payload["items"]) == 16
     assert payload["items"][0]["changePercent"] == 1.5
     assert payload["items"][0]["metricsSnapshot"]["changePercent"] == 1.5
     assert all(item["score"] < 75 for item in payload["items"])
 
 
-def test_refresh_fills_top_fifteen_with_market_snapshot_reasons(recommendation_app) -> None:
+def test_refresh_scores_all_candidates_with_market_snapshot_reasons(recommendation_app) -> None:
     recommendation_app.state.recommendation_watchlist_provider = lambda user_sub: []
     recommendation_app.state.recommendation_market_provider = lambda: [
         {
@@ -540,8 +690,8 @@ def test_refresh_fills_top_fifteen_with_market_snapshot_reasons(recommendation_a
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "completed"
-    assert len(payload["items"]) == 15
-    assert payload["summary"]["recommendedCount"] == 15
+    assert len(payload["items"]) == 20
+    assert payload["summary"]["recommendedCount"] == 20
     assert all(item["reasons"] for item in payload["items"])
     assert all(item["metricsSnapshot"]["fallback"] is True for item in payload["items"])
 

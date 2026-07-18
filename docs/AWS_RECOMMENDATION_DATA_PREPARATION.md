@@ -1,5 +1,9 @@
 # AWS 추천 알고리즘 데이터 준비 체크리스트
 
+> 현재 운영 계약은 `deterministic-evidence-v3`와 저장된 사용자 점수 프로필이다.
+> 이 문서의 `continuous-v2` 준비·배포 절차는 역사적 검증 기록이며 실행하면 안 된다.
+> API와 worker는 `continuous-v2`를 거부하고 fill 기반 preference 파생 행을 만들지 않는다.
+
 이 문서는 추천 알고리즘 데이터 준비·검증 책임을 정의한다. 1절 이후의 2026년 7월
 14일 cutoff 시나리오는 재현 가능한 품질 검증 기준으로 유지하고, 실제 AWS의 현재
 준비 상태와 지금 해야 할 작업은 0절을 우선한다. 추천 알고리즘 데이터만 다루며
@@ -273,10 +277,10 @@ fallback을 사용한다.
 - complete candle/daily/quote candidates: 30개
 - artifact candidate pool: 30개, baseline Balanced items: 15개
 - baseline action: `buy=JPM,AMZN`, `conditional_buy=NVDA,GOOGL,PANW,PLTR`, 나머지 `watch`
-- evidence pool digest: `2250add96b1b08b4d1cbb3696b78063a8493fccbde405149c3f824127bad8593`
-- baseline recommendation digest: `aa050170f4d55c5c3f95396c53a7fe1eef25513a4952620c925f6229e8672bcc`
+- evidence pool digest: `3c72c81d1b3b6ba035e7edbb2e8ac8379b64df4cb3ebf0366340af1fb30abe23`
+- baseline recommendation digest: `89d5ce05ea9576742a811ae82923b9b0e858a6377f36b9423e34ff0ff94df7bc`
 - source mode: `historical_reconstruction`
-- narrative mode: `deterministic_grounded`
+- narrative mode: `company_grounded`
 
 SPY 7월 14일 완료 일봉은 252번째 일봉으로 포함한다. 같은 market date의 일봉은
 16:00 ET 이후이며 명시적으로 closed인 경우에만 적격이다. 7월 16일에 삽입된 candle/quote는

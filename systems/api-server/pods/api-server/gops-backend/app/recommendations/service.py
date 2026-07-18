@@ -11,7 +11,7 @@ from app.core.sectors import normalize_sector_list, sector_payload_fields
 from app.market_data.heatmap.service import get_heatmap_service
 from app.services.alfaka_market_data import get_market_data_provider, read_watchlist_symbols
 
-from .repository import RecommendationRunCreate, RecommendationRepository, RecommendationStateConflict
+from .repository import RecommendationRunCreate, RecommendationRepository
 from .explanations import compose_explanations
 from .professional import (
     ProfessionalContext,
@@ -22,11 +22,7 @@ from .professional import (
     resolve_weight_set,
 )
 from .professional_v2 import (
-    ALGORITHM_VERSION,
-    apply_continuous_personalization,
-    infer_risk_state,
     normalize_fundamental_batch,
-    process_preference_events,
     resolve_algorithm_version,
     stable_digest,
 )
@@ -35,10 +31,10 @@ from .professional_v3 import (
     RULE_SET_VERSION as EVIDENCE_RULE_SET_VERSION,
     EvidenceContext,
     build_evidence_snapshot,
-    process_evidence_preference_events,
     rank_evidence_candidates,
     rules_snapshot as evidence_rules_snapshot,
 )
+from .score_profiles import public_score_profile, score_profile_digest, system_score_profile
 from .scoring import (
     MARKET_TZ,
     NEWS_LOOKBACK_DAYS,
@@ -238,6 +234,44 @@ class RecommendationDataSource:
             result.update(self.alpaca_news_fallback_for_symbols(missing_symbols, now))
         return result
 
+    def company_profiles_for_symbols(
+        self, symbols: list[str], now: datetime
+    ) -> dict[str, dict[str, Any]]:
+        normalized_symbols = normalize_news_symbols(symbols)
+        injected = getattr(self.app.state, "recommendation_company_profile_provider", None)
+        if callable(injected):
+            try:
+                payload = injected(normalized_symbols, now)
+            except TypeError:
+                payload = {symbol: injected(symbol) for symbol in normalized_symbols}
+            if isinstance(payload, dict):
+                return {
+                    symbol: dict(payload[symbol])
+                    for symbol in normalized_symbols
+                    if isinstance(payload.get(symbol), dict)
+                }
+        try:
+            market_provider = get_market_data_provider()
+            redis_provider = getattr(market_provider, "redis_provider", None)
+            redis_client = getattr(redis_provider, "redis", None)
+            if redis_client is None:
+                return {}
+            keys = [f"profile:10k:{symbol}" for symbol in normalized_symbols]
+            values = redis_client.mget(keys)
+        except Exception:
+            return {}
+        result: dict[str, dict[str, Any]] = {}
+        for symbol, value in zip(normalized_symbols, values or [], strict=False):
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            try:
+                parsed = json.loads(value) if isinstance(value, str) else value
+            except (TypeError, ValueError):
+                continue
+            if isinstance(parsed, dict):
+                result[symbol] = parsed
+        return result
+
     def alpaca_news_fallback(self, symbol: str, now: datetime) -> list[dict[str, Any]]:
         normalized_symbol = str(symbol or "").strip().upper()
         return self.alpaca_news_fallback_for_symbols([normalized_symbol], now).get(normalized_symbol, [])
@@ -298,15 +332,14 @@ class RecommendationService:
         self.data_source = data_source
         self.app = app
 
-    def latest(self, user_sub: str, *, session_mode: str = "regular") -> dict[str, Any]:
-        session_mode = normalize_session_mode(session_mode)
+    def latest(self, user_sub: str) -> dict[str, Any]:
         profile = self.repository.get_profile(user_sub)
         if profile is None:
             return {"status": "profile_required", "items": []}
-        latest_for_session = getattr(self.repository, "latest_run_for_session", None)
-        run = latest_for_session(user_sub, session_mode) if callable(latest_for_session) else self.repository.latest_run(user_sub)
+        profile = profile_with_active_score(self.repository, profile)
+        run = self.repository.latest_run(user_sub)
         if not run:
-            return {"status": "empty", "items": [], "profile": profile, "summary": base_summary(session_mode=session_mode)}
+            return {"status": "empty", "items": [], "profile": profile, "summary": {}}
         return response_for_run(run, profile=profile)
 
     def refresh(
@@ -315,17 +348,18 @@ class RecommendationService:
         *,
         now: datetime | None = None,
         active_symbol: str | None = None,
-        session_mode: str = "regular",
+        session_mode: str | None = None,
         _state_retry: bool = False,
     ) -> dict[str, Any]:
         now = now or datetime.now(timezone.utc)
-        session_mode = normalize_session_mode(session_mode)
+        actual_session = market_session(now)
+        session_mode = normalize_session_mode(
+            session_mode if session_mode is not None else actual_session if actual_session in {"pre", "regular"} else "regular"
+        )
         profile_row = self.repository.get_profile(user_sub)
         if profile_row is None:
             return {"status": "profile_required", "items": []}
-        actual_session = market_session(now)
         slot = recommendation_slot(now, session_mode=session_mode)
-        run_key = f"{user_sub}:{slot['marketDate']}:{session_mode}:{slot['slotStart']}"
         legacy_enabled = bool_env("RECOMMENDATION_PERSONALIZATION_ENABLED", default=False)
         legacy_shadow = bool_env("RECOMMENDATION_PERSONALIZATION_SHADOW", default=True)
         algorithm_mode, personalization_shadow = resolve_algorithm_version(
@@ -334,7 +368,6 @@ class RecommendationService:
             shadow=legacy_shadow,
         )
         personalization_enabled = algorithm_mode != "legacy"
-        continuous_v2 = algorithm_mode == "continuous-v2"
         deterministic_v3 = algorithm_mode == EVIDENCE_ALGORITHM_VERSION
         weight_payload = professional_weight_payload(self.app) if personalization_enabled and not deterministic_v3 else None
         if personalization_enabled and not deterministic_v3 and weight_payload is None:
@@ -353,12 +386,15 @@ class RecommendationService:
             portfolio_snapshot
             and (portfolio_observed_at is None or now - portfolio_observed_at > timedelta(hours=24))
         )
+        score_profile = active_score_profile(self.repository, profile_row)
+        profile_row = {**profile_row, "active_score_profile": score_profile}
         if deterministic_v3:
             input_digest = stable_digest({
                 "algorithmVersion": EVIDENCE_ALGORITHM_VERSION,
                 "rules": evidence_rules_snapshot(),
                 "profile": profile_row,
                 "portfolioSnapshot": portfolio_snapshot,
+                "scoreProfile": score_profile,
             })
         else:
             input_digest = personalization_digest(
@@ -368,10 +404,19 @@ class RecommendationService:
                 weights_version=weight_set.version,
                 style_weights=weight_set.styles,
             ) if personalization_enabled else None
+        run_key = (
+            f"{user_sub}:{slot['marketDate']}:{session_mode}:{slot['slotStart']}:"
+            f"p{profile_row.get('profile_revision') or 1}:"
+            f"s{score_profile.get('type') or 'preset'}-"
+            f"{score_profile.get('id') or score_profile.get('presetStyle') or profile_row.get('recommendation_style') or 'balanced'}-"
+            f"r{score_profile.get('revision') or 1}-"
+            f"v{score_profile.get('schemaVersion') or 'recommendation-score-profile.v1'}-"
+            f"{score_profile_digest(score_profile)[:16]}"
+        )
         existing = self.repository.get_run_by_key(user_sub, run_key)
         existing_summary = existing.get("summary") if isinstance(existing, dict) else {}
-        digest_matches = not personalization_enabled or existing.get("personalization_input_digest") == input_digest if existing else False
-        if existing and (continuous_v2 or deterministic_v3 or digest_matches) and not (isinstance(existing_summary, dict) and existing_summary.get("retryable")):
+        digest_matches = not personalization_enabled or existing.get("scoring_input_digest") == input_digest if existing else False
+        if existing and (deterministic_v3 or digest_matches) and not (isinstance(existing_summary, dict) and existing_summary.get("retryable")):
             return response_for_run(existing, profile=profile_row, idempotent_replay=True)
         if not is_market_session_open(now, session_mode):
             latest_for_session = getattr(self.repository, "latest_run_for_session", None)
@@ -405,6 +450,7 @@ class RecommendationService:
                 watchlist=watchlist,
                 positions=positions,
                 market_items=market_items,
+                score_profile=score_profile,
                 state_retry=_state_retry,
             )
         candidates = build_candidates(
@@ -433,12 +479,6 @@ class RecommendationService:
             now=now,
         )
         professional_eligible_count = 0
-        candidate_features: list[dict[str, Any]] = []
-        fundamental_provenance: dict[str, Any] = {}
-        preference_state: dict[str, Any] | None = None
-        preference_events: list[dict[str, Any]] = []
-        risk_state: dict[str, Any] | None = None
-        v2_context: dict[str, Any] = {}
         if personalization_enabled:
             professional_symbols = list(dict.fromkeys([*symbols, *[str(row.get("symbol") or "").upper() for row in positions], "SPY"]))
             daily_candles_by_symbol = {symbol: self.data_source.daily_candles(symbol, now) for symbol in professional_symbols if symbol}
@@ -446,7 +486,7 @@ class RecommendationService:
                 symbol: self.data_source.previous_session_candles(symbol, now)
                 for symbol in [*symbols, "SPY"]
             }
-            candidate_items = score_recommendations(scoring_input, limit=50) if personalization_shadow and not continuous_v2 else []
+            candidate_items = score_recommendations(scoring_input, limit=50) if personalization_shadow else []
             if not candidate_items:
                 candidate_items = professional_candidate_items(candidates, profile, active_symbol=active_symbol)
             professional_context = ProfessionalContext(
@@ -464,45 +504,11 @@ class RecommendationService:
                 raw_factors(candidate.symbol, professional_context) is not None
                 for candidate in candidates
             )
-            if continuous_v2:
-                v2_context = self.repository.get_v2_context(user_sub, now)
-                preference_state, preference_events = process_preference_events(
-                    v2_context.get("preferenceState"),
-                    v2_context.get("fills") or [],
-                    style=profile.recommendation_style,
-                    cutoff=now,
-                    existing_order_strengths=v2_context.get("orderStrengths") or {},
-                )
-                risk_state = infer_risk_state(
-                    profile_row,
-                    v2_context.get("portfolioSnapshots") or [],
-                    v2_context.get("allFills") or [],
-                    cutoff=now,
-                )
-                provider = getattr(self.app.state, "recommendation_fundamental_provider", None) if self.app else None
-                if provider is None:
-                    fundamental_payload = None
-                else:
-                    try:
-                        fundamental_payload = provider.snapshots_as_of(symbols, now)
-                    except Exception:
-                        fundamental_payload = object()
-                continuous = apply_continuous_personalization(
-                    candidate_items,
-                    context=professional_context,
-                    preference_state=preference_state,
-                    risk_state=risk_state,
-                    fundamental_payload=fundamental_payload,
-                )
-                items = continuous.items
-                candidate_features = continuous.candidate_features
-                fundamental_provenance = continuous.fundamental_provenance
-            else:
-                items = apply_professional_personalization(
-                    candidate_items,
-                    context=professional_context,
-                    shadow=personalization_shadow,
-                )
+            items = apply_professional_personalization(
+                candidate_items,
+                context=professional_context,
+                shadow=personalization_shadow,
+            )
         else:
             items = score_recommendations(scoring_input)
         summary = {
@@ -519,15 +525,13 @@ class RecommendationService:
                 if personalization_enabled
                 else rejection_summary(candidates, candles_by_symbol, session_mode=session_mode, now=now)
             ),
-            "personalization": {
+            "scoring": {
                 "enabled": personalization_enabled,
                 "shadow": personalization_shadow if personalization_enabled else False,
-                "algorithmVersion": ALGORITHM_VERSION if continuous_v2 else weight_set.version if personalization_enabled else "legacy",
+                "algorithmVersion": weight_set.version if personalization_enabled else "legacy",
                 "recommendationStyle": profile.recommendation_style,
                 "weightsVersion": weight_set.version if personalization_enabled else "legacy",
                 "portfolioDataStale": personalization_enabled and portfolio_data_stale,
-                "preferenceConfidence": preference_state.get("preferenceConfidence") if preference_state else None,
-                "fundamentalStatus": fundamental_provenance.get("status") if continuous_v2 else None,
             },
         }
         if not items:
@@ -558,46 +562,16 @@ class RecommendationService:
             market_snapshot_time=now.isoformat(),
             summary=summary,
             portfolio_snapshot_history_id=int(portfolio_snapshot["id"]) if portfolio_snapshot and portfolio_snapshot.get("id") is not None else None,
-            weights_version=ALGORITHM_VERSION if continuous_v2 else weight_set.version if personalization_enabled else "legacy",
-            personalization_input_digest=input_digest,
-            personalization_snapshot={
+            weights_version=weight_set.version if personalization_enabled else "legacy",
+            scoring_input_digest=input_digest,
+            scoring_snapshot={
                 "recommendationStyle": profile.recommendation_style,
                 "riskLevel": profile.risk_level,
                 "shadow": personalization_shadow,
-                "effectiveWeights": preference_state.get("effectiveWeights") if preference_state else None,
             } if personalization_enabled else {},
-            algorithm_version=ALGORITHM_VERSION if continuous_v2 else weight_set.version if personalization_enabled else "legacy",
-            fundamental_snapshot_provenance=fundamental_provenance,
-            v2_input_digest=stable_digest({
-                "preference": preference_state.get("inputDigest") if preference_state else None,
-                "risk": risk_state.get("inputDigest") if risk_state else None,
-                "fundamental": fundamental_provenance,
-                "features": [row.get("input_digest") for row in candidate_features],
-            }) if continuous_v2 else None,
+            algorithm_version=weight_set.version if personalization_enabled else "legacy",
         )
-        if continuous_v2 and preference_state is not None and risk_state is not None:
-            try:
-                run = self.repository.commit_v2_run(
-                    run_create,
-                    items,
-                    candidate_features,
-                    preference_state,
-                    preference_events,
-                    risk_state,
-                    expected_preference_state_id=v2_context.get("preferenceStateId"),
-                )
-            except RecommendationStateConflict:
-                if _state_retry:
-                    raise
-                return self.refresh(
-                    user_sub,
-                    now=now,
-                    active_symbol=active_symbol,
-                    session_mode=session_mode,
-                    _state_retry=True,
-                )
-        else:
-            run = self.repository.create_or_replace_run(run_create, items)
+        run = self.repository.create_or_replace_run(run_create, items)
         self._maybe_notify(user_sub, run, previous=previous_run)
         return response_for_run(run, profile=profile_row)
 
@@ -619,6 +593,7 @@ class RecommendationService:
         watchlist: list[str],
         positions: list[dict[str, Any]],
         market_items: list[dict[str, Any]],
+        score_profile: dict[str, Any],
         state_retry: bool,
     ) -> dict[str, Any]:
         symbols = sorted({
@@ -671,6 +646,10 @@ class RecommendationService:
                     qualified_count=0,
                 )
             news_by_symbol = self.data_source.news_for_symbols(symbols, now)
+            company_profile_method = getattr(self.data_source, "company_profiles_for_symbols", None)
+            company_profiles = (
+                company_profile_method(symbols, now) if callable(company_profile_method) else {}
+            )
             provider = getattr(self.app.state, "recommendation_fundamental_provider", None) if self.app else None
             if provider is None:
                 fundamental_payload = None
@@ -697,6 +676,7 @@ class RecommendationService:
                 news_by_symbol=news_by_symbol,
                 fundamentals_by_symbol=fundamentals,
                 fundamental_provenance=fundamental_provenance,
+                company_profiles_by_symbol=company_profiles,
             ))
             reliability_qualified = sum(
                 float(row.get("evidenceReliability") or 0) >= 70
@@ -719,6 +699,7 @@ class RecommendationService:
                 "daily": "ready" if daily_by_symbol else "unavailable",
                 "previousSession": "ready" if previous_by_symbol else "unavailable",
                 "news": "ready" if any(news_by_symbol.values()) else "neutral_no_news",
+                "companyProfiles": "ready" if len(company_profiles) == len(symbols) else "partial",
                 "fundamentals": fundamental_provenance.get("status", "unavailable"),
                 "benchmark": benchmark_health,
             }
@@ -744,20 +725,6 @@ class RecommendationService:
             "digest": (snapshot.get("sourceDigests") or {}).get("fundamentals"),
             "cutoff": snapshot.get("cutoff"),
         }
-        v2_context = self.repository.get_v2_context(user_sub, now)
-        preference_state, preference_events = process_evidence_preference_events(
-            v2_context.get("preferenceState"),
-            v2_context.get("fills") or [],
-            style=profile.recommendation_style,
-            cutoff=now,
-            existing_order_strengths=v2_context.get("orderStrengths") or {},
-        )
-        risk_state = infer_risk_state(
-            profile_row,
-            v2_context.get("portfolioSnapshots") or [],
-            v2_context.get("allFills") or [],
-            cutoff=now,
-        )
         position_symbols = sorted({
             str(row.get("symbol") or "").strip().upper()
             for row in positions if str(row.get("symbol") or "").strip()
@@ -775,8 +742,7 @@ class RecommendationService:
                 for row in (snapshot.get("candidates") or [])
             ],
             profile=profile,
-            preference_state=preference_state,
-            risk_state=risk_state,
+            score_profile=score_profile,
             watchlist_symbols=watchlist,
             portfolio_positions=positions,
             portfolio_snapshot=portfolio_snapshot,
@@ -823,14 +789,17 @@ class RecommendationService:
             "evidenceCutoff": snapshot.get("cutoff"),
             "benchmarkHealth": benchmark_health,
             "ruleSetVersion": EVIDENCE_RULE_SET_VERSION,
-            "personalization": {
+            "scoring": {
                 "enabled": True,
                 "shadow": False,
                 "algorithmVersion": EVIDENCE_ALGORITHM_VERSION,
                 "recommendationStyle": profile.recommendation_style,
                 "weightsVersion": EVIDENCE_RULE_SET_VERSION,
                 "portfolioDataStale": portfolio_data_stale,
-                "preferenceConfidence": preference_state.get("preferenceConfidence"),
+                "scoreProfile": {
+                    key: score_profile.get(key)
+                    for key in ("type", "id", "name", "revision", "schemaVersion", "digest")
+                },
                 "fundamentalStatus": fundamental_provenance.get("status"),
                 "confidenceMeaning": "evidence_reliability_not_success_probability",
             },
@@ -849,47 +818,21 @@ class RecommendationService:
                 if portfolio_snapshot and portfolio_snapshot.get("id") is not None else None
             ),
             weights_version=EVIDENCE_RULE_SET_VERSION,
-            personalization_input_digest=input_digest,
-            personalization_snapshot={
+            scoring_input_digest=input_digest,
+            scoring_snapshot={
                 **evidence_rules_snapshot(),
                 "recommendationStyle": profile.recommendation_style,
                 "riskLevel": profile.risk_level,
-                "effectivePreferenceWeights": preference_state.get("effectiveWeights"),
-                "preferenceConfidence": preference_state.get("preferenceConfidence"),
+                "scoreProfile": score_profile,
                 "evidenceSnapshotInputDigest": snapshot.get("inputDigest"),
             },
             algorithm_version=EVIDENCE_ALGORITHM_VERSION,
             fundamental_snapshot_provenance=fundamental_provenance,
-            v2_input_digest=stable_digest({
-                "preference": preference_state.get("inputDigest"),
-                "risk": risk_state.get("inputDigest"),
-                "evidenceSnapshot": snapshot.get("inputDigest"),
-                "features": [row.get("input_digest") for row in ranking.candidate_features],
-            }),
             evidence_snapshot_id=(
                 int(snapshot["id"]) if snapshot.get("id") is not None else None
             ),
         )
-        try:
-            run = self.repository.commit_v2_run(
-                run_create,
-                items,
-                ranking.candidate_features,
-                preference_state,
-                preference_events,
-                risk_state,
-                expected_preference_state_id=v2_context.get("preferenceStateId"),
-            )
-        except RecommendationStateConflict:
-            if state_retry:
-                raise
-            return self.refresh(
-                user_sub,
-                now=now,
-                active_symbol=active_symbol,
-                session_mode=session_mode,
-                _state_retry=True,
-            )
+        run = self.repository.create_or_replace_run(run_create, items)
         self._maybe_notify(user_sub, run, previous=previous_run)
         return response_for_run(run, profile=profile_row)
 
@@ -1279,6 +1222,17 @@ def normalize_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized = []
     for item in items:
         metrics_snapshot = item.get("metricsSnapshot") or item.get("metrics_snapshot") or {}
+        metrics_snapshot = {
+            key: value
+            for key, value in metrics_snapshot.items()
+            if key not in {
+                "preferenceFitScore",
+                "preferenceConfidence",
+                "personalizationDelta",
+                "personalScore",
+                "personalization",
+            }
+        }
         decision_json = item.get("decision_json") if isinstance(item.get("decision_json"), dict) else {}
         change_percent = item.get("changePercent")
         normalized.append({
@@ -1286,15 +1240,13 @@ def normalize_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "action": item.get("action", "buy"),
             "rank": item.get("rank"),
             "score": item.get("score"),
+            "canonicalScore": item.get("canonicalScore") or metrics_snapshot.get("canonicalRankScore"),
             "confidence": item.get("confidence"),
             "baseAlphaScore": metrics_snapshot.get("baseAlphaScore"),
             "extendedBaseAlphaScore": metrics_snapshot.get("extendedBaseAlphaScore"),
             "styleSignalScore": metrics_snapshot.get("styleSignalScore"),
-            "preferenceFitScore": metrics_snapshot.get("preferenceFitScore"),
-            "preferenceConfidence": metrics_snapshot.get("preferenceConfidence"),
-            "personalizationDelta": metrics_snapshot.get("personalizationDelta"),
             "portfolioFitScore": metrics_snapshot.get("portfolioFitScore"),
-            "personalScore": metrics_snapshot.get("personalScore"),
+            "customRankScore": metrics_snapshot.get("customRankScore", item.get("score")),
             "fundamentalScore": metrics_snapshot.get("fundamentalScore"),
             "fundamentalWeight": metrics_snapshot.get("fundamentalWeight"),
             "fundamentalStatus": metrics_snapshot.get("fundamentalStatus"),
@@ -1316,6 +1268,23 @@ def normalize_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "metricsSnapshot": metrics_snapshot,
         })
     return normalized
+
+
+def active_score_profile(repository: RecommendationRepository, profile: dict[str, Any]) -> dict[str, Any]:
+    active_id = profile.get("active_score_profile_id")
+    if active_id is not None:
+        rows = repository.list_score_profiles(str(profile.get("user_sub") or ""))
+        for row in rows:
+            if row.get("id") == active_id:
+                return public_score_profile(row)
+    return system_score_profile(
+        str(profile.get("recommendation_style") or "balanced"),
+        str(profile.get("risk_level") or "balanced"),
+    )
+
+
+def profile_with_active_score(repository: RecommendationRepository, profile: dict[str, Any]) -> dict[str, Any]:
+    return {**profile, "active_score_profile": active_score_profile(repository, profile)}
 
 
 def normalize_profile_sector_fields(profile: dict[str, Any] | None) -> dict[str, Any] | None:

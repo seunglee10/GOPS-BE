@@ -128,7 +128,7 @@ class CompanyJournalRepository:
               AND metric IN ('eps', 'revenue')
               AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
               AND value IS NOT NULL
-              AND period_end >= addMonths(today(), -42)
+              AND period_end >= toDate('2021-01-01')
             ORDER BY metric ASC, period_end DESC, version_filed_at DESC
             LIMIT 1 BY metric, fiscal_year, fiscal_period
             FORMAT JSONEachRow
@@ -144,7 +144,7 @@ class CompanyJournalRepository:
               AND metric IN ('eps', 'revenue')
               AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
               AND average IS NOT NULL
-              AND period_end >= addMonths(today(), -42)
+              AND period_end >= toDate('2021-01-01')
             ORDER BY metric ASC, period_end DESC, collected_at DESC
             LIMIT 1 BY metric, fiscal_year, fiscal_period
             FORMAT JSONEachRow

@@ -97,6 +97,36 @@
         "symbol": "AAPL",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Apple Inc.",
+          "industry": "Technology Hardware, Storage & Peripherals",
+          "sector": "Information Technology",
+          "symbol": "AAPL"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "c8fa06c997f08207f647d3130cdab070c142e2df017e14f8627305836a46d6da",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Apple Inc.는 Technology Hardware, Storage & Peripherals 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Apple Inc.의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "quality_stability"
+          ],
+          "headlineBase": "AAPL Apple Inc., Technology Hardware, Storage & Peripherals 업종과 품질 안정성이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "AAPL"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 18.9163,
         "catalystQuality": 50.0,
@@ -275,6 +305,36 @@
         "sector": "Technology",
         "symbol": "AMAT",
         "tradable": true
+      },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Applied Materials",
+          "industry": "Semiconductor Materials & Equipment",
+          "sector": "Information Technology",
+          "symbol": "AMAT"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "0a6e8e0dae3edb4047394c1a82ec215b6339ae43ca0989768661a0ae9d770331",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Applied Materials는 Semiconductor Materials & Equipment 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Applied Materials의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "catalyst_quality"
+          ],
+          "headlineBase": "AMAT Applied Materials, Semiconductor Materials & Equipment 업종과 촉매 품질이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 촉매 품질이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "AMAT"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
       },
       "normalizedFactors": {
         "abnormalDollarVolume": 0.0,
@@ -455,6 +515,36 @@
         "symbol": "AMD",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Advanced Micro Devices",
+          "industry": "Semiconductors",
+          "sector": "Information Technology",
+          "symbol": "AMD"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "ece1ca732d26bc916cf799d762404a8f29290172f0c98ca65aa814133a0a0e6c",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Advanced Micro Devices는 Semiconductors 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Advanced Micro Devices의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "execution_quality"
+          ],
+          "headlineBase": "AMD Advanced Micro Devices, Semiconductors 업종과 체결 품질이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 체결 품질이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "AMD"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 79.0148,
         "catalystQuality": 50.0,
@@ -633,6 +723,36 @@
         "sector": "Consumer Cyclical",
         "symbol": "AMZN",
         "tradable": true
+      },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Amazon",
+          "industry": "Broadline Retail",
+          "sector": "Consumer Discretionary",
+          "symbol": "AMZN"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "d5c328fb5026d04dbd93e073f4d22c1670e5018fbcc5cac792b478e9cd70640c",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Amazon는 Broadline Retail 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Amazon의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "AMZN Amazon, Broadline Retail 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "AMZN"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
       },
       "normalizedFactors": {
         "abnormalDollarVolume": 36.092,
@@ -813,6 +933,36 @@
         "symbol": "ANET",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Arista Networks",
+          "industry": "Communications Equipment",
+          "sector": "Information Technology",
+          "symbol": "ANET"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "593fb7ae80b0b72004cba10aa570acf3e988003e1eb895092e6cd3c51bf7b9e2",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Arista Networks는 Communications Equipment 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Arista Networks의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "trend_strength"
+          ],
+          "headlineBase": "ANET Arista Networks, Communications Equipment 업종과 추세 강도가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 추세 강도가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "ANET"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 65.0246,
         "catalystQuality": 50.0,
@@ -991,6 +1141,36 @@
         "sector": "Technology",
         "symbol": "APH",
         "tradable": true
+      },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Amphenol",
+          "industry": "Electronic Components",
+          "sector": "Information Technology",
+          "symbol": "APH"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "8a9bc9574ff53d9398a71ed175036b0e248ab391df3a63bfcfb1fb8f7cfcdf13",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Amphenol는 Electronic Components 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Amphenol의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "APH Amphenol, Electronic Components 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "APH"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
       },
       "normalizedFactors": {
         "abnormalDollarVolume": 11.9212,
@@ -1171,6 +1351,36 @@
         "symbol": "AVGO",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Broadcom",
+          "industry": "Semiconductors",
+          "sector": "Information Technology",
+          "symbol": "AVGO"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "5f64d1ff4cbcf2d25fcb6de6788ef1152be44da407e3f54167efc5ba387609b1",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Broadcom는 Semiconductors 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Broadcom의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "execution_quality"
+          ],
+          "headlineBase": "AVGO Broadcom, Semiconductors 업종과 체결 품질이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 체결 품질이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "AVGO"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 32.9064,
         "catalystQuality": 50.0,
@@ -1349,6 +1559,36 @@
         "sector": "Basic Materials",
         "symbol": "CRH",
         "tradable": true
+      },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "CRH plc",
+          "industry": "Construction Materials",
+          "sector": "Materials",
+          "symbol": "CRH"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "4925aed4a7608538fd4834588627e54fdd2ffd84e437b13e476f677e18e14063",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "CRH plc는 Construction Materials 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "CRH plc의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "quality_stability"
+          ],
+          "headlineBase": "CRH CRH plc, Construction Materials 업종과 품질 안정성이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "CRH"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
       },
       "normalizedFactors": {
         "abnormalDollarVolume": 8.2759,
@@ -1529,6 +1769,36 @@
         "symbol": "DOW",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Dow Inc.",
+          "industry": "Commodity Chemicals",
+          "sector": "Materials",
+          "symbol": "DOW"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "6d7e437425aa04389b0f3143438836e86b9fe870a412208b6391143ffd354bd4",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Dow Inc.는 Commodity Chemicals 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Dow Inc.의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "quality_stability"
+          ],
+          "headlineBase": "DOW Dow Inc., Commodity Chemicals 업종과 품질 안정성이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "DOW"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 48.9655,
         "catalystQuality": 50.0,
@@ -1707,6 +1977,36 @@
         "sector": "Consumer Cyclical",
         "symbol": "F",
         "tradable": true
+      },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Ford Motor Company",
+          "industry": "Automobile Manufacturers",
+          "sector": "Consumer Discretionary",
+          "symbol": "F"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "0053eac1b1466321d3b0591636a7d9c897a7c1b0e64f27a1042bcf3e9aed5383",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Ford Motor Company는 Automobile Manufacturers 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Ford Motor Company의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "F Ford Motor Company, Automobile Manufacturers 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "F"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
       },
       "normalizedFactors": {
         "abnormalDollarVolume": 81.3793,
@@ -1887,6 +2187,36 @@
         "symbol": "FAST",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Fastenal",
+          "industry": "Trading Companies & Distributors",
+          "sector": "Industrials",
+          "symbol": "FAST"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "16d86097a3426a350d577e8e068cefde45e252a28d7d5c0cd0b4728e90fd2186",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Fastenal는 Trading Companies & Distributors 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Fastenal의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "quality_stability"
+          ],
+          "headlineBase": "FAST Fastenal, Trading Companies & Distributors 업종과 품질 안정성이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "FAST"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 80.0,
         "catalystQuality": 50.0,
@@ -2065,6 +2395,36 @@
         "sector": "Basic Materials",
         "symbol": "FCX",
         "tradable": true
+      },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Freeport-McMoRan",
+          "industry": "Copper",
+          "sector": "Materials",
+          "symbol": "FCX"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "b0407d0f6d5a3e65b75758b9fe0c52515ecce8c716e03145f60c676fd029c971",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Freeport-McMoRan는 Copper 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Freeport-McMoRan의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "FCX Freeport-McMoRan, Copper 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "FCX"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
       },
       "normalizedFactors": {
         "abnormalDollarVolume": 34.8276,
@@ -2245,6 +2605,36 @@
         "symbol": "FIS",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Fidelity National Information Services",
+          "industry": "Transaction & Payment Processing Services",
+          "sector": "Financials",
+          "symbol": "FIS"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "5100a3eb8e3e822e22e1f30388ea9b4df99882a9bcb192c72d7438473cf45a37",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Fidelity National Information Services는 Transaction & Payment Processing Services 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Fidelity National Information Services의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "catalyst_quality"
+          ],
+          "headlineBase": "FIS Fidelity National Information Services, Transaction & Payment Processing Services 업종과 촉매 품질이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 촉매 품질이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "FIS"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 51.7241,
         "catalystQuality": 50.0,
@@ -2423,6 +2813,36 @@
         "sector": "Communication Services",
         "symbol": "GOOGL",
         "tradable": true
+      },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Alphabet Inc. (Class A)",
+          "industry": "Interactive Media & Services",
+          "sector": "Communication Services",
+          "symbol": "GOOGL"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "35d689a40c8f5fe6a670ab06bee51c819211910bda84235dff4232d8598fb7a5",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Alphabet Inc. (Class A)는 Interactive Media & Services 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Alphabet Inc. (Class A)의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "quality_stability"
+          ],
+          "headlineBase": "GOOGL Alphabet Inc. (Class A), Interactive Media & Services 업종과 품질 안정성이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "GOOGL"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
       },
       "normalizedFactors": {
         "abnormalDollarVolume": 4.1379,
@@ -2603,6 +3023,36 @@
         "symbol": "INTC",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Intel",
+          "industry": "Semiconductors",
+          "sector": "Information Technology",
+          "symbol": "INTC"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "f06e8406846208edf61ed241c839cb80dd85651d8dc5af302e0bbee2a8df40f4",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Intel는 Semiconductors 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Intel의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "INTC Intel, Semiconductors 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "INTC"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 72.0197,
         "catalystQuality": 50.0,
@@ -2781,6 +3231,36 @@
         "sector": "Financial Services",
         "symbol": "JPM",
         "tradable": true
+      },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "JPMorgan Chase",
+          "industry": "Diversified Banks",
+          "sector": "Financials",
+          "symbol": "JPM"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "b1e1b7c7d654e2fc6c0dce64e8c69be90179a5575fa66de9587458ed83b764ff",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "JPMorgan Chase는 Diversified Banks 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "JPMorgan Chase의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "quality_stability"
+          ],
+          "headlineBase": "JPM JPMorgan Chase, Diversified Banks 업종과 품질 안정성이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "JPM"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
       },
       "normalizedFactors": {
         "abnormalDollarVolume": 97.931,
@@ -2961,6 +3441,36 @@
         "symbol": "KHC",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Kraft Heinz",
+          "industry": "Packaged Foods & Meats",
+          "sector": "Consumer Staples",
+          "symbol": "KHC"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "de4f78056052a57e63b0b90c6df46fe92bd7420b1dc9b7e9a6bde0a4527a3fda",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Kraft Heinz는 Packaged Foods & Meats 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Kraft Heinz의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "KHC Kraft Heinz, Packaged Foods & Meats 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "KHC"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 36.5517,
         "catalystQuality": 50.0,
@@ -3139,6 +3649,36 @@
         "sector": "Technology",
         "symbol": "LRCX",
         "tradable": true
+      },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Lam Research",
+          "industry": "Semiconductor Materials & Equipment",
+          "sector": "Information Technology",
+          "symbol": "LRCX"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "2a1d72e0381ac3dccf22265af9b3168ab07c6f2d6a2c67cefa3bfc02cdc95e19",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Lam Research는 Semiconductor Materials & Equipment 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Lam Research의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "LRCX Lam Research, Semiconductor Materials & Equipment 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "LRCX"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
       },
       "normalizedFactors": {
         "abnormalDollarVolume": 4.9261,
@@ -3319,6 +3859,36 @@
         "symbol": "MOS",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Mosaic Company (The)",
+          "industry": "Fertilizers & Agricultural Chemicals",
+          "sector": "Materials",
+          "symbol": "MOS"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "83ebc3a8c31ced2979019ddda24574d7c8d2bc7a035ea1a67df05d6e5e71d5de",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Mosaic Company (The)는 Fertilizers & Agricultural Chemicals 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Mosaic Company (The)의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "MOS Mosaic Company (The), Fertilizers & Agricultural Chemicals 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "MOS"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 85.5172,
         "catalystQuality": 50.0,
@@ -3497,6 +4067,36 @@
         "sector": "Technology",
         "symbol": "MSFT",
         "tradable": true
+      },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Microsoft",
+          "industry": "Systems Software",
+          "sector": "Information Technology",
+          "symbol": "MSFT"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "abd4f15e398d1d6897c2526ac7d0ab80b3ad0453ae7a19f40ccdcee7153bfa8f",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Microsoft는 Systems Software 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Microsoft의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "quality_stability"
+          ],
+          "headlineBase": "MSFT Microsoft, Systems Software 업종과 품질 안정성이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "MSFT"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
       },
       "normalizedFactors": {
         "abnormalDollarVolume": 51.0345,
@@ -3677,6 +4277,36 @@
         "symbol": "MU",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Micron Technology",
+          "industry": "Semiconductors",
+          "sector": "Information Technology",
+          "symbol": "MU"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "6b5aa1abd4a767addf178165c9e5a33e12152611f30de843a78af3bee8716e48",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Micron Technology는 Semiconductors 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Micron Technology의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "execution_quality"
+          ],
+          "headlineBase": "MU Micron Technology, Semiconductors 업종과 체결 품질이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 체결 품질이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "MU"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 25.9113,
         "catalystQuality": 50.0,
@@ -3855,6 +4485,36 @@
         "sector": "Basic Materials",
         "symbol": "NEM",
         "tradable": true
+      },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Newmont",
+          "industry": "Gold",
+          "sector": "Materials",
+          "symbol": "NEM"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "e81190aa0c68c904c0b1ec85e39823b92f24c2391c2186cff455dd2ac2b79f9a",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Newmont는 Gold 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Newmont의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "participation_confirmation"
+          ],
+          "headlineBase": "NEM Newmont, Gold 업종과 거래 참여 확인이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 거래 참여 확인이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "NEM"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
       },
       "normalizedFactors": {
         "abnormalDollarVolume": 67.2414,
@@ -4035,6 +4695,36 @@
         "symbol": "NVDA",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Nvidia",
+          "industry": "Semiconductors",
+          "sector": "Information Technology",
+          "symbol": "NVDA"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "8307251a5d0280740513919221d4797e6ab37c06f6caf8b54b3f30f2a9900432",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Nvidia는 Semiconductors 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Nvidia의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "execution_quality"
+          ],
+          "headlineBase": "NVDA Nvidia, Semiconductors 업종과 체결 품질이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 체결 품질이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "NVDA"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 83.9409,
         "catalystQuality": 50.0,
@@ -4213,6 +4903,36 @@
         "sector": "Technology",
         "symbol": "PANW",
         "tradable": true
+      },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Palo Alto Networks",
+          "industry": "Systems Software",
+          "sector": "Information Technology",
+          "symbol": "PANW"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "43f819e65dd862d619d9370f860767e78e1bc40ea2af5652ab7e6ad08fbb3209",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Palo Alto Networks는 Systems Software 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Palo Alto Networks의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "trend_strength"
+          ],
+          "headlineBase": "PANW Palo Alto Networks, Systems Software 업종과 추세 강도가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 추세 강도가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "PANW"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
       },
       "normalizedFactors": {
         "abnormalDollarVolume": 55.9606,
@@ -4393,6 +5113,36 @@
         "symbol": "PLTR",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Palantir Technologies",
+          "industry": "Application Software",
+          "sector": "Information Technology",
+          "symbol": "PLTR"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "bfa3fd221c0598a7bafa609349aeb6dc32a73c85fdd365aa31abb3e6102fca08",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Palantir Technologies는 Application Software 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Palantir Technologies의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "PLTR Palantir Technologies, Application Software 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "PLTR"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 95.8621,
         "catalystQuality": 50.0,
@@ -4571,6 +5321,36 @@
         "sector": "Consumer Cyclical",
         "symbol": "RCL",
         "tradable": true
+      },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Royal Caribbean Group",
+          "industry": "Hotels, Resorts & Cruise Lines",
+          "sector": "Consumer Discretionary",
+          "symbol": "RCL"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "63d2e947515ba59560a96271feb9fe293e0dc553bfc7f97984407a372c0bc22e",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Royal Caribbean Group는 Hotels, Resorts & Cruise Lines 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Royal Caribbean Group의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "quality_stability"
+          ],
+          "headlineBase": "RCL Royal Caribbean Group, Hotels, Resorts & Cruise Lines 업종과 품질 안정성이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "RCL"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
       },
       "normalizedFactors": {
         "abnormalDollarVolume": 61.8391,
@@ -4751,6 +5531,36 @@
         "symbol": "SNDK",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Sandisk",
+          "industry": "Technology Hardware, Storage & Peripherals",
+          "sector": "Information Technology",
+          "symbol": "SNDK"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "f24432717bde3a5e5382fc53616a8cb9ebd672ec5931cd8e8512433576d60aae",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Sandisk는 Technology Hardware, Storage & Peripherals 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Sandisk의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "execution_quality"
+          ],
+          "headlineBase": "SNDK Sandisk, Technology Hardware, Storage & Peripherals 업종과 체결 품질이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 체결 품질이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "SNDK"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 37.8325,
         "catalystQuality": 50.0,
@@ -4929,6 +5739,36 @@
         "sector": "Consumer Cyclical",
         "symbol": "TSLA",
         "tradable": true
+      },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Tesla, Inc.",
+          "industry": "Automobile Manufacturers",
+          "sector": "Consumer Discretionary",
+          "symbol": "TSLA"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "41cae3dd853f16a115a2e1feab54f7811d6815517fa79c8febc3a65a29ba118f",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Tesla, Inc.는 Automobile Manufacturers 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Tesla, Inc.의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "execution_quality"
+          ],
+          "headlineBase": "TSLA Tesla, Inc., Automobile Manufacturers 업종과 체결 품질이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 체결 품질이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "TSLA"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
       },
       "normalizedFactors": {
         "abnormalDollarVolume": 12.4138,
@@ -5109,6 +5949,36 @@
         "symbol": "TTD",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Trade Desk (The)",
+          "industry": "Advertising",
+          "sector": "Communication Services",
+          "symbol": "TTD"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "fe0799f188c63d1d467eb27af0555d66d209c406a9435686a72eaf34385606b1",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Trade Desk (The)는 Advertising 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Trade Desk (The)의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "catalyst_quality"
+          ],
+          "headlineBase": "TTD Trade Desk (The), Advertising 업종과 촉매 품질이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 촉매 품질이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "TTD"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 66.8966,
         "catalystQuality": 50.0,
@@ -5288,6 +6158,36 @@
         "symbol": "WDAY",
         "tradable": true
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Workday, Inc.",
+          "industry": "Application Software",
+          "sector": "Information Technology",
+          "symbol": "WDAY"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "b08cb697ec0a8fb05f809fdc0b6a4d785ebd977c425efd3890bf24119aa5f892",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Workday, Inc.는 Application Software 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Workday, Inc.의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "participation_confirmation"
+          ],
+          "headlineBase": "WDAY Workday, Inc., Application Software 업종과 거래 참여 확인이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 거래 참여 확인이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "WDAY"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "normalizedFactors": {
         "abnormalDollarVolume": 90.936,
         "catalystQuality": 50.0,
@@ -5373,11 +6273,19 @@
     }
   ],
   "evidenceAsOf": "2026-07-14T16:00:00-04:00",
-  "evidencePoolDigest": "2250add96b1b08b4d1cbb3696b78063a8493fccbde405149c3f824127bad8593",
+  "evidencePoolDigest": "3c72c81d1b3b6ba035e7edbb2e8ac8379b64df4cb3ebf0366340af1fb30abe23",
   "generatedAt": "2026-07-14T16:00:00-04:00",
   "items": [
     {
       "action": "buy",
+      "cautions": [
+        {
+          "code": "chase_limit",
+          "label": "추격 진입 기준",
+          "sentence": "돌파 매수는 $345.89까지만 검토합니다. 상한에서 무효화 기준 $339.23까지의 하락 폭은 주당 $6.66입니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": 1.68969,
       "confidence": 0.7761,
       "counterEvidence": null,
@@ -5420,23 +6328,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "시장보다 강했고 마감까지 상대강도가 유지됐습니다. 가격 움직임에 거래량이 동반됐습니다. VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다."
+          "summary": "JPMorgan Chase는 Diversified Banks 업종 특성을 가진 기업입니다. 이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 구조화된 진입 경로와 무효화 기준 안에서만 매수를 검토합니다. JPMorgan Chase의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "시장보다 강했고 마감까지 상대강도가 유지됐습니다. 가격 움직임에 거래량이 동반됐습니다. VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다.",
-          "generatedAt": "2026-07-16T16:16:49.797048+00:00",
-          "headline": "시장 대비 강세가 마감까지 이어졌고 거래량도 가격 움직임을 뒷받침했습니다.",
+          "body": "JPMorgan Chase는 Diversified Banks 업종 특성을 가진 기업입니다. 이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 구조화된 진입 경로와 무효화 기준 안에서만 매수를 검토합니다. JPMorgan Chase의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298082+00:00",
+          "headline": "JPM JPMorgan Chase, Diversified Banks 업종과 품질 안정성이 함께 드러난 후보, 계획된 가격대에서 진입을 검토할 수 있습니다.",
+          "listSummary": "JPM JPMorgan Chase, Diversified Banks 업종과 품질 안정성이 함께 드러난 후보 · 계획 진입 검토",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "b1e1b7c7d654e2fc6c0dce64e8c69be90179a5575fa66de9587458ed83b764ff",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "c86bb5eb66b261bcb8d9003d4c843b4d552431a15746a9504c1c917e066acc39",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "quality_stability"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -5444,26 +6362,108 @@
         {
           "assessment": "strong",
           "code": "market_strength",
-          "interpretation": "시장보다 강했고 마감까지 상대강도가 유지됐습니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 상승에 편승한 움직임인지 구분하기 위해 SPY를 기준으로 비교했습니다. 장중과 마감 구간이 같은 방향이라 일시적인 초반 급등보다 지속된 종목 수요로 해석했습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+4.66%p",
+              "valuePositionPct": 100.0
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.60%p",
+              "valuePositionPct": 59.94
+            }
+          ],
           "primaryValue": "SPY 대비 +4.66%p",
           "secondaryValue": "마감 전 60분 +0.60%p"
         },
         {
           "assessment": "strong",
           "code": "participation",
-          "interpretation": "가격 움직임에 거래량이 동반됐습니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여가 가격 움직임에 동반됐는지 확인하는 근거로 사용했습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 49.46,
+              "tone": "positive",
+              "value": "1.76배",
+              "valuePositionPct": 86.96
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 1.76배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "strong",
           "code": "execution_structure",
-          "interpretation": "VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP는 당일 거래량을 반영한 평균 체결가입니다. 종가가 그 위에 있으면 장중 평균 매수자의 손익이 상대적으로 안정적이어서 눌림 진입과 무효화 기준을 세우기 쉽습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $343.04 · VWAP $341.39",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.48%",
+              "valuePositionPct": 58.08
+            }
+          ],
           "primaryValue": "종가 $343.04 · VWAP $341.39",
           "secondaryValue": "스프레드 3.81bp · ATR $7.62"
+        },
+        {
+          "assessment": "mixed",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "3.81bp",
+              "valuePositionPct": 30.51
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 0.16,
+              "tone": "positive",
+              "value": "$2.88B",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "68.7/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "strong",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "1.09%",
+              "valuePositionPct": 15.81
+            }
+          ],
+          "primaryValue": "99.0/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -5611,6 +6611,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "JPMorgan Chase",
+          "industry": "Diversified Banks",
+          "sector": "Financials",
+          "symbol": "JPM"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "b1e1b7c7d654e2fc6c0dce64e8c69be90179a5575fa66de9587458ed83b764ff",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "JPMorgan Chase는 Diversified Banks 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "JPMorgan Chase의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "quality_stability"
+          ],
+          "headlineBase": "JPM JPMorgan Chase, Diversified Banks 업종과 품질 안정성이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "JPM"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 1,
       "reasons": [
         {
@@ -5656,6 +6686,20 @@
     },
     {
       "action": "conditional_buy",
+      "cautions": [
+        {
+          "code": "chase_limit",
+          "label": "추격 진입 기준",
+          "sentence": "돌파 매수는 $213.71까지만 검토합니다. 상한에서 무효화 기준 $207.95까지의 하락 폭은 주당 $5.76입니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "last60_relative_strength",
+          "label": "마감 전 60분 상대강도",
+          "sentence": "마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": 1.529243,
       "confidence": 0.7761,
       "counterEvidence": {
@@ -5711,23 +6755,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "당일에는 시장보다 강했지만 마감 구간 상대강도 확인이 더 필요합니다. 가격 움직임에 거래량이 동반됐습니다. VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다."
+          "summary": "Nvidia는 Semiconductors 업종 특성을 가진 기업입니다. 이번 추천에서는 체결 품질이 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다. Nvidia의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "당일에는 시장보다 강했지만 마감 구간 상대강도 확인이 더 필요합니다. 가격 움직임에 거래량이 동반됐습니다. VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다.",
-          "generatedAt": "2026-07-16T16:16:49.797219+00:00",
-          "headline": "시장 대비 강세와 거래 참여는 확인됐지만, 마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다.",
+          "body": "Nvidia는 Semiconductors 업종 특성을 가진 기업입니다. 이번 추천에서는 체결 품질이 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다. Nvidia의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298148+00:00",
+          "headline": "NVDA Nvidia, Semiconductors 업종과 체결 품질이 함께 드러난 후보, 다만 마감 구간 상대강도 확인이 먼저입니다.",
+          "listSummary": "NVDA Nvidia, Semiconductors 업종과 체결 품질이 함께 드러난 후보 · 마감 구간 상대강도 확인 후 접근",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "8307251a5d0280740513919221d4797e6ab37c06f6caf8b54b3f30f2a9900432",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "9e75be88022946a2dc487595ce49605e3638438858e2836d0c89a6d13a4261ce",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "execution_quality"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -5735,26 +6789,108 @@
         {
           "assessment": "mixed",
           "code": "market_strength",
-          "interpretation": "당일에는 시장보다 강했지만 마감 구간 상대강도 확인이 더 필요합니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 움직임과 분리해 보기 위해 SPY를 기준으로 비교했습니다. 장중 강세와 달리 마감 구간이 약해 종목 수요가 하루 끝까지 이어졌다고 보기는 어렵습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+1.52%p",
+              "valuePositionPct": 75.39
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "-0.21%p",
+              "valuePositionPct": 46.55
+            }
+          ],
           "primaryValue": "SPY 대비 +1.52%p",
           "secondaryValue": "마감 전 60분 -0.21%p"
         },
         {
           "assessment": "strong",
           "code": "participation",
-          "interpretation": "가격 움직임에 거래량이 동반됐습니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여가 가격 움직임에 동반됐는지 확인하는 근거로 사용했습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "1.08배",
+              "valuePositionPct": 53.97
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 1.08배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "strong",
           "code": "execution_structure",
-          "interpretation": "VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP는 당일 거래량을 반영한 평균 체결가입니다. 종가가 그 위에 있으면 장중 평균 매수자의 손익이 상대적으로 안정적이어서 눌림 진입과 무효화 기준을 세우기 쉽습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $211.79 · VWAP $209.09",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+1.29%",
+              "valuePositionPct": 71.53
+            }
+          ],
           "primaryValue": "종가 $211.79 · VWAP $209.09",
           "secondaryValue": "스프레드 0.47bp · ATR $7.66"
+        },
+        {
+          "assessment": "strong",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "0.47bp",
+              "valuePositionPct": 3.78
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 0.02,
+              "tone": "positive",
+              "value": "$24.76B",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "87.5/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "strong",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "1.53%",
+              "valuePositionPct": 22.28
+            }
+          ],
+          "primaryValue": "81.6/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -5902,6 +7038,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Nvidia",
+          "industry": "Semiconductors",
+          "sector": "Information Technology",
+          "symbol": "NVDA"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "8307251a5d0280740513919221d4797e6ab37c06f6caf8b54b3f30f2a9900432",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Nvidia는 Semiconductors 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Nvidia의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "execution_quality"
+          ],
+          "headlineBase": "NVDA Nvidia, Semiconductors 업종과 체결 품질이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 체결 품질이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "NVDA"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 2,
       "reasons": [
         {
@@ -5947,6 +7113,14 @@
     },
     {
       "action": "buy",
+      "cautions": [
+        {
+          "code": "chase_limit",
+          "label": "추격 진입 기준",
+          "sentence": "돌파 매수는 $249.29까지만 검토합니다. 상한에서 무효화 기준 $245.12까지의 하락 폭은 주당 $4.17입니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": 1.158751,
       "confidence": 0.7761,
       "counterEvidence": null,
@@ -5989,23 +7163,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "시장보다 강했고 마감까지 상대강도가 유지됐습니다. 가격 움직임에 거래량이 동반됐습니다. VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다."
+          "summary": "Amazon는 Broadline Retail 업종 특성을 가진 기업입니다. 이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 구조화된 진입 경로와 무효화 기준 안에서만 매수를 검토합니다. Amazon의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "시장보다 강했고 마감까지 상대강도가 유지됐습니다. 가격 움직임에 거래량이 동반됐습니다. VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다.",
-          "generatedAt": "2026-07-16T16:16:49.797234+00:00",
-          "headline": "시장 대비 강세가 마감까지 이어졌고 거래량도 가격 움직임을 뒷받침했습니다.",
+          "body": "Amazon는 Broadline Retail 업종 특성을 가진 기업입니다. 이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 구조화된 진입 경로와 무효화 기준 안에서만 매수를 검토합니다. Amazon의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298204+00:00",
+          "headline": "AMZN Amazon, Broadline Retail 업종과 가격 구조가 함께 드러난 후보, 계획된 가격대에서 진입을 검토할 수 있습니다.",
+          "listSummary": "AMZN Amazon, Broadline Retail 업종과 가격 구조가 함께 드러난 후보 · 계획 진입 검토",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "d5c328fb5026d04dbd93e073f4d22c1670e5018fbcc5cac792b478e9cd70640c",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "e2bd48682b776ef4fa55aee0539c6c1bdba663409d6904aaf81e3c4dd75a12c5",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "price_structure"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -6013,26 +7197,108 @@
         {
           "assessment": "strong",
           "code": "market_strength",
-          "interpretation": "시장보다 강했고 마감까지 상대강도가 유지됐습니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 상승에 편승한 움직임인지 구분하기 위해 SPY를 기준으로 비교했습니다. 장중과 마감 구간이 같은 방향이라 일시적인 초반 급등보다 지속된 종목 수요로 해석했습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.70%p",
+              "valuePositionPct": 61.69
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.39%p",
+              "valuePositionPct": 56.49
+            }
+          ],
           "primaryValue": "SPY 대비 +0.70%p",
           "secondaryValue": "마감 전 60분 +0.39%p"
         },
         {
           "assessment": "strong",
           "code": "participation",
-          "interpretation": "가격 움직임에 거래량이 동반됐습니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여가 가격 움직임에 동반됐는지 확인하는 근거로 사용했습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "1.06배",
+              "valuePositionPct": 53.22
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 1.06배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "strong",
           "code": "execution_structure",
-          "interpretation": "VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP는 당일 거래량을 반영한 평균 체결가입니다. 종가가 그 위에 있으면 장중 평균 매수자의 손익이 상대적으로 안정적이어서 눌림 진입과 무효화 기준을 세우기 쉽습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $247.50 · VWAP $246.38",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.45%",
+              "valuePositionPct": 57.57
+            }
+          ],
           "primaryValue": "종가 $247.50 · VWAP $246.38",
           "secondaryValue": "스프레드 2.43bp · ATR $4.75"
+        },
+        {
+          "assessment": "mixed",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "2.43bp",
+              "valuePositionPct": 19.47
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 0.05,
+              "tone": "positive",
+              "value": "$9.00B",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "64.0/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "strong",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "1.27%",
+              "valuePositionPct": 18.42
+            }
+          ],
+          "primaryValue": "73.2/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -6180,6 +7446,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Amazon",
+          "industry": "Broadline Retail",
+          "sector": "Consumer Discretionary",
+          "symbol": "AMZN"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "d5c328fb5026d04dbd93e073f4d22c1670e5018fbcc5cac792b478e9cd70640c",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Amazon는 Broadline Retail 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Amazon의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "AMZN Amazon, Broadline Retail 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "AMZN"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 3,
       "reasons": [
         {
@@ -6225,6 +7521,20 @@
     },
     {
       "action": "conditional_buy",
+      "cautions": [
+        {
+          "code": "chase_limit",
+          "label": "추격 진입 기준",
+          "sentence": "돌파 매수는 $361.39까지만 검토합니다. 상한에서 무효화 기준 $355.45까지의 하락 폭은 주당 $5.94입니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "weakConfirmation",
+          "label": "근거 일치도",
+          "sentence": "가격 흐름과 거래 참여가 같은 방향을 가리키지 않아 추가 확인이 필요합니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": 0.977418,
       "confidence": 0.7761,
       "counterEvidence": {
@@ -6284,23 +7594,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "시장보다 강했고 마감까지 상대강도가 유지됐습니다. 가격 움직임에 거래량이 동반됐습니다. VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다."
+          "summary": "Alphabet Inc. (Class A)는 Interactive Media & Services 업종 특성을 가진 기업입니다. 이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 확인 부족 경고가 남아 있어 추가 검증이 필요합니다. Alphabet Inc. (Class A)의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "시장보다 강했고 마감까지 상대강도가 유지됐습니다. 가격 움직임에 거래량이 동반됐습니다. VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다.",
-          "generatedAt": "2026-07-16T16:16:49.797312+00:00",
-          "headline": "시장 대비 강세와 거래 참여는 확인됐지만, 확인 부족 경고가 남아 있어 추가 검증이 필요합니다.",
+          "body": "Alphabet Inc. (Class A)는 Interactive Media & Services 업종 특성을 가진 기업입니다. 이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 확인 부족 경고가 남아 있어 추가 검증이 필요합니다. Alphabet Inc. (Class A)의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298297+00:00",
+          "headline": "GOOGL Alphabet Inc. (Class A), Interactive Media & Services 업종과 품질 안정성이 함께 드러난 후보, 다만 위험 경고 확인이 먼저입니다.",
+          "listSummary": "GOOGL Alphabet Inc. (Class A), Interactive Media & Services 업종과 품질 안정성이 함께 드러난 후보 · 위험 경고 확인 후 접근",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "35d689a40c8f5fe6a670ab06bee51c819211910bda84235dff4232d8598fb7a5",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "cdc44d075592ca1c70a8c6c084ab7bc1fa41073e8bda8b9f621c52cc36732458",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "quality_stability"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -6308,26 +7628,108 @@
         {
           "assessment": "strong",
           "code": "market_strength",
-          "interpretation": "시장보다 강했고 마감까지 상대강도가 유지됐습니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 상승에 편승한 움직임인지 구분하기 위해 SPY를 기준으로 비교했습니다. 장중과 마감 구간이 같은 방향이라 일시적인 초반 급등보다 지속된 종목 수요로 해석했습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+2.24%p",
+              "valuePositionPct": 87.3
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.29%p",
+              "valuePositionPct": 54.89
+            }
+          ],
           "primaryValue": "SPY 대비 +2.24%p",
           "secondaryValue": "마감 전 60분 +0.29%p"
         },
         {
           "assessment": "strong",
           "code": "participation",
-          "interpretation": "가격 움직임에 거래량이 동반됐습니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여가 가격 움직임에 동반됐는지 확인하는 근거로 사용했습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "1.08배",
+              "valuePositionPct": 54.23
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 1.08배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "strong",
           "code": "execution_structure",
-          "interpretation": "VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP는 당일 거래량을 반영한 평균 체결가입니다. 종가가 그 위에 있으면 장중 평균 매수자의 손익이 상대적으로 안정적이어서 눌림 진입과 무효화 기준을 세우기 쉽습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $359.52 · VWAP $357.23",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.64%",
+              "valuePositionPct": 60.68
+            }
+          ],
           "primaryValue": "종가 $359.52 · VWAP $357.23",
           "secondaryValue": "스프레드 1.68bp · ATR $8.12"
+        },
+        {
+          "assessment": "strong",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "1.68bp",
+              "valuePositionPct": 13.41
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 0.05,
+              "tone": "positive",
+              "value": "$9.72B",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "80.3/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "strong",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "1.49%",
+              "valuePositionPct": 21.62
+            }
+          ],
+          "primaryValue": "88.6/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -6477,6 +7879,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Alphabet Inc. (Class A)",
+          "industry": "Interactive Media & Services",
+          "sector": "Communication Services",
+          "symbol": "GOOGL"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "35d689a40c8f5fe6a670ab06bee51c819211910bda84235dff4232d8598fb7a5",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Alphabet Inc. (Class A)는 Interactive Media & Services 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Alphabet Inc. (Class A)의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "quality_stability"
+          ],
+          "headlineBase": "GOOGL Alphabet Inc. (Class A), Interactive Media & Services 업종과 품질 안정성이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "GOOGL"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 4,
       "reasons": [
         {
@@ -6524,6 +7956,20 @@
     },
     {
       "action": "conditional_buy",
+      "cautions": [
+        {
+          "code": "chase_limit",
+          "label": "추격 진입 기준",
+          "sentence": "돌파 매수는 $356.64까지만 검토합니다. 상한에서 무효화 기준 $343.05까지의 하락 폭은 주당 $13.59입니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "quoted_spread",
+          "label": "호가 스프레드",
+          "sentence": "호가 스프레드가 위험 성향의 허용 범위를 넘어 체결 조건 확인이 필요합니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": 8.543394,
       "confidence": 0.7761,
       "counterEvidence": {
@@ -6579,23 +8025,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "시장보다 강했고 마감까지 상대강도가 유지됐습니다. 가격 움직임에 거래량이 동반됐습니다. VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다."
+          "summary": "Palo Alto Networks는 Systems Software 업종 특성을 가진 기업입니다. 이번 추천에서는 추세 강도가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 호가 스프레드가 위험 성향의 허용 범위를 넘어 체결 조건 확인이 필요합니다. Palo Alto Networks의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "시장보다 강했고 마감까지 상대강도가 유지됐습니다. 가격 움직임에 거래량이 동반됐습니다. VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다.",
-          "generatedAt": "2026-07-16T16:16:49.797326+00:00",
-          "headline": "시장 대비 강세와 거래 참여는 확인됐지만, 호가 스프레드가 위험 성향의 허용 범위를 넘어 체결 조건 확인이 필요합니다.",
+          "body": "Palo Alto Networks는 Systems Software 업종 특성을 가진 기업입니다. 이번 추천에서는 추세 강도가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 호가 스프레드가 위험 성향의 허용 범위를 넘어 체결 조건 확인이 필요합니다. Palo Alto Networks의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298352+00:00",
+          "headline": "PANW Palo Alto Networks, Systems Software 업종과 추세 강도가 함께 드러난 후보, 다만 체결 여건 확인이 먼저입니다.",
+          "listSummary": "PANW Palo Alto Networks, Systems Software 업종과 추세 강도가 함께 드러난 후보 · 체결 여건 확인 후 접근",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "43f819e65dd862d619d9370f860767e78e1bc40ea2af5652ab7e6ad08fbb3209",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "9d9c8997afc094baa62389b1a2487c25f38c95d24b84daf97a6e8f44cd0eed6f",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "trend_strength"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -6603,26 +8059,108 @@
         {
           "assessment": "strong",
           "code": "market_strength",
-          "interpretation": "시장보다 강했고 마감까지 상대강도가 유지됐습니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 상승에 편승한 움직임인지 구분하기 위해 SPY를 기준으로 비교했습니다. 장중과 마감 구간이 같은 방향이라 일시적인 초반 급등보다 지속된 종목 수요로 해석했습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+5.23%p",
+              "valuePositionPct": 100.0
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.64%p",
+              "valuePositionPct": 60.69
+            }
+          ],
           "primaryValue": "SPY 대비 +5.23%p",
           "secondaryValue": "마감 전 60분 +0.64%p"
         },
         {
           "assessment": "strong",
           "code": "participation",
-          "interpretation": "가격 움직임에 거래량이 동반됐습니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여가 가격 움직임에 동반됐는지 확인하는 근거로 사용했습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "1.14배",
+              "valuePositionPct": 57.07
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 1.14배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "strong",
           "code": "execution_structure",
-          "interpretation": "VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP는 당일 거래량을 반영한 평균 체결가입니다. 종가가 그 위에 있으면 장중 평균 매수자의 손익이 상대적으로 안정적이어서 눌림 진입과 무효화 기준을 세우기 쉽습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $352.88 · VWAP $350.24",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.75%",
+              "valuePositionPct": 62.58
+            }
+          ],
           "primaryValue": "종가 $352.88 · VWAP $350.24",
           "secondaryValue": "스프레드 18.23bp · ATR $19.64"
+        },
+        {
+          "assessment": "weak",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 49.88,
+              "tone": "negative",
+              "value": "18.23bp",
+              "valuePositionPct": 90.91
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 0.17,
+              "tone": "positive",
+              "value": "$2.66B",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "33.8/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "mixed",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "3.04%",
+              "valuePositionPct": 44.18
+            }
+          ],
+          "primaryValue": "51.6/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -6770,6 +8308,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Palo Alto Networks",
+          "industry": "Systems Software",
+          "sector": "Information Technology",
+          "symbol": "PANW"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "43f819e65dd862d619d9370f860767e78e1bc40ea2af5652ab7e6ad08fbb3209",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Palo Alto Networks는 Systems Software 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Palo Alto Networks의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "trend_strength"
+          ],
+          "headlineBase": "PANW Palo Alto Networks, Systems Software 업종과 추세 강도가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 추세 강도가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "PANW"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 5,
       "reasons": [
         {
@@ -6815,6 +8383,32 @@
     },
     {
       "action": "conditional_buy",
+      "cautions": [
+        {
+          "code": "chase_limit",
+          "label": "추격 진입 기준",
+          "sentence": "돌파 매수는 $136.89까지만 검토합니다. 상한에서 무효화 기준 $130.13까지의 하락 폭은 주당 $6.76입니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "base_score",
+          "label": "V3 기본 점수",
+          "sentence": "종합 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "personal_score",
+          "label": "개인화 점수",
+          "sentence": "개인화 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "last60_relative_strength",
+          "label": "마감 전 60분 상대강도",
+          "sentence": "마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": 3.617911,
       "confidence": 0.7761,
       "counterEvidence": {
@@ -6882,23 +8476,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "당일에는 시장보다 강했지만 마감 구간 상대강도 확인이 더 필요합니다. 가격 움직임에 거래량이 동반됐습니다. VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다."
+          "summary": "Palantir Technologies는 Application Software 업종 특성을 가진 기업입니다. 이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다. Palantir Technologies의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "당일에는 시장보다 강했지만 마감 구간 상대강도 확인이 더 필요합니다. 가격 움직임에 거래량이 동반됐습니다. VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다.",
-          "generatedAt": "2026-07-16T16:16:49.797338+00:00",
-          "headline": "시장 대비 강세와 거래 참여는 확인됐지만, 마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다.",
+          "body": "Palantir Technologies는 Application Software 업종 특성을 가진 기업입니다. 이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다. Palantir Technologies의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298408+00:00",
+          "headline": "PLTR Palantir Technologies, Application Software 업종과 가격 구조가 함께 드러난 후보, 다만 마감 구간 상대강도 확인이 먼저입니다.",
+          "listSummary": "PLTR Palantir Technologies, Application Software 업종과 가격 구조가 함께 드러난 후보 · 마감 구간 상대강도 확인 후 접근",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "bfa3fd221c0598a7bafa609349aeb6dc32a73c85fdd365aa31abb3e6102fca08",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "a04d685a2adfa563c085a489b3c513407090f6b52c66049cfa6cbf41560b99be",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "price_structure"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -6906,26 +8510,108 @@
         {
           "assessment": "mixed",
           "code": "market_strength",
-          "interpretation": "당일에는 시장보다 강했지만 마감 구간 상대강도 확인이 더 필요합니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 움직임과 분리해 보기 위해 SPY를 기준으로 비교했습니다. 장중 강세와 달리 마감 구간이 약해 종목 수요가 하루 끝까지 이어졌다고 보기는 어렵습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+7.41%p",
+              "valuePositionPct": 100.0
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "-0.66%p",
+              "valuePositionPct": 39.08
+            }
+          ],
           "primaryValue": "SPY 대비 +7.41%p",
           "secondaryValue": "마감 전 60분 -0.66%p"
         },
         {
           "assessment": "strong",
           "code": "participation",
-          "interpretation": "가격 움직임에 거래량이 동반됐습니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여가 가격 움직임에 동반됐는지 확인하는 근거로 사용했습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "1.22배",
+              "valuePositionPct": 61.09
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 1.22배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "strong",
           "code": "execution_structure",
-          "interpretation": "VWAP 위에서 마감해 눌림·돌파 가격을 고정할 수 있습니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP는 당일 거래량을 반영한 평균 체결가입니다. 종가가 그 위에 있으면 장중 평균 매수자의 손익이 상대적으로 안정적이어서 눌림 진입과 무효화 기준을 세우기 쉽습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $133.75 · VWAP $132.32",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+1.08%",
+              "valuePositionPct": 68.04
+            }
+          ],
           "primaryValue": "종가 $133.75 · VWAP $132.32",
           "secondaryValue": "스프레드 3.04bp · ATR $7.23"
+        },
+        {
+          "assessment": "mixed",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "3.04bp",
+              "valuePositionPct": 24.3
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 0.09,
+              "tone": "positive",
+              "value": "$5.25B",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "55.7/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "weak",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "3.23%",
+              "valuePositionPct": 47.04
+            }
+          ],
+          "primaryValue": "40.0/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -7073,6 +8759,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Palantir Technologies",
+          "industry": "Application Software",
+          "sector": "Information Technology",
+          "symbol": "PLTR"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "bfa3fd221c0598a7bafa609349aeb6dc32a73c85fdd365aa31abb3e6102fca08",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Palantir Technologies는 Application Software 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Palantir Technologies의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "PLTR Palantir Technologies, Application Software 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "PLTR"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 6,
       "reasons": [
         {
@@ -7118,6 +8834,38 @@
     },
     {
       "action": "watch",
+      "cautions": [
+        {
+          "code": "base_score",
+          "label": "V3 기본 점수",
+          "sentence": "종합 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "personal_score",
+          "label": "개인화 점수",
+          "sentence": "개인화 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "evidence_reliability",
+          "label": "근거 신뢰도",
+          "sentence": "사용된 가격·거래 근거의 신뢰도가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "last60_relative_strength",
+          "label": "마감 전 60분 상대강도",
+          "sentence": "마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "volume_confirmation",
+          "label": "동시간대 거래량",
+          "sentence": "동시간 거래량 배수가 직접 매수 기준 1.00배에 미치지 못했습니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": -0.668685,
       "confidence": 0.7011,
       "counterEvidence": {
@@ -7183,23 +8931,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "당일에는 시장보다 강했지만 마감 구간 상대강도 확인이 더 필요합니다. 가격 움직임을 뒷받침하는 거래량이 부족합니다. 종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다."
+          "summary": "Apple Inc.는 Technology Hardware, Storage & Peripherals 업종 특성을 가진 기업입니다. 이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다. Apple Inc.의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "당일에는 시장보다 강했지만 마감 구간 상대강도 확인이 더 필요합니다. 가격 움직임을 뒷받침하는 거래량이 부족합니다. 종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다.",
-          "generatedAt": "2026-07-16T16:16:49.797351+00:00",
-          "headline": "마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다.",
+          "body": "Apple Inc.는 Technology Hardware, Storage & Peripherals 업종 특성을 가진 기업입니다. 이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다. Apple Inc.의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298464+00:00",
+          "headline": "AAPL Apple Inc., Technology Hardware, Storage & Peripherals 업종과 품질 안정성이 함께 드러난 후보, 직접 매수보다 관찰이 우선입니다.",
+          "listSummary": "AAPL Apple Inc., Technology Hardware, Storage & Peripherals 업종과 품질 안정성이 함께 드러난 후보 · 마감 구간 상대강도 추가 확인",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "c8fa06c997f08207f647d3130cdab070c142e2df017e14f8627305836a46d6da",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "66811b675eb758a4bf5bc2af19406d98129dddd476a5d40a9870994d33c12424",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "quality_stability"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -7207,26 +8965,108 @@
         {
           "assessment": "mixed",
           "code": "market_strength",
-          "interpretation": "당일에는 시장보다 강했지만 마감 구간 상대강도 확인이 더 필요합니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 움직임과 분리해 보기 위해 SPY를 기준으로 비교했습니다. 장중 강세와 달리 마감 구간이 약해 종목 수요가 하루 끝까지 이어졌다고 보기는 어렵습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.32%p",
+              "valuePositionPct": 55.36
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "-0.14%p",
+              "valuePositionPct": 47.7
+            }
+          ],
           "primaryValue": "SPY 대비 +0.32%p",
           "secondaryValue": "마감 전 60분 -0.14%p"
         },
         {
           "assessment": "weak",
           "code": "participation",
-          "interpretation": "가격 움직임을 뒷받침하는 거래량이 부족합니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여를 확인하지 못해 가격 움직임을 단독 매수 근거로 사용하지 않았습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "0.98배",
+              "valuePositionPct": 49.13
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 0.98배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "strong",
           "code": "execution_structure",
-          "interpretation": "종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP 위 마감은 장중 평균 체결가보다 가격이 유지됐다는 뜻이지만, 상대강도와 거래 참여가 함께 확인되지 않으면 단독 매수 근거로 사용하지 않습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $314.92 · VWAP $314.70",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.07%",
+              "valuePositionPct": 51.14
+            }
+          ],
           "primaryValue": "종가 $314.92 · VWAP $314.70",
           "secondaryValue": "스프레드 0.63bp · ATR $5.22"
+        },
+        {
+          "assessment": "strong",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "0.63bp",
+              "valuePositionPct": 5.08
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 0.03,
+              "tone": "positive",
+              "value": "$13.02B",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "80.1/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "strong",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "1.40%",
+              "valuePositionPct": 20.39
+            }
+          ],
+          "primaryValue": "80.2/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -7374,6 +9214,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Apple Inc.",
+          "industry": "Technology Hardware, Storage & Peripherals",
+          "sector": "Information Technology",
+          "symbol": "AAPL"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "c8fa06c997f08207f647d3130cdab070c142e2df017e14f8627305836a46d6da",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Apple Inc.는 Technology Hardware, Storage & Peripherals 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Apple Inc.의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "quality_stability"
+          ],
+          "headlineBase": "AAPL Apple Inc., Technology Hardware, Storage & Peripherals 업종과 품질 안정성이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "AAPL"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 7,
       "reasons": [
         {
@@ -7414,6 +9284,32 @@
     },
     {
       "action": "watch",
+      "cautions": [
+        {
+          "code": "base_score",
+          "label": "V3 기본 점수",
+          "sentence": "종합 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "personal_score",
+          "label": "개인화 점수",
+          "sentence": "개인화 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "current_relative_strength",
+          "label": "SPY 대비 당일 상대강도",
+          "sentence": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "volume_confirmation",
+          "label": "동시간대 거래량",
+          "sentence": "동시간 거래량 배수가 직접 매수 기준 1.00배에 미치지 못했습니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": -0.179211,
       "confidence": 0.7761,
       "counterEvidence": {
@@ -7473,23 +9369,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다. 가격 움직임을 뒷받침하는 거래량이 부족합니다. 종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다."
+          "summary": "Ford Motor Company는 Automobile Manufacturers 업종 특성을 가진 기업입니다. 이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다. Ford Motor Company의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다. 가격 움직임을 뒷받침하는 거래량이 부족합니다. 종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다.",
-          "generatedAt": "2026-07-16T16:16:49.797365+00:00",
-          "headline": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
+          "body": "Ford Motor Company는 Automobile Manufacturers 업종 특성을 가진 기업입니다. 이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다. Ford Motor Company의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298521+00:00",
+          "headline": "F Ford Motor Company, Automobile Manufacturers 업종과 가격 구조가 함께 드러난 후보, 직접 매수보다 관찰이 우선입니다.",
+          "listSummary": "F Ford Motor Company, Automobile Manufacturers 업종과 가격 구조가 함께 드러난 후보 · 당일 상대강도 추가 확인",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "0053eac1b1466321d3b0591636a7d9c897a7c1b0e64f27a1042bcf3e9aed5383",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "89bfb6edee02127338a817f51d8385c0c9fee611280b55ae1fea908795a862d1",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "price_structure"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -7497,26 +9403,108 @@
         {
           "assessment": "mixed",
           "code": "market_strength",
-          "interpretation": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 움직임과 분리해 보기 위해 SPY를 기준으로 비교했습니다. 마감 구간의 회복은 확인됐지만 전체 세션의 약세를 뒤집지는 못해 보조 근거로만 사용했습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "-0.63%p",
+              "valuePositionPct": 39.53
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.58%p",
+              "valuePositionPct": 59.61
+            }
+          ],
           "primaryValue": "SPY 대비 -0.63%p",
           "secondaryValue": "마감 전 60분 +0.58%p"
         },
         {
           "assessment": "weak",
           "code": "participation",
-          "interpretation": "가격 움직임을 뒷받침하는 거래량이 부족합니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여를 확인하지 못해 가격 움직임을 단독 매수 근거로 사용하지 않았습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "0.94배",
+              "valuePositionPct": 46.99
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 0.94배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "strong",
           "code": "execution_structure",
-          "interpretation": "종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP 위 마감은 장중 평균 체결가보다 가격이 유지됐다는 뜻이지만, 상대강도와 거래 참여가 함께 확인되지 않으면 단독 매수 근거로 사용하지 않습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $13.93 · VWAP $13.86",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.46%",
+              "valuePositionPct": 57.73
+            }
+          ],
           "primaryValue": "종가 $13.93 · VWAP $13.86",
           "secondaryValue": "스프레드 7.22bp · ATR $0.38"
+        },
+        {
+          "assessment": "weak",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "7.22bp",
+              "valuePositionPct": 57.78
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 0.7,
+              "tone": "positive",
+              "value": "$652.2M",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "29.1/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "mixed",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "2.24%",
+              "valuePositionPct": 32.56
+            }
+          ],
+          "primaryValue": "66.0/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -7664,6 +9652,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Ford Motor Company",
+          "industry": "Automobile Manufacturers",
+          "sector": "Consumer Discretionary",
+          "symbol": "F"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "0053eac1b1466321d3b0591636a7d9c897a7c1b0e64f27a1042bcf3e9aed5383",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Ford Motor Company는 Automobile Manufacturers 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Ford Motor Company의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "F Ford Motor Company, Automobile Manufacturers 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "F"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 8,
       "reasons": [
         {
@@ -7704,6 +9722,26 @@
     },
     {
       "action": "watch",
+      "cautions": [
+        {
+          "code": "base_score",
+          "label": "V3 기본 점수",
+          "sentence": "종합 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "personal_score",
+          "label": "개인화 점수",
+          "sentence": "개인화 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "last60_relative_strength",
+          "label": "마감 전 60분 상대강도",
+          "sentence": "마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": 5.709024,
       "confidence": 0.7761,
       "counterEvidence": {
@@ -7757,23 +9795,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "당일에는 시장보다 강했지만 마감 구간 상대강도 확인이 더 필요합니다. 가격 움직임에 거래량이 동반됐습니다. 종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다."
+          "summary": "Mosaic Company (The)는 Fertilizers & Agricultural Chemicals 업종 특성을 가진 기업입니다. 이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다. Mosaic Company (The)의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "당일에는 시장보다 강했지만 마감 구간 상대강도 확인이 더 필요합니다. 가격 움직임에 거래량이 동반됐습니다. 종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다.",
-          "generatedAt": "2026-07-16T16:16:49.797379+00:00",
-          "headline": "마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다.",
+          "body": "Mosaic Company (The)는 Fertilizers & Agricultural Chemicals 업종 특성을 가진 기업입니다. 이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다. Mosaic Company (The)의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298576+00:00",
+          "headline": "MOS Mosaic Company (The), Fertilizers & Agricultural Chemicals 업종과 가격 구조가 함께 드러난 후보, 직접 매수보다 관찰이 우선입니다.",
+          "listSummary": "MOS Mosaic Company (The), Fertilizers & Agricultural Chemicals 업종과 가격 구조가 함께 드러난 후보 · 마감 구간 상대강도 추가 확인",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "83ebc3a8c31ced2979019ddda24574d7c8d2bc7a035ea1a67df05d6e5e71d5de",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "b53f6b3f7f5554afab7f5f59b76c61369f4b44077982369f9fff6e851260ccfb",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "price_structure"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -7781,26 +9829,108 @@
         {
           "assessment": "mixed",
           "code": "market_strength",
-          "interpretation": "당일에는 시장보다 강했지만 마감 구간 상대강도 확인이 더 필요합니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 움직임과 분리해 보기 위해 SPY를 기준으로 비교했습니다. 장중 강세와 달리 마감 구간이 약해 종목 수요가 하루 끝까지 이어졌다고 보기는 어렵습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+1.38%p",
+              "valuePositionPct": 72.92
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "-0.39%p",
+              "valuePositionPct": 43.48
+            }
+          ],
           "primaryValue": "SPY 대비 +1.38%p",
           "secondaryValue": "마감 전 60분 -0.39%p"
         },
         {
           "assessment": "strong",
           "code": "participation",
-          "interpretation": "가격 움직임에 거래량이 동반됐습니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여가 가격 움직임에 동반됐는지 확인하는 근거로 사용했습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "1.27배",
+              "valuePositionPct": 63.33
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 1.27배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "strong",
           "code": "execution_structure",
-          "interpretation": "종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP 위 마감은 장중 평균 체결가보다 가격이 유지됐다는 뜻이지만, 상대강도와 거래 참여가 함께 확인되지 않으면 단독 매수 근거로 사용하지 않습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $22.96 · VWAP $22.82",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.60%",
+              "valuePositionPct": 59.98
+            }
+          ],
           "primaryValue": "종가 $22.96 · VWAP $22.82",
           "secondaryValue": "스프레드 4.37bp · ATR $0.81"
+        },
+        {
+          "assessment": "weak",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "4.37bp",
+              "valuePositionPct": 34.94
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 2.36,
+              "tone": "positive",
+              "value": "$192.4M",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "22.9/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "weak",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "2.51%",
+              "valuePositionPct": 36.47
+            }
+          ],
+          "primaryValue": "39.0/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -7948,6 +10078,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Mosaic Company (The)",
+          "industry": "Fertilizers & Agricultural Chemicals",
+          "sector": "Materials",
+          "symbol": "MOS"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "83ebc3a8c31ced2979019ddda24574d7c8d2bc7a035ea1a67df05d6e5e71d5de",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Mosaic Company (The)는 Fertilizers & Agricultural Chemicals 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Mosaic Company (The)의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "MOS Mosaic Company (The), Fertilizers & Agricultural Chemicals 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "MOS"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 9,
       "reasons": [
         {
@@ -7988,6 +10148,32 @@
     },
     {
       "action": "watch",
+      "cautions": [
+        {
+          "code": "base_score",
+          "label": "V3 기본 점수",
+          "sentence": "종합 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "personal_score",
+          "label": "개인화 점수",
+          "sentence": "개인화 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "evidence_reliability",
+          "label": "근거 신뢰도",
+          "sentence": "사용된 가격·거래 근거의 신뢰도가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "current_relative_strength",
+          "label": "SPY 대비 당일 상대강도",
+          "sentence": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": 2.311375,
       "confidence": 0.7011,
       "counterEvidence": {
@@ -8047,23 +10233,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다. 가격 움직임에 거래량이 동반됐습니다. 종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다."
+          "summary": "Freeport-McMoRan는 Copper 업종 특성을 가진 기업입니다. 이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다. Freeport-McMoRan의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다. 가격 움직임에 거래량이 동반됐습니다. 종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다.",
-          "generatedAt": "2026-07-16T16:16:49.797390+00:00",
-          "headline": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
+          "body": "Freeport-McMoRan는 Copper 업종 특성을 가진 기업입니다. 이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다. Freeport-McMoRan의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298626+00:00",
+          "headline": "FCX Freeport-McMoRan, Copper 업종과 가격 구조가 함께 드러난 후보, 직접 매수보다 관찰이 우선입니다.",
+          "listSummary": "FCX Freeport-McMoRan, Copper 업종과 가격 구조가 함께 드러난 후보 · 당일 상대강도 추가 확인",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "b0407d0f6d5a3e65b75758b9fe0c52515ecce8c716e03145f60c676fd029c971",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "27c4d6a59c9ca525da996f7121da679f4b23a7faa24d0787f22da2a3302a73ce",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "price_structure"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -8071,26 +10267,108 @@
         {
           "assessment": "mixed",
           "code": "market_strength",
-          "interpretation": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 움직임과 분리해 보기 위해 SPY를 기준으로 비교했습니다. 마감 구간의 회복은 확인됐지만 전체 세션의 약세를 뒤집지는 못해 보조 근거로만 사용했습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "-0.08%p",
+              "valuePositionPct": 48.68
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.13%p",
+              "valuePositionPct": 52.1
+            }
+          ],
           "primaryValue": "SPY 대비 -0.08%p",
           "secondaryValue": "마감 전 60분 +0.13%p"
         },
         {
           "assessment": "strong",
           "code": "participation",
-          "interpretation": "가격 움직임에 거래량이 동반됐습니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여가 가격 움직임에 동반됐는지 확인하는 근거로 사용했습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "1.07배",
+              "valuePositionPct": 53.6
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 1.07배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "strong",
           "code": "execution_structure",
-          "interpretation": "종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP 위 마감은 장중 평균 체결가보다 가격이 유지됐다는 뜻이지만, 상대강도와 거래 참여가 함께 확인되지 않으면 단독 매수 근거로 사용하지 않습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $61.97 · VWAP $61.85",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.19%",
+              "valuePositionPct": 53.22
+            }
+          ],
           "primaryValue": "종가 $61.97 · VWAP $61.85",
           "secondaryValue": "스프레드 1.62bp · ATR $1.90"
+        },
+        {
+          "assessment": "mixed",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "1.62bp",
+              "valuePositionPct": 12.97
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 0.51,
+              "tone": "positive",
+              "value": "$883.3M",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "69.5/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "weak",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "2.27%",
+              "valuePositionPct": 32.96
+            }
+          ],
+          "primaryValue": "29.8/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -8238,6 +10516,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Freeport-McMoRan",
+          "industry": "Copper",
+          "sector": "Materials",
+          "symbol": "FCX"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "b0407d0f6d5a3e65b75758b9fe0c52515ecce8c716e03145f60c676fd029c971",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Freeport-McMoRan는 Copper 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Freeport-McMoRan의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "FCX Freeport-McMoRan, Copper 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "FCX"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 10,
       "reasons": [
         {
@@ -8278,6 +10586,38 @@
     },
     {
       "action": "watch",
+      "cautions": [
+        {
+          "code": "base_score",
+          "label": "V3 기본 점수",
+          "sentence": "종합 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "personal_score",
+          "label": "개인화 점수",
+          "sentence": "개인화 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "evidence_reliability",
+          "label": "근거 신뢰도",
+          "sentence": "사용된 가격·거래 근거의 신뢰도가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "current_relative_strength",
+          "label": "SPY 대비 당일 상대강도",
+          "sentence": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "volume_confirmation",
+          "label": "동시간대 거래량",
+          "sentence": "동시간 거래량 배수가 직접 매수 기준 1.00배에 미치지 못했습니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": -0.119474,
       "confidence": 0.7011,
       "counterEvidence": {
@@ -8343,23 +10683,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다. 가격 움직임을 뒷받침하는 거래량이 부족합니다. 종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다."
+          "summary": "Kraft Heinz는 Packaged Foods & Meats 업종 특성을 가진 기업입니다. 이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다. Kraft Heinz의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다. 가격 움직임을 뒷받침하는 거래량이 부족합니다. 종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다.",
-          "generatedAt": "2026-07-16T16:16:49.797402+00:00",
-          "headline": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
+          "body": "Kraft Heinz는 Packaged Foods & Meats 업종 특성을 가진 기업입니다. 이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다. Kraft Heinz의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298680+00:00",
+          "headline": "KHC Kraft Heinz, Packaged Foods & Meats 업종과 가격 구조가 함께 드러난 후보, 직접 매수보다 관찰이 우선입니다.",
+          "listSummary": "KHC Kraft Heinz, Packaged Foods & Meats 업종과 가격 구조가 함께 드러난 후보 · 당일 상대강도 추가 확인",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "de4f78056052a57e63b0b90c6df46fe92bd7420b1dc9b7e9a6bde0a4527a3fda",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "b017ec28856b86ce08de3281a3f5df43a78cefa2cbc70aab959e603791f1b021",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "price_structure"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -8367,26 +10717,108 @@
         {
           "assessment": "mixed",
           "code": "market_strength",
-          "interpretation": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 움직임과 분리해 보기 위해 SPY를 기준으로 비교했습니다. 마감 구간의 회복은 확인됐지만 전체 세션의 약세를 뒤집지는 못해 보조 근거로만 사용했습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "-0.25%p",
+              "valuePositionPct": 45.88
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.32%p",
+              "valuePositionPct": 55.37
+            }
+          ],
           "primaryValue": "SPY 대비 -0.25%p",
           "secondaryValue": "마감 전 60분 +0.32%p"
         },
         {
           "assessment": "weak",
           "code": "participation",
-          "interpretation": "가격 움직임을 뒷받침하는 거래량이 부족합니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여를 확인하지 못해 가격 움직임을 단독 매수 근거로 사용하지 않았습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "0.85배",
+              "valuePositionPct": 42.36
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 0.85배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "strong",
           "code": "execution_structure",
-          "interpretation": "종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP 위 마감은 장중 평균 체결가보다 가격이 유지됐다는 뜻이지만, 상대강도와 거래 참여가 함께 확인되지 않으면 단독 매수 근거로 사용하지 않습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $25.08 · VWAP $25.02",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.25%",
+              "valuePositionPct": 54.21
+            }
+          ],
           "primaryValue": "종가 $25.08 · VWAP $25.02",
           "secondaryValue": "스프레드 4.02bp · ATR $0.68"
+        },
+        {
+          "assessment": "weak",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "4.02bp",
+              "valuePositionPct": 32.13
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 1.47,
+              "tone": "positive",
+              "value": "$308.6M",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "39.7/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "mixed",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "1.74%",
+              "valuePositionPct": 25.32
+            }
+          ],
+          "primaryValue": "68.6/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -8534,6 +10966,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Kraft Heinz",
+          "industry": "Packaged Foods & Meats",
+          "sector": "Consumer Staples",
+          "symbol": "KHC"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "de4f78056052a57e63b0b90c6df46fe92bd7420b1dc9b7e9a6bde0a4527a3fda",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Kraft Heinz는 Packaged Foods & Meats 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Kraft Heinz의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "KHC Kraft Heinz, Packaged Foods & Meats 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "KHC"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 11,
       "reasons": [
         {
@@ -8574,6 +11036,38 @@
     },
     {
       "action": "watch",
+      "cautions": [
+        {
+          "code": "base_score",
+          "label": "V3 기본 점수",
+          "sentence": "종합 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "personal_score",
+          "label": "개인화 점수",
+          "sentence": "개인화 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "evidence_reliability",
+          "label": "근거 신뢰도",
+          "sentence": "사용된 가격·거래 근거의 신뢰도가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "current_relative_strength",
+          "label": "SPY 대비 당일 상대강도",
+          "sentence": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "vwap_hold",
+          "label": "종가와 VWAP",
+          "sentence": "종가가 VWAP 아래에 있어 가격 구조를 추가로 확인해야 합니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": 0.086688,
       "confidence": 0.7011,
       "counterEvidence": {
@@ -8639,23 +11133,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다. 가격 움직임에 거래량이 동반됐습니다. 종가가 VWAP 아래에 있어 가격 구조를 추가로 확인해야 합니다."
+          "summary": "CRH plc는 Construction Materials 업종 특성을 가진 기업입니다. 이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다. CRH plc의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다. 가격 움직임에 거래량이 동반됐습니다. 종가가 VWAP 아래에 있어 가격 구조를 추가로 확인해야 합니다.",
-          "generatedAt": "2026-07-16T16:16:49.797440+00:00",
-          "headline": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
+          "body": "CRH plc는 Construction Materials 업종 특성을 가진 기업입니다. 이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다. CRH plc의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298730+00:00",
+          "headline": "CRH CRH plc, Construction Materials 업종과 품질 안정성이 함께 드러난 후보, 직접 매수보다 관찰이 우선입니다.",
+          "listSummary": "CRH CRH plc, Construction Materials 업종과 품질 안정성이 함께 드러난 후보 · 당일 상대강도 추가 확인",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "4925aed4a7608538fd4834588627e54fdd2ffd84e437b13e476f677e18e14063",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "703290d9cd934c8d6aef554fdf36caabd5590cbbd2cfeb67ed427f9e3c68b728",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "quality_stability"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -8663,26 +11167,108 @@
         {
           "assessment": "mixed",
           "code": "market_strength",
-          "interpretation": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 움직임과 분리해 보기 위해 SPY를 기준으로 비교했습니다. 마감 구간의 회복은 확인됐지만 전체 세션의 약세를 뒤집지는 못해 보조 근거로만 사용했습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "-1.12%p",
+              "valuePositionPct": 31.35
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.29%p",
+              "valuePositionPct": 54.89
+            }
+          ],
           "primaryValue": "SPY 대비 -1.12%p",
           "secondaryValue": "마감 전 60분 +0.29%p"
         },
         {
           "assessment": "strong",
           "code": "participation",
-          "interpretation": "가격 움직임에 거래량이 동반됐습니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여가 가격 움직임에 동반됐는지 확인하는 근거로 사용했습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "1.42배",
+              "valuePositionPct": 71.08
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 1.42배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "mixed",
           "code": "execution_structure",
-          "interpretation": "종가가 VWAP 아래에 있어 가격 구조를 추가로 확인해야 합니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP는 당일 거래량을 반영한 평균 체결가입니다. 종가가 그 아래에 있으면 장중 평균 매수자의 손익이 불리해 가격 지지와 진입 기준을 세우기 어렵습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $103.91 · VWAP $103.97",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "-0.06%",
+              "valuePositionPct": 48.97
+            }
+          ],
           "primaryValue": "종가 $103.91 · VWAP $103.97",
           "secondaryValue": "스프레드 7.72bp · ATR $2.60"
+        },
+        {
+          "assessment": "weak",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "7.72bp",
+              "valuePositionPct": 61.77
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 1.1,
+              "tone": "positive",
+              "value": "$414.5M",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "31.8/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "strong",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "1.49%",
+              "valuePositionPct": 21.65
+            }
+          ],
+          "primaryValue": "85.7/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -8830,6 +11416,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "CRH plc",
+          "industry": "Construction Materials",
+          "sector": "Materials",
+          "symbol": "CRH"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "4925aed4a7608538fd4834588627e54fdd2ffd84e437b13e476f677e18e14063",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "CRH plc는 Construction Materials 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "CRH plc의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "quality_stability"
+          ],
+          "headlineBase": "CRH CRH plc, Construction Materials 업종과 품질 안정성이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "CRH"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 12,
       "reasons": [
         {
@@ -8870,6 +11486,38 @@
     },
     {
       "action": "watch",
+      "cautions": [
+        {
+          "code": "base_score",
+          "label": "V3 기본 점수",
+          "sentence": "종합 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "personal_score",
+          "label": "개인화 점수",
+          "sentence": "개인화 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "evidence_reliability",
+          "label": "근거 신뢰도",
+          "sentence": "사용된 가격·거래 근거의 신뢰도가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "current_relative_strength",
+          "label": "SPY 대비 당일 상대강도",
+          "sentence": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "vwap_hold",
+          "label": "종가와 VWAP",
+          "sentence": "종가가 VWAP 아래에 있어 가격 구조를 추가로 확인해야 합니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": -3.113747,
       "confidence": 0.7011,
       "counterEvidence": {
@@ -8935,23 +11583,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다. 가격 움직임에 거래량이 동반됐습니다. 종가가 VWAP 아래에 있어 가격 구조를 추가로 확인해야 합니다."
+          "summary": "Fastenal는 Trading Companies & Distributors 업종 특성을 가진 기업입니다. 이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다. Fastenal의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다. 가격 움직임에 거래량이 동반됐습니다. 종가가 VWAP 아래에 있어 가격 구조를 추가로 확인해야 합니다.",
-          "generatedAt": "2026-07-16T16:16:49.797452+00:00",
-          "headline": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
+          "body": "Fastenal는 Trading Companies & Distributors 업종 특성을 가진 기업입니다. 이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다. Fastenal의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298783+00:00",
+          "headline": "FAST Fastenal, Trading Companies & Distributors 업종과 품질 안정성이 함께 드러난 후보, 직접 매수보다 관찰이 우선입니다.",
+          "listSummary": "FAST Fastenal, Trading Companies & Distributors 업종과 품질 안정성이 함께 드러난 후보 · 당일 상대강도 추가 확인",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "16d86097a3426a350d577e8e068cefde45e252a28d7d5c0cd0b4728e90fd2186",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "71e09f9d26f71e51c1e0d48a65b7e8173f1089c573e7c54d75004424d61104da",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "quality_stability"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -8959,26 +11617,108 @@
         {
           "assessment": "mixed",
           "code": "market_strength",
-          "interpretation": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 움직임과 분리해 보기 위해 SPY를 기준으로 비교했습니다. 마감 구간의 회복은 확인됐지만 전체 세션의 약세를 뒤집지는 못해 보조 근거로만 사용했습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "-5.39%p",
+              "valuePositionPct": 0.0
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.27%p",
+              "valuePositionPct": 54.54
+            }
+          ],
           "primaryValue": "SPY 대비 -5.39%p",
           "secondaryValue": "마감 전 60분 +0.27%p"
         },
         {
           "assessment": "strong",
           "code": "participation",
-          "interpretation": "가격 움직임에 거래량이 동반됐습니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여가 가격 움직임에 동반됐는지 확인하는 근거로 사용했습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 42.79,
+              "tone": "positive",
+              "value": "2.03배",
+              "valuePositionPct": 86.96
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 2.03배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "mixed",
           "code": "execution_structure",
-          "interpretation": "종가가 VWAP 아래에 있어 가격 구조를 추가로 확인해야 합니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP는 당일 거래량을 반영한 평균 체결가입니다. 종가가 그 아래에 있으면 장중 평균 매수자의 손익이 불리해 가격 지지와 진입 기준을 세우기 어렵습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $45.74 · VWAP $46.11",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "-0.81%",
+              "valuePositionPct": 36.58
+            }
+          ],
           "primaryValue": "종가 $45.74 · VWAP $46.11",
           "secondaryValue": "스프레드 4.40bp · ATR $1.30"
+        },
+        {
+          "assessment": "weak",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "4.40bp",
+              "valuePositionPct": 35.18
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 1.27,
+              "tone": "positive",
+              "value": "$358.2M",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "40.5/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "strong",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "1.16%",
+              "valuePositionPct": 16.82
+            }
+          ],
+          "primaryValue": "79.0/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -9126,6 +11866,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Fastenal",
+          "industry": "Trading Companies & Distributors",
+          "sector": "Industrials",
+          "symbol": "FAST"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "16d86097a3426a350d577e8e068cefde45e252a28d7d5c0cd0b4728e90fd2186",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Fastenal는 Trading Companies & Distributors 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Fastenal의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "quality_stability"
+          ],
+          "headlineBase": "FAST Fastenal, Trading Companies & Distributors 업종과 품질 안정성이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 품질 안정성이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "FAST"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 13,
       "reasons": [
         {
@@ -9166,6 +11936,32 @@
     },
     {
       "action": "watch",
+      "cautions": [
+        {
+          "code": "base_score",
+          "label": "V3 기본 점수",
+          "sentence": "종합 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "personal_score",
+          "label": "개인화 점수",
+          "sentence": "개인화 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "current_relative_strength",
+          "label": "SPY 대비 당일 상대강도",
+          "sentence": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "quoted_spread",
+          "label": "호가 스프레드",
+          "sentence": "호가 스프레드가 위험 성향의 허용 범위를 넘어 체결 조건 확인이 필요합니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": -0.925868,
       "confidence": 0.7761,
       "counterEvidence": {
@@ -9225,23 +12021,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다. 가격 움직임에 거래량이 동반됐습니다. 종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다."
+          "summary": "Amphenol는 Electronic Components 업종 특성을 가진 기업입니다. 이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다. Amphenol의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다. 가격 움직임에 거래량이 동반됐습니다. 종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다.",
-          "generatedAt": "2026-07-16T16:16:49.797463+00:00",
-          "headline": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
+          "body": "Amphenol는 Electronic Components 업종 특성을 가진 기업입니다. 이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다. Amphenol의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298835+00:00",
+          "headline": "APH Amphenol, Electronic Components 업종과 가격 구조가 함께 드러난 후보, 직접 매수보다 관찰이 우선입니다.",
+          "listSummary": "APH Amphenol, Electronic Components 업종과 가격 구조가 함께 드러난 후보 · 당일 상대강도 추가 확인",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "8a9bc9574ff53d9398a71ed175036b0e248ab391df3a63bfcfb1fb8f7cfcdf13",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "04ae1097cfddd5c5eb7717eb68f3f28bd0d76903a0bbd6c2d491119a2b0b5423",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "price_structure"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -9249,26 +12055,108 @@
         {
           "assessment": "mixed",
           "code": "market_strength",
-          "interpretation": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 움직임과 분리해 보기 위해 SPY를 기준으로 비교했습니다. 마감 구간의 회복은 확인됐지만 전체 세션의 약세를 뒤집지는 못해 보조 근거로만 사용했습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "-0.10%p",
+              "valuePositionPct": 48.29
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.06%p",
+              "valuePositionPct": 51.02
+            }
+          ],
           "primaryValue": "SPY 대비 -0.10%p",
           "secondaryValue": "마감 전 60분 +0.06%p"
         },
         {
           "assessment": "strong",
           "code": "participation",
-          "interpretation": "가격 움직임에 거래량이 동반됐습니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여가 가격 움직임에 동반됐는지 확인하는 근거로 사용했습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "1.05배",
+              "valuePositionPct": 52.39
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 1.05배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "strong",
           "code": "execution_structure",
-          "interpretation": "종가는 VWAP 위에서 마감했지만 다른 직접 매수 조건이 충족되지 않았습니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP 위 마감은 장중 평균 체결가보다 가격이 유지됐다는 뜻이지만, 상대강도와 거래 참여가 함께 확인되지 않으면 단독 매수 근거로 사용하지 않습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $158.37 · VWAP $158.04",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.21%",
+              "valuePositionPct": 53.45
+            }
+          ],
           "primaryValue": "종가 $158.37 · VWAP $158.04",
           "secondaryValue": "스프레드 27.86bp · ATR $7.18"
+        },
+        {
+          "assessment": "weak",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 32.63,
+              "tone": "negative",
+              "value": "27.86bp",
+              "valuePositionPct": 90.91
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 0.33,
+              "tone": "positive",
+              "value": "$1.39B",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "24.5/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "mixed",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "3.03%",
+              "valuePositionPct": 44.05
+            }
+          ],
+          "primaryValue": "51.6/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -9416,6 +12304,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Amphenol",
+          "industry": "Electronic Components",
+          "sector": "Information Technology",
+          "symbol": "APH"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "8a9bc9574ff53d9398a71ed175036b0e248ab391df3a63bfcfb1fb8f7cfcdf13",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Amphenol는 Electronic Components 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Amphenol의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "price_structure"
+          ],
+          "headlineBase": "APH Amphenol, Electronic Components 업종과 가격 구조가 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 가격 구조가 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "APH"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 14,
       "reasons": [
         {
@@ -9456,6 +12374,38 @@
     },
     {
       "action": "watch",
+      "cautions": [
+        {
+          "code": "base_score",
+          "label": "V3 기본 점수",
+          "sentence": "종합 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "personal_score",
+          "label": "개인화 점수",
+          "sentence": "개인화 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "evidence_reliability",
+          "label": "근거 신뢰도",
+          "sentence": "사용된 가격·거래 근거의 신뢰도가 직접 매수 기준에 미치지 못했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "current_relative_strength",
+          "label": "SPY 대비 당일 상대강도",
+          "sentence": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
+          "severity": "warning"
+        },
+        {
+          "code": "vwap_hold",
+          "label": "종가와 VWAP",
+          "sentence": "종가가 VWAP 아래에 있어 가격 구조를 추가로 확인해야 합니다.",
+          "severity": "warning"
+        }
+      ],
       "changePercent": 1.120598,
       "confidence": 0.7011,
       "counterEvidence": {
@@ -9521,23 +12471,33 @@
           },
           "evidence": [],
           "risks": [],
-          "summary": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다. 가격 움직임에 거래량이 동반됐습니다. 종가가 VWAP 아래에 있어 가격 구조를 추가로 확인해야 합니다."
+          "summary": "Newmont는 Gold 업종 특성을 가진 기업입니다. 이번 추천에서는 거래 참여 확인이 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다. Newmont의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다."
         },
         "locale": "ko-KR",
         "primary": {
-          "body": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다. 가격 움직임에 거래량이 동반됐습니다. 종가가 VWAP 아래에 있어 가격 구조를 추가로 확인해야 합니다.",
-          "generatedAt": "2026-07-16T16:16:49.797475+00:00",
-          "headline": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
+          "body": "Newmont는 Gold 업종 특성을 가진 기업입니다. 이번 추천에서는 거래 참여 확인이 다른 관측 근거보다 상대적으로 강하게 나타났습니다. 당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다. Newmont의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "generatedAt": "2026-07-17T09:03:25.298885+00:00",
+          "headline": "NEM Newmont, Gold 업종과 거래 참여 확인이 함께 드러난 후보, 직접 매수보다 관찰이 우선입니다.",
+          "listSummary": "NEM Newmont, Gold 업종과 거래 참여 확인이 함께 드러난 후보 · 당일 상대강도 추가 확인",
           "model": null,
-          "promptVersion": "recommendation-decision-renderer.ko.v2",
+          "promptVersion": "recommendation-decision-renderer.ko.v8",
           "source": "deterministic",
           "status": "ready"
         },
         "provenance": {
           "algorithmVersion": "deterministic-evidence-v3",
+          "companyContextDigest": "e81190aa0c68c904c0b1ec85e39823b92f24c2391c2186cff455dd2ac2b79f9a",
+          "companyContextStatus": "partial",
+          "companyProfileAccession": "",
           "evidenceSnapshotId": "",
           "inputDigest": "11d703274a2cb637db293e33b5a71223b45cbe9e4e5f4e891c1a40ce9054170b",
-          "ruleSetVersion": "deterministic-evidence-v3.1"
+          "ruleSetVersion": "deterministic-evidence-v3.1",
+          "usedCompanyRefs": [
+            "company.industry"
+          ],
+          "usedEvidenceRefs": [
+            "participation_confirmation"
+          ]
         },
         "version": "recommendation-explanation.v1"
       },
@@ -9545,26 +12505,108 @@
         {
           "assessment": "mixed",
           "code": "market_strength",
-          "interpretation": "당일에는 시장보다 약했지만 마감 구간에서 일부 회복했습니다.",
-          "label": "시장 대비 강도",
+          "interpretation": "시장 전체 움직임과 분리해 보기 위해 SPY를 기준으로 비교했습니다. 마감 구간의 회복은 확인됐지만 전체 세션의 약세를 뒤집지는 못해 보조 근거로만 사용했습니다.",
+          "label": "시장 흐름",
+          "metrics": [
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "당일 상대강도",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "-3.26%p",
+              "valuePositionPct": 0.0
+            },
+            {
+              "comparison": "SPY 대비 · 중립 0%p",
+              "label": "마감 전 60분",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "+0.16%p",
+              "valuePositionPct": 52.65
+            }
+          ],
           "primaryValue": "SPY 대비 -3.26%p",
           "secondaryValue": "마감 전 60분 +0.16%p"
         },
         {
           "assessment": "strong",
           "code": "participation",
-          "interpretation": "가격 움직임에 거래량이 동반됐습니다.",
+          "interpretation": "장중 거래량은 개장과 마감에 몰리는 특성이 있어 직전 정규장의 같은 시각과 비교했습니다. 평소보다 넓은 시장 참여가 가격 움직임에 동반됐는지 확인하는 근거로 사용했습니다.",
           "label": "거래 참여",
+          "metrics": [
+            {
+              "comparison": "직전 정규장 동시간 · 기준 1.00배",
+              "label": "동시간 거래량",
+              "referencePositionPct": 50.0,
+              "tone": "positive",
+              "value": "1.50배",
+              "valuePositionPct": 74.76
+            }
+          ],
           "primaryValue": "직전 정규장 동시간 대비 1.50배",
           "secondaryValue": "확대 기준 1.00배"
         },
         {
           "assessment": "mixed",
           "code": "execution_structure",
-          "interpretation": "종가가 VWAP 아래에 있어 가격 구조를 추가로 확인해야 합니다.",
-          "label": "진입 구조",
+          "interpretation": "VWAP는 당일 거래량을 반영한 평균 체결가입니다. 종가가 그 아래에 있으면 장중 평균 매수자의 손익이 불리해 가격 지지와 진입 기준을 세우기 어렵습니다.",
+          "label": "가격 구조",
+          "metrics": [
+            {
+              "comparison": "종가 $94.75 · VWAP $95.62",
+              "label": "종가-VWAP 이격",
+              "referencePositionPct": 50.0,
+              "tone": "negative",
+              "value": "-0.91%",
+              "valuePositionPct": 34.86
+            }
+          ],
           "primaryValue": "종가 $94.75 · VWAP $95.62",
           "secondaryValue": "스프레드 2.11bp · ATR $3.07"
+        },
+        {
+          "assessment": "mixed",
+          "code": "execution_quality",
+          "interpretation": "가격 신호가 좋아도 호가가 넓거나 거래대금이 부족하면 실제 체결 비용이 예상 위험을 키울 수 있습니다. 그래서 호가 상한과 최근 중앙 거래대금을 함께 통과한 경우에만 실행 가능한 근거로 사용했습니다.",
+          "label": "체결 여건",
+          "metrics": [
+            {
+              "comparison": "균형형 허용 상한 10.0bp",
+              "label": "호가 스프레드",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "2.11bp",
+              "valuePositionPct": 16.86
+            },
+            {
+              "comparison": "최소 기준 $5.0M",
+              "label": "20일 중앙 거래대금",
+              "referencePositionPct": 0.63,
+              "tone": "positive",
+              "value": "$722.8M",
+              "valuePositionPct": 90.91
+            }
+          ],
+          "primaryValue": "58.6/100",
+          "secondaryValue": ""
+        },
+        {
+          "assessment": "mixed",
+          "code": "quality_stability",
+          "interpretation": "최근 변동성과 기업 품질은 짧은 가격 신호가 계좌의 위험성향과 맞는지 확인하는 보완 근거입니다.",
+          "label": "안정성·품질",
+          "metrics": [
+            {
+              "comparison": "균형형 기준 5.5%",
+              "label": "60일 일간 변동성",
+              "referencePositionPct": 80.0,
+              "tone": "positive",
+              "value": "2.16%",
+              "valuePositionPct": 31.41
+            }
+          ],
+          "primaryValue": "47.1/100",
+          "secondaryValue": ""
         }
       ],
       "metricsSnapshot": {
@@ -9712,6 +12754,36 @@
         },
         "stale": false
       },
+      "narrativeContext": {
+        "catalysts": [],
+        "company": {
+          "companyName": "Newmont",
+          "industry": "Gold",
+          "sector": "Materials",
+          "symbol": "NEM"
+        },
+        "cutoff": "2026-07-14T20:00:00+00:00",
+        "digest": "e81190aa0c68c904c0b1ec85e39823b92f24c2391c2186cff455dd2ac2b79f9a",
+        "fundamentals": {},
+        "narrativeAtoms": {
+          "action": "watch",
+          "businessSentence": "Newmont는 Gold 업종 특성을 가진 기업입니다.",
+          "companyRefs": [
+            "company.industry"
+          ],
+          "companyRiskSentence": "Newmont의 업종 특성과 개별 기업 위험은 단기 가격 신호와 분리해 확인해야 합니다.",
+          "evidenceRefs": [
+            "participation_confirmation"
+          ],
+          "headlineBase": "NEM Newmont, Gold 업종과 거래 참여 확인이 함께 드러난 후보",
+          "setupSentence": "이번 추천에서는 거래 참여 확인이 다른 관측 근거보다 상대적으로 강하게 나타났습니다.",
+          "source": "deterministic",
+          "symbol": "NEM"
+        },
+        "status": "partial",
+        "tenK": null,
+        "version": "recommendation-narrative-context.v1"
+      },
       "rank": 15,
       "reasons": [
         {
@@ -9752,10 +12824,10 @@
     }
   ],
   "marketDate": "2026-07-15",
-  "narrativeMode": "deterministic_grounded",
+  "narrativeMode": "company_grounded",
   "personalizationMode": "cutoff_user_context",
-  "recommendationDigest": "246c0e0e853e1c9846a7697226e8dcf3fd03f9d1819c5bae120d5accbf7deee7",
-  "reconstructedAt": "2026-07-16T16:16:49.801020Z",
+  "recommendationDigest": "89d5ce05ea9576742a811ae82923b9b0e858a6377f36b9423e34ff0ff94df7bc",
+  "reconstructedAt": "2026-07-17T09:03:25.293868Z",
   "scenarioId": "recommendation-v3-2026-07-15",
   "schemaVersion": "fixed-recommendation-payload.v1",
   "slotStart": "2026-07-14T16:00:00-04:00",

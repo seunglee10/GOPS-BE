@@ -61,6 +61,14 @@ def market_indices(background_tasks: BackgroundTasks) -> dict[str, Any]:
     return get_query_service().indices(background_tasks=background_tasks)
 
 
+@router.get("/api/market/indices/related")
+def market_related_indices(
+    background_tasks: BackgroundTasks,
+    symbol: str = Query(min_length=1, max_length=12),
+) -> dict[str, Any]:
+    return get_query_service().related_indices(symbol, background_tasks=background_tasks)
+
+
 @router.get("/api/market/next-open")
 def market_next_open(request: Request) -> dict[str, Any]:
     clock_provider = getattr(request.app.state, "market_clock_provider", None)

@@ -3,6 +3,16 @@
 이 문서는 AWS/EKS에서 GOPS agent runtime을 빌드하고 배포할 때 필요한 image,
 Kafka, Redis/Valkey, ClickHouse, GraphDB, S3, Secret 계약을 정리한다.
 
+## 추천 배포·migration 현재 계약
+
+운영 추천 알고리즘 값은 `deterministic-evidence-v3`이며 `continuous-v2`는 유효한 실행
+옵션이 아니다. order migration `0017_recommendation_score_profiles.sql`은 이름 있는 점수
+프로필과 활성 프로필 revision, run scoring digest/snapshot을 추가한다. 동시에 자동
+개인화 파생 preference/risk/event/candidate-feature 테이블과 관련 run 컬럼을 제거한다.
+`orders`, `executions`, `order_coach_fill_history`, portfolio/evidence snapshot,
+recommendation run/item/outcome은 보존 대상이다. 배포 전후 이 테이블들의 행 수와 FK
+무결성을 확인해야 한다.
+
 ## Deployment Spine
 
 배포 순서는 고정한다.
@@ -451,15 +461,17 @@ The app overlay declaratively keeps `alert-evaluator` and
 rewrite desired replicas; Git is the source of truth for both workers.
 
 Recommendation rollout accepts the explicit selector
-`RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|continuous-v2|deterministic-evidence-v3`.
+`RECOMMENDATION_ALGORITHM_VERSION=legacy|professional-v1|deterministic-evidence-v3`.
 When it is absent,
 the existing `RECOMMENDATION_PERSONALIZATION_ENABLED` and
-`RECOMMENDATION_PERSONALIZATION_SHADOW` behavior remains unchanged. `continuous-v2`
-ignores the shadow flag and publishes `algorithmVersion="continuous-personalization-v2"`.
-API and recommendation-worker must receive the same selector.
+`RECOMMENDATION_PERSONALIZATION_SHADOW` behavior remains unchanged for professional-v1.
+`continuous-v2` is invalid. API and recommendation-worker must receive the same selector.
+The public recommendation routes do not accept a premarket/regular selector; keep both API
+and worker clocks configured consistently because the server resolves the active scoring
+session internally.
 
 `deterministic-evidence-v3` is non-predictive and ignores the shadow flag. Before activating
-direct recommendation v1, apply migrations `0013`, `0014`, and `0015` after `0012`; verify canonical cutoff-safe candles, quotes/spreads,
+direct recommendation v1 and company-grounded narrative, apply migrations `0013` through `0016` after `0012`; verify canonical cutoff-safe candles, quotes/spreads,
 tradability, news metadata, fundamentals, benchmark data, universe membership, and exchange
 calendar inputs for the complete prepared S&P 500 universe. The API and worker must be able to
 read and write the shared evidence snapshot tables. Rollback only changes the selector; the
@@ -473,6 +485,12 @@ minutes, fresh current data matching in Redis and ClickHouse, and 15 reliability
 candidates. Failure is `data_not_ready`, never a legacy recommendation. Narrative rollout uses
 `RECOMMENDATION_NARRATIVE_PROVIDER=openai` and optional
 `RECOMMENDATION_NARRATIVE_MODEL`; it falls back to deterministic Korean text without changing rank.
+Natural-language score-profile proposals use the same `OPENAI_API_KEY` secret with optional
+`RECOMMENDATION_PROFILE_SUGGESTION_MODEL` and
+`RECOMMENDATION_PROFILE_SUGGESTION_TIMEOUT_SECONDS`. Set
+`RECOMMENDATION_PROFILE_SUGGESTION_LLM_REQUIRED=true` only when a provider failure should reject
+the request instead of returning the validated deterministic retrieval draft. The API pod needs
+the key because this proposal endpoint is synchronous; it never writes or activates a profile.
 
 The fixed historical recommendation override is separate from live narrative generation. Both AWS
 app overlays set `RECOMMENDATION_FIXED_REPLAY_ENABLED=true` and
@@ -492,17 +510,19 @@ recommendation contract without disabling the historical replay provider.
 The artifact uses `sourceMode=historical_reconstruction`: candle and quote eligibility is based on
 `event_time <= 2026-07-14 16:00 ET`, while later insertion timestamps are preserved in manifest
 provenance. The pool stores the full 30-candidate V3 evidence set and fixed entry-plan inputs; raw
-ClickHouse rows remain outside git. Its natural-language layer is `deterministic_grounded`; it renders
-the frozen V3 decision values without an external request and is not labeled as OpenAI output.
+ClickHouse rows remain outside git. Its natural-language layer is `company_grounded`; artifact 생성
+시 Redis 10-K 프로필과 cutoff-safe 뉴스가 있으면 검증된 AI 문장 재료를 동결하고, 없으면
+회사명·업종 기반 결정론적 재료를 동결한다. 요청 시에는 외부 요청 없이 frozen context와
+개인화 action만 조합한다.
 
 For the staged deploy, keep an explicit container env override at `legacy` while applying the
 image and migrations, replace it with `deterministic-evidence-v3` only after the gates and offline
 replay pass, and validate a newly created 30-minute slot. Rollback sets the same explicit override
-back to `legacy`; migrations `0013`/`0014` and evidence rows remain intact.
+back to `legacy`; migrations `0013` through `0016` and evidence rows remain intact.
 
 A Git merge or push does not deploy this selector, application image, or database migration.
 Use the manual dev/test deploy workflow and treat the following as hard activation gates:
-the backend and recommendation-worker run the merged image, migrations `0011` through `0014`
+the backend and recommendation-worker run the merged image, migrations `0011` through `0016`
 are present, and SPY plus the candidate universe have the required completed daily and prior
 regular-session minute candles. The timestamped live AWS audit, measured gaps, backfill
 commands, portfolio/fill requirements, and verification order are maintained in
@@ -1291,12 +1311,22 @@ ClickHouse `company_journal_reports_v1`, `company_journal_generation_events_v1`�
 backend 이미지가 선택된 배포는 app rollout 전에
 `scripts/aws/run-company-journal-migrations-job.sh`를 자동 실행한다. migration은
 `CREATE TABLE IF NOT EXISTS`만 수행하고 실패하면 rollout을 중단한다. 이후 AWS scheduled
-overlay의 `gops-company-journal-worker`가 10분마다 pending event를 처리하고,
-`gops-company-journal-post-market`이 평일 23:30 UTC에 최근 데이터 기업을 갱신 예약한다.
-두 CronJob은 API 이미지와 ClickHouse/OpenAI secret을 사용하고 batch node pool에서 실행된다.
+overlay의 기존 이름 `gops-company-journal-worker`는 매분 30분을 제외하고 실행되는 경량
+Dispatcher다. 항상 켜진 `general-purpose` NodePool에서 ClickHouse pending 한 건의 존재 여부만
+확인하고, 요청이 있을 때만 `gops-company-journal-process-template`의 선언형 spec을 실제 Job으로
+복제한다. 이 템플릿 CronJob 자체는 항상 `suspend: true`이며, 실제 처리 Job만 API 이미지와
+ClickHouse/OpenAI secret을 사용해 동적 `batch` NodePool에서 최대 25건을 처리한다.
+
+Dispatcher는 전용 namespace Role로 processor label의 Job 조회·생성과 지정된 template CronJob
+조회만 허용된다. 활성 processor Job이 있으면 새 Job을 만들지 않고, Job 이름은 UTC 분 단위로
+결정해 같은 실행의 API 재시도는 `409 already exists`를 멱등 성공으로 처리한다. 매시 30분을
+비워 두는 이유는 평일 23:30 UTC의 `gops-company-journal-post-market`과 동시에 시작하지 않기
+위함이다. post-market Job은 최근 데이터 기업을 갱신 예약하고 최대 100건을 직접 처리하며,
+같은 processor label을 사용하므로 이후 Dispatcher도 실행 중인 야간 Job을 중복 실행하지 않는다.
 SEC companyfacts CronJob은 매일 20:30 UTC, Yahoo estimates CronJob은 21:15 UTC에 실행되어
-안정성/실적 차트 원천을 먼저 갱신한다. 기업저널 v2 worker는 최대 520개 일봉과 최근 42개월의
-SEC 실제치/Yahoo 예상치를 읽으며 원천 row를 복제하지 않고 receipt에 기간과 기준시각만 남긴다.
+안정성/실적 차트 원천을 먼저 갱신한다. 기업저널 v2 worker는 최대 520개 일봉과 2021년 이후의
+SEC 실제치, ClickHouse에 실제 적재된 Yahoo 예상치를 읽으며 원천 row를 복제하지 않고 receipt에
+기간과 기준시각만 남긴다. Yahoo 수집 전 과거 컨센서스는 추정하지 않는다.
 `company-journal-benchmark-bootstrap` Job은 SPY와 8개 섹터 ETF의 2년 `1D` 누락 timestamp만
 기존 candle-bootstrap 계약으로 추가한다. canonical v2/split 기존 행을 삭제하거나 덮어쓰지 않는다.
 CI/local deploy는 market-processor 이미지가 선택됐을 때 이 Job을 명시적으로 실행하고 완료를
@@ -1307,7 +1337,10 @@ CI/local deploy는 market-processor 이미지가 선택됐을 때 이 Job을 명
 ```text
 company-journal-migrations Job complete
 company-journal-benchmark-bootstrap Job complete, SPY·섹터 ETF 1D coverage 약 2년
-두 company-journal CronJob 존재 및 image tag가 backend와 동일
+company-journal Dispatcher와 post-market CronJob 존재 및 image tag가 backend와 동일
+gops-company-journal-process-template는 suspend=true이고 image tag가 backend와 동일
+pending 0건 Dispatcher 실행은 processor Job, batch NodeClaim, EC2를 생성하지 않음
+pending 존재 시 활성 processor가 없으면 다음 Dispatcher 실행에서 batch Job 한 개만 생성
 GET /api/company-journal/NVDA가 ready 또는 pending 계약 반환
 GET /api/company-journal/NVDA/evidence가 SEC/Yahoo/일봉 근거 또는 명시적 missingData 반환
 worker 완료 후 verified report가 ClickHouse에 append

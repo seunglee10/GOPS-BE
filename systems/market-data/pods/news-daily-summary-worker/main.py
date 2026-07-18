@@ -13,6 +13,7 @@ from alfaka.common.kafka_io import create_json_consumer
 from alfaka.serving.news_hot_cache import write_company_daily_summary_to_redis
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
 from alfaka.storage.news_daily_summary import (
+    SUMMARY_VERSION,
     article_ids_hash,
     build_daily_summary_record,
     clickhouse_row_to_daily_summary,
@@ -92,7 +93,11 @@ def process_dirty_event(
     redis_max_items = int(max_items if max_items is not None else os.getenv("NEWS_DAILY_REDIS_MAX_ITEMS", "30"))
     digest = article_ids_hash(article_ids)
     existing = read_existing_daily_summary(clickhouse_client, symbol=symbol, date=date, locale=locale)
-    if existing and str(existing.get("articleIdsHash") or existing.get("article_ids_hash") or "") == digest:
+    if (
+        existing
+        and str(existing.get("articleIdsHash") or existing.get("article_ids_hash") or "") == digest
+        and str(existing.get("version") or "") == SUMMARY_VERSION
+    ):
         existing_record = clickhouse_row_to_daily_summary(existing)
         if redis_client is not None and existing_record.get("date") and existing_record.get("symbol") and existing_record.get("summary"):
             write_company_daily_summary_to_redis(
@@ -217,7 +222,7 @@ def build_daily_summary_intelligence(*, symbol, date, rows, summarize_fn=None, m
                 return normalize_summary_intelligence(enriched), model or os.getenv("NEWS_DAILY_SUMMARY_MODEL", "openai")
         except Exception as exc:
             print(f"News daily summary OpenAI 실패: symbol={symbol} date={date} error={exc.__class__.__name__}", file=sys.stderr, flush=True)
-    return {}, "deterministic"
+    return {"key_points": []}, "deterministic"
 
 
 def summarize_daily_with_openai(*, symbol, date, rows, model=None):
@@ -232,7 +237,12 @@ def summarize_daily_with_openai(*, symbol, date, rows, model=None):
                 "content": (
                     "You prepare a daily company news brief for Korean retail investors. "
                     "Use only supplied article summaries. Do not add investment advice or outside facts. "
-                    "Return concise Korean JSON."
+                    "Return concise Korean JSON. "
+                    "keyPoints must contain exactly 2 or 3 keyword tags encoded as '라벨|direction'. "
+                    "Each label must be a Korean noun phrase no longer than 10 characters. "
+                    "Prefer everyday Korean; keep a technical term only when no equally short everyday phrase exists. "
+                    "For example, replace '리스크오프' with '위험 회피 분위기' and '순환매' with '기술주로 자금 유입'. "
+                    "Every tag must use positive, negative, or neutral; use neutral for material without a clear direction."
                 ),
             },
             {
@@ -265,7 +275,23 @@ def summarize_daily_with_openai(*, symbol, date, rows, model=None):
                     "additionalProperties": False,
                     "properties": {
                         "summary": {"type": "string"},
-                        "keyPoints": {"type": "array", "items": {"type": "string"}},
+                        "keyPoints": {
+                            "type": "array",
+                            "description": (
+                                "Exactly 2-3 directional keyword tags. Encode each item as '라벨|positive', "
+                                "'라벨|negative', or '라벨|neutral', using one direction after the pipe."
+                            ),
+                            "minItems": 2,
+                            "maxItems": 3,
+                            "items": {
+                                "type": "string",
+                                "description": (
+                                    "One tag encoded as '라벨|direction'. The label is an everyday Korean noun phrase "
+                                    "of at most 10 characters and direction is positive, negative, or neutral."
+                                ),
+                                "pattern": r"^.{1,10}\|(positive|negative|neutral)$",
+                            },
+                        },
                         "positivePoints": {"type": "array", "items": {"type": "string"}},
                         "concerns": {"type": "array", "items": {"type": "string"}},
                         "impactDirection": {"type": "string", "enum": ["positive", "negative", "neutral", "mixed"]},
@@ -318,12 +344,39 @@ def normalize_summary_intelligence(value):
         return {}
     return {
         "summary": value.get("summary"),
-        "key_points": value.get("keyPoints") or value.get("key_points"),
+        "key_points": normalize_keyword_tags(value.get("keyPoints") or value.get("key_points")),
         "positive_points": value.get("positivePoints") or value.get("positive_points"),
         "concerns": value.get("concerns"),
         "impact_direction": value.get("impactDirection") or value.get("impact_direction"),
         "sentiment": value.get("sentiment"),
     }
+
+
+def normalize_keyword_tags(value):
+    if not isinstance(value, list):
+        return []
+    tags = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        parts = item.strip().rsplit("|", 1)
+        if len(parts) != 2:
+            continue
+        label = " ".join(parts[0].split())
+        direction = parts[1].strip().lower()
+        if not label or len(label) > 10 or "|" in label:
+            continue
+        if direction not in {"positive", "negative", "neutral"}:
+            continue
+        encoded = f"{label}|{direction}"
+        if encoded in seen:
+            continue
+        tags.append(encoded)
+        seen.add(encoded)
+        if len(tags) == 3:
+            break
+    return tags if len(tags) >= 2 else []
 
 
 def daily_summary_status(date):

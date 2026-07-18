@@ -4,6 +4,59 @@
 지켜야 하는 계약을 정리한다. 백엔드 route와 delivery semantics는
 `AGENT_BACKEND_INTEGRATION.md`를 따른다.
 
+## 통합 추천 탐색 패널 (현재 계약)
+
+`recommendations`와 `recommendationsList`는 같은 S&P 500 탐색 컴포넌트를 사용한다.
+패널은 `추천 / 인기 Top 15 / 급등주 / 거래대금 / 전체 종목`의 서로 배타적인 목록 모드를 제공한다. 추천 모드만
+활성 프로필의 실제 적용 점수(`customRankScore`, 없으면 canonical `score`)를 표시하며
+점수가 계산된 전체 종목을 내림차순으로 노출하고 임의의 Top N으로 자르지 않는다.
+인기 Top 15는 `sessionDollarVolume` 상위 15종목이며 별도 인기 점수를 만들지 않는다.
+급등주는 양의 등락률 내림차순, 거래대금은
+`sessionDollarVolume` 내림차순이다. 거래대금이나 급등 정도를 별도 점수로 환산하거나
+추천 점수와 합치지 않는다. 전체 종목은 전체 S&P 500을 티커순으로 제공한다. 검색, 등락 방향,
+섹터와 모든 수치 지표 필터는 추천·인기 Top 15·급등주·거래대금·전체 종목에 공통으로 표시하고
+적용한다. 선택한 필터는 목록 모드를 전환해도 유지하며, 각 모드는 기존 유니버스와 정렬 기준만
+독립적으로 유지한다. 추천 API 실패 시에도 급등주와
+거래대금 목록 및 시장 검색은 유지한다.
+
+패널 상단의 `추천 로직 설정`은 목록과 같은 레벨의 패널 내부 탭이다. overlay, dialog,
+side rail 또는 장전/본장 selector를 만들지 않는다. 로직 탭은 활성 점수 프로필과 여섯
+근거 블록, 실제 세부 지표 및 포트폴리오 적합도 가중치는 캔버스가 아닌 직접 조작형
+비중 믹서로 표시한다. 상단 누적 바는 전체 100% 배분을 즉시 보여주고, 아래의 모든
+신호 카드는 신호 비중과 세부 지표 slider·숫자 입력을 한 화면에 펼친다. 한 값을
+바꾸면 같은 그룹의 나머지 활성 값이 자동 재배분된다. 모멘텀·균형·안정은 편집하거나 직접 활성화하는
+프로필 탭이 아니라 새 로직에 불러오는 읽기 전용 시작 프리셋이다. 저장된 사용자
+로직만 `내 로직` 목록에 표시한다. 사용자는 신호와 지표를 바로 추가·제거하고 slider와 숫자
+입력으로 비중을 편집한다. 프리셋을 불러오면 사용자 로직 초안으로 전환되며, 한 항목을 바꾸면 같은 그룹의
+나머지 활성 항목을 비례 재배분해 합계 100%를 유지한다. 저장·활성화하면 종목 목록
+탭으로 돌아가 새 profile revision으로 계산한 추천을 다시 읽는다.
+선택한 시작 프리셋과 사용자 로직은 흰색 채움과 검은 글자로 표시한다. 전체 비중 막대는
+초기 파랑·초록·주황·분홍·보라·청록 신호 팔레트를 패널 배경과 섞은 저채도 색상으로 표시한다.
+`내 로직`에는 자연어 요청 입력과 `AI 제안` 버튼을 둔다. 제안 카드는 상위 블록 비중만
+간결하게 표시하고 hover/focus에서 검색된 의도 문서, 최신 evidence/news 근거와 제안 이유를
+펼친다. `초안에 적용` 전에는 현재 선택·저장·활성 프로필을 바꾸지 않으며, 적용 후에도 기존
+가중치 편집기에서 검토한 뒤 `저장` 또는 `저장하고 추천 재계산`을 눌러야 반영된다.
+
+모든 목록 모드는 추천점수·RSI(14)·공시 EPS 기반 PER·PBR·ROE·부채비율·영업이익률·
+FCF 마진·거래대금과 등락 방향·섹터 필터를 공통으로 제공한다. 활성화한 범위끼리는
+AND이며 값이 없는 종목은 해당 범위에서 제외한다. RSI는 heatmap 생성 시
+완료 일봉 15개를 batch 조회한 값이고, 재무 비율은 API가 제공한 point-in-time 공시
+필드에서만 계산한다.
+
+`popular` panel/palette는 제거됐다. 저장 레이아웃의 단독 `popular`는 같은 위치의
+`recommendationsList`의 거래대금 모드(`initialPopular=true`)로 변환하고, 기존 추천 패널과 함께 있으면
+옛 인기 패널만 제거한다. Agent의 `popularStocks` 명령은 동일한 호환 변환을 사용한다.
+목록 헤더는 별도 `사용자/시장` 그룹 없이 `추천 / 인기 Top 15 / 급등주 / 거래대금 / 전체 종목`만 표시한다. 모드명과
+결과 개수를 반복하는 별도 보조 행은 표시하지 않는다. 필터
+접기 제목은 `필터 ›`이며 모든 모드에 같은 상세 조건을 표시한다. 행은 기업 식별,
+등락률, 섹터만 표시하고 추천 모드에는 추천 점수와 순위를, 인기 모드에는 거래대금 기반
+순위만 추가한다. 모든 행의 순위·로고·기업명·등락률·섹터·점수는 각 컬럼의 왼쪽 축에 맞춘다. 별도 `추천 선택`
+버튼은 없으며 행 클릭 자체가 선택/해제다. 선택 행은 흰색으로 표시되고 화면을
+차트분석으로 자동 전환하지 않는다. 추천 행 선택은 `recommendation.stock` Agent 참조와
+동기화하고 시장 행 선택은 패널 로컬 선택으로 유지한다.
+추천 점수는 흰색 알약과 검은 글자로 표시하고, 점수 hover/focus에는 응답의 실제 적용 블록
+점수와 비중 및 포트폴리오 적합도를 표시한다. 값이 없는 구형 응답에는 임의 점수를 만들지 않는다.
+
 ## Frontend Role
 
 프런트는 사용자의 질문, 현재 종목, 차트/레이아웃 context를 백엔드에 보내고
@@ -710,13 +763,11 @@ panel의 symbol/interval/coverage 상태와 연결하지 않는다. 응답의 `r
 `cacheStatus`, `warning`, `items[]`를 사용해 자동 새로고침, stale 표시, 행별 가격과
 변동률을 렌더링한다.
 
-popular stocks panel은 `panelType="popularStocks"`/`kind="popular"`로 표현한다.
-기본 배치와 읽기 가능한 최소 너비는 1 column이며 기본 높이는 2 rows다.
-현재 `gops-frontend`는 App이 이미 폴링 중인 `GET /api/market/heatmap?universe=sp500`
-items를 패널로 전달해 S&P500 거래대금순 Top10을 렌더링한다. 별도 heatmap 요청은
-추가하지 않고, 금액 표시는 `GET /api/market/indices`의 `KRW=X` 환율을 사용해
-조원/억원 단위로 환산한다. Top10의 섹터 컬럼은 GraphDB `gops:sector` canonical
-값의 `sectorLabelKo` 한글 라벨을 표시하며, 산업명과 섞어 표시하지 않는다.
+독립 `popularStocks`/`popular` 패널은 없다. 저장 레이아웃과 Agent 명령의
+`popularStocks`는 호환 입력으로만 받아 `recommendationsList`와 인기 Top 15 초기
+필터로 변환한다. 통합 패널은 App이 이미 폴링 중인
+`GET /api/market/heatmap?universe=sp500` items와 점수가 계산된 전체 추천 item을 symbol로 결합한다.
+섹터 컬럼은 GraphDB `gops:sector` canonical 값의 `sectorLabelKo` 한글 라벨을 사용한다.
 히트맵/트리맵도 grouping key는 canonical `sector`를 유지하고, 섹터 타일과 hover
 표시는 같은 `sectorLabelKo` 한글 라벨을 사용한다. LIVE 등락률은 API가 제공하는
 `previousClose`(전일 정규장 종가)를 기준으로 계산된 값만 사용한다. 기준 종가가
@@ -726,14 +777,14 @@ items를 패널로 전달해 S&P500 거래대금순 Top10을 렌더링한다. �
 stock recommendations panel은 `panelType="stockRecommendations"`/`kind="recommendations"`로
 표현한다. 패널은 `GET /api/recommendations/stocks/latest`로 마지막 장중 추천을
 읽고, 새로고침 버튼은 `POST /api/recommendations/stocks/refresh`에 현재 active
-symbol을 보낸다. 패널 상단 왼쪽의 `추천 설정` 버튼은 hover/focus 때 표시되고 중앙
-dialog에서 `GET /api/recommendations/profile`로 현재 값을 읽어
-`PUT /api/recommendations/profile`로 저장한다. 저장 성공 시 dialog를 닫고 현재
-장전/본장 모드의 추천을 다시 조회한다. 추천 행 클릭은 차트 symbol을 바꾸지 않고
-`recommendation.stock` Agent reference를 선택하며 주문 실행으로 연결하지 않는다.
+symbol을 보낸다. 공개 API와 UI는 `sessionMode`를 받지 않으며 서버가 현재 시장 시각에
+맞는 활성 세션을 내부 선택한다. `추천 로직 설정` 탭은 score-profile API로 사용자
+가중치를 저장·활성화하고 성공 시 종목 목록 탭으로 돌아가 추천을 다시 조회한다.
+추천 행 클릭은 화면 전환 없이 `recommendation.stock` Agent reference를 선택/해제한다.
+시장 목록 행은 같은 흰색 로컬 선택 상태를 사용한다. 어느 경로도 주문을 실행하지 않는다.
 추천 행의 섹터도
 `sectorLabelKo` 한글 라벨을 사용한다.
-LIVE mode에서는 선택한 `pre` 또는 `regular`의 API item만 표시한다. `items=[]`이면
+LIVE mode에서는 API가 반환한 최신 활성 세션 item만 표시한다. `items=[]`이면
 빈 상태를 유지하고 다른 세션이나 S&P 500 seed 기반 고정 종목으로 대체하지 않는다.
 고정 replay override 응답은 예외다. `sourceMode=historical_reconstruction` provenance는
 API 계약과 artifact 검증에 유지하되 목록과 해설 UI에 별도 배너나 내부 진단 메타데이터를
@@ -762,7 +813,9 @@ headline은 숫자 요약이 아니라 행동 결론을 가장 크게 표시하�
 decision이 없거나 action이 불일치하면 프런트는 해당 item을 `매수 관찰`로 표시하고
 진입 계획을 숨긴다. 따라서 direct v1이 꺼진 fixed replay나 구형 응답이 모든 종목을
 `매수 추천`으로 보이게 할 수 없다. 추천 목록의 한 줄 근거는 수치형 `primaryValue`가 아니라
-backend가 확정한 `explanation.primary.headline` 문장을 사용한다.
+backend가 확정한 `explanation.primary.listSummary`를 우선 사용한다. 구형 응답에 이 필드가
+없으면 기존 evidence-label 요약으로 fallback한다. 상세 해설은 종목별 `headline`과 3~5문장
+`body`를 표시하며 이 문장으로 action이나 가격을 재계산하지 않는다.
 
 public company journal panel은 `panelType="companyJournal"`/`kind="companyJournal"`로
 표현한다. 이 패널은 기존 기업 수익성·안정성·가치평가 차트와 뉴스 목록을

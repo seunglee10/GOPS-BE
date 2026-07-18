@@ -76,19 +76,13 @@ def test_missing_required_price_evidence_cannot_be_direct_or_conditional_buy() -
     assert decision["failedConditions"][0]["code"] == "missing_required_price_evidence"
 
 
-def test_profile_and_preference_context_exclude_rows_after_cutoff() -> None:
+def test_profile_context_excludes_rows_after_cutoff() -> None:
     repository = InMemoryRecommendationRepository()
     repository.profile_history = [
         {"id": 1, "user_sub": "user-1", "payload": {"risk_level": "balanced"}, "source_as_of": "2026-07-14T15:00:00-04:00"},
         {"id": 2, "user_sub": "user-1", "payload": {"risk_level": "aggressive"}, "source_as_of": "2026-07-14T17:00:00-04:00"},
     ]
-    repository.preference_states = [
-        {"id": 1, "user_sub": "user-1", "state_version": 1, "payload": {"asOf": "2026-07-14T15:30:00-04:00", "marker": "eligible"}},
-        {"id": 2, "user_sub": "user-1", "state_version": 2, "payload": {"asOf": "2026-07-14T16:30:00-04:00", "marker": "future"}},
-    ]
-
     assert repository.get_profile_at("user-1", CUTOFF)["risk_level"] == "balanced"
-    assert repository.get_preference_state_at("user-1", CUTOFF)["marker"] == "eligible"
 
 
 def test_key_evidence_uses_only_available_v3_blocks() -> None:
@@ -194,7 +188,7 @@ def test_cautions_are_structured_deduplicated_and_ground_chase_risk_in_prices() 
     assert not {"decision_scope", "confidence_scope"}.intersection(row["code"] for row in cautions)
 
 
-def test_action_aware_renderer_v7_keeps_headline_and_body_natural() -> None:
+def test_action_aware_renderer_v8_keeps_company_specific_headline_and_detailed_body() -> None:
     evidence = [
         {"interpretation": "SPY 대비 상대강도가 양수였습니다.", "metrics": [{"value": "+1.20%p"}]},
         {"interpretation": "동시간 거래량이 기준을 넘었습니다.", "metrics": [{"value": "1.40배"}]},
@@ -202,14 +196,27 @@ def test_action_aware_renderer_v7_keeps_headline_and_body_natural() -> None:
         {"interpretation": "호가 스프레드는 8.00bp로 균형형 한도 10.0bp와 비교했습니다."},
     ]
     expected = {
-        "buy": "계획된\u00a0가격대에서 매수를 검토",
-        "conditional_buy": "남은 조건을 확인",
-        "watch": "관찰 대상으로 유지",
-        "not_suitable": "현재 계좌 한도",
+        "buy": "계획된 가격대에서 진입을 검토",
+        "conditional_buy": "확인이 먼저",
+        "watch": "관찰이 우선",
+        "not_suitable": "현재 계좌 위험 한도",
     }
     for action, headline_part in expected.items():
         item = {
+            "symbol": "AAA",
             "action": action,
+            "narrativeContext": {
+                "version": "recommendation-narrative-context.v1",
+                "status": "ready",
+                "digest": "company-context",
+                "company": {"symbol": "AAA", "companyName": "알파", "industry": "Application Software"},
+                "tenK": {
+                    "sourceAccession": "alpha-10k",
+                    "businessModel": {"structure": "구독형 소프트웨어", "segments": [], "revenueModel": [], "platform": None},
+                    "revenueDrivers": ["기업 고객의 구독 갱신"],
+                    "riskFactors": [{"category": "경쟁", "summary": "제품 전환 경쟁이 이어집니다."}],
+                },
+            },
             "keyEvidence": evidence,
             "counterEvidence": {
                 "sentence": "마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다."
@@ -217,12 +224,9 @@ def test_action_aware_renderer_v7_keeps_headline_and_body_natural() -> None:
             "metricsSnapshot": {"evidenceReliability": 80},
         }
         primary = decision_explanation(item, target_session_date="2026-07-15")["primary"]
-        assert primary["promptVersion"] == "recommendation-decision-renderer.ko.v7"
+        assert primary["promptVersion"] == "recommendation-decision-renderer.ko.v8"
+        assert primary["listSummary"].startswith("AAA ")
+        assert "AAA 알파" in primary["headline"]
         assert headline_part in primary["headline"]
-        if action == "conditional_buy":
-            assert "거래\u00a0참여는\u00a0확인됐지만" in primary["headline"]
-        if action == "buy":
-            assert primary["body"] == ""
-        else:
-            assert primary["body"]
-            assert 1 <= primary["body"].count("습니다.") <= 2
+        assert primary["body"]
+        assert 3 <= len([sentence for sentence in primary["body"].split(". ") if sentence]) <= 5

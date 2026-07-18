@@ -15,7 +15,8 @@ from .decision_v1 import (
     personalization_digest,
     response_digest,
 )
-from .professional_v3 import process_evidence_preference_events, rank_evidence_candidates
+from .professional_v3 import rank_evidence_candidates
+from .narrative_context import build_narrative_context
 
 
 ENABLED_ENV = "RECOMMENDATION_FIXED_REPLAY_ENABLED"
@@ -59,11 +60,12 @@ class FixedReplayRecommendationProvider:
         *,
         profile: dict[str, Any] | None = None,
         portfolio_snapshot: dict[str, Any] | None = None,
-        preference_state: dict[str, Any] | None = None,
+        score_profile: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not decision_v1_enabled():
             result = copy.deepcopy(self.payload)
             result.pop("candidatePool", None)
+            result["scoringMode"] = "canonical_fixed_replay"
             for item in result.get("items") or []:
                 item.pop("decision", None)
                 item.pop("sizing", None)
@@ -74,7 +76,7 @@ class FixedReplayRecommendationProvider:
         return self.personalized_response(
             profile=profile,
             portfolio_snapshot=portfolio_snapshot,
-            preference_state=preference_state,
+            score_profile=score_profile,
         )
 
     def personalized_response(
@@ -82,7 +84,7 @@ class FixedReplayRecommendationProvider:
         *,
         profile: dict[str, Any] | None,
         portfolio_snapshot: dict[str, Any] | None,
-        preference_state: dict[str, Any] | None,
+        score_profile: dict[str, Any] | None,
     ) -> dict[str, Any]:
         cutoff = datetime.fromisoformat(str(self.payload["evidenceAsOf"]))
         normalized_profile = _profile_snapshot(profile)
@@ -93,19 +95,26 @@ class FixedReplayRecommendationProvider:
             excluded_sectors=tuple(normalized_profile["excludedSectors"]),
         )
         positions = _portfolio_positions(portfolio_snapshot)
-        state = preference_state
-        if not state:
-            state, _events = process_evidence_preference_events(
-                None,
-                [],
-                style=normalized_profile["recommendationStyle"],
+        candidates = copy.deepcopy(self.payload.get("candidatePool") or [])
+        for candidate in candidates:
+            if candidate.get("narrativeContext"):
+                continue
+            candidate["narrativeContext"] = build_narrative_context(
+                symbol=str(candidate.get("symbol") or ""),
+                market_item={
+                    **(candidate.get("marketItem") or {}),
+                    "sector": candidate.get("sector"),
+                    "industry": candidate.get("industry"),
+                },
+                company_profile=None,
+                news=[],
+                raw_factors=candidate.get("rawFactors") or {},
                 cutoff=cutoff,
             )
         ranking = rank_evidence_candidates(
-            copy.deepcopy(self.payload.get("candidatePool") or []),
+            candidates,
             profile=profile_object,
-            preference_state=state,
-            risk_state={},
+            score_profile=score_profile,
             watchlist_symbols=[],
             portfolio_positions=positions,
             portfolio_snapshot=portfolio_snapshot,
@@ -126,14 +135,14 @@ class FixedReplayRecommendationProvider:
         context = {
             "profile": normalized_profile,
             "portfolio": _portfolio_digest_payload(portfolio_snapshot),
-            "preference": state,
+            "scoreProfile": score_profile,
             "cutoff": self.payload["evidenceAsOf"],
         }
         result = copy.deepcopy(self.payload)
         result.pop("candidatePool", None)
-        result["personalizationMode"] = "cutoff_user_context"
+        result["scoringMode"] = "cutoff_user_profile"
         result["profile"] = normalized_profile
-        result["personalizationDigest"] = personalization_digest(context)
+        result["scoringDigest"] = personalization_digest(context)
         result["items"] = items
         result["summary"] = {
             **(result.get("summary") or {}),
@@ -219,7 +228,7 @@ def validate_contract(payload: dict[str, Any], manifest: dict[str, Any]) -> None
         "targetSessionDate": "2026-07-15",
         "sourceMode": "historical_reconstruction",
         "personalizationMode": "cutoff_user_context",
-        "narrativeMode": "deterministic_grounded",
+        "narrativeMode": "company_grounded",
         "algorithmVersion": "deterministic-evidence-v3",
     }
     for key, value in expected.items():
@@ -233,6 +242,16 @@ def validate_contract(payload: dict[str, Any], manifest: dict[str, Any]) -> None
     candidates = payload.get("candidatePool")
     if not isinstance(candidates, list) or len(candidates) < 15:
         raise FixedReplayProviderError("fixed recommendation artifact candidate pool is incomplete")
+    for candidate in candidates:
+        context = candidate.get("narrativeContext") if isinstance(candidate, dict) else None
+        if (
+            not isinstance(context, dict)
+            or context.get("version") != "recommendation-narrative-context.v1"
+            or context.get("status") not in {"ready", "partial"}
+            or not context.get("digest")
+            or not isinstance(context.get("narrativeAtoms"), dict)
+        ):
+            raise FixedReplayProviderError("fixed recommendation narrative context is incomplete")
     evidence_pool_digest = hashlib.sha256(
         json.dumps(candidates, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     ).hexdigest()
@@ -244,9 +263,13 @@ def validate_contract(payload: dict[str, Any], manifest: dict[str, Any]) -> None
         if float(item.get("confidence") or 0) < 0.70:
             raise FixedReplayProviderError("fixed recommendation contains confidence below 70")
         primary = ((item.get("explanation") or {}).get("primary") or {})
-        if primary.get("source") != "deterministic" or primary.get("status") != "ready":
+        if primary.get("source") not in {"deterministic", "llm"} or primary.get("status") != "ready":
             raise FixedReplayProviderError("fixed recommendation narrative must be grounded and frozen")
-        if primary.get("model") is not None or primary.get("promptVersion") != "recommendation-decision-renderer.ko.v2":
+        if primary.get("source") == "deterministic" and primary.get("model") is not None:
+            raise FixedReplayProviderError("fixed recommendation deterministic narrative provenance is invalid")
+        if primary.get("source") == "llm" and not primary.get("model"):
+            raise FixedReplayProviderError("fixed recommendation LLM narrative provenance is invalid")
+        if primary.get("promptVersion") != "recommendation-decision-renderer.ko.v8":
             raise FixedReplayProviderError("fixed recommendation narrative provenance is invalid")
     actions = {str(item.get("symbol")): str(item.get("action")) for item in items}
     if {symbol for symbol, action in actions.items() if action == "buy"} != {"JPM", "AMZN"}:

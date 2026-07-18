@@ -135,6 +135,36 @@ def test_deterministic_evidence_v3_migration_declares_immutable_evidence_storage
     assert "evidence_candidate_id" in sql
 
 
+def test_score_profile_cleanup_migration_preserves_core_history_and_drops_fill_preferences():
+    [migration] = [
+        path for path in migration_files() if path.name == "0017_recommendation_score_profiles.sql"
+    ]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS user_recommendation_score_profiles" in sql
+    assert "active_score_profile_id" in sql
+    assert "profile_revision" in sql
+    assert "scoring_input_digest" in sql
+    assert "scoring_snapshot" in sql
+    for table_name in [
+        "user_recommendation_preference_events",
+        "stock_recommendation_candidate_features",
+        "user_recommendation_preference_states",
+        "user_recommendation_risk_states",
+    ]:
+        assert f"DROP TABLE IF EXISTS {table_name}" in sql
+    for preserved_table in [
+        "orders",
+        "executions",
+        "order_coach_fill_history",
+        "stock_recommendation_evidence_snapshots",
+        "stock_recommendation_runs",
+        "stock_recommendation_items",
+        "stock_recommendation_outcomes",
+    ]:
+        assert f"DROP TABLE IF EXISTS {preserved_table}" not in sql
+
+
 def test_paper_trading_migration_declares_isolated_account_and_order_tables():
     [migration] = [path for path in migration_files() if path.name == "0006_paper_trading.sql"]
     sql = migration.read_text(encoding="utf-8")

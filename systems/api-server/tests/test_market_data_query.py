@@ -666,6 +666,10 @@ class FakeHeatmapClickHouseProvider:
         rows = [row for row in self.rows if row.get("symbol") in allowed]
         return rows[:limit] if limit is not None else rows
 
+    def latest_daily_rsi14(self, symbols):
+        self.calls.append({"symbols": list(symbols), "method": "latest_daily_rsi14"})
+        return {"AAPL": 63.25}
+
     def table(self, name):
         return f"market_data.{name}"
 
@@ -3291,6 +3295,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["items"][0]["revenue"], 100000)
         self.assertEqual(payload["items"][0]["totalEquity"], 50000)
         self.assertEqual(payload["items"][0]["freeCashFlow"], 10000)
+        self.assertEqual(payload["items"][0]["rsi14"], 63.25)
         self.assertEqual(payload["items"][0]["layoutMarketCap"], 200000)
         self.assertEqual(payload["items"][0]["layoutMarketCapSource"], "fundamentals")
         self.assertEqual(payload["items"][0]["fundamentalsAsOf"], "2026-07-05")

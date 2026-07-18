@@ -10,6 +10,7 @@ from typing import Any
 
 from app.core.sectors import normalize_sector
 
+from .explanations import render_decision_primary
 from .professional import parse_datetime, position_value
 from .professional_v2 import RISK_PRESETS
 
@@ -67,8 +68,7 @@ COUNTER_EVIDENCE_PRIORITY = {
         "quoted_spread",
         "material_penalty",
         "evidence_reliability",
-        "base_score",
-        "personal_score",
+        "custom_score",
     ))
 }
 
@@ -131,8 +131,10 @@ def build_decision(
     metrics = _record(item.get("metricsSnapshot"))
     raw = _record(metrics.get("rawFactors"))
     penalties = _record(metrics.get("softPenalties"))
-    base_score = _number(metrics.get("adjustedSetupScore"), _number(metrics.get("baseSetupScore"), item.get("score")))
-    personal_score = _number(metrics.get("personalScore"), item.get("score"))
+    custom_score = _number(
+        metrics.get("customRankScore"),
+        _number(metrics.get("adjustedSetupScore"), _number(metrics.get("baseSetupScore"), item.get("score"))),
+    )
     reliability = _number(metrics.get("evidenceReliability"), _number(item.get("confidence")) * 100.0)
     spread_cap = DIRECT_SPREAD_CAP_BPS.get(risk_level, DIRECT_SPREAD_CAP_BPS["balanced"])
 
@@ -150,8 +152,7 @@ def build_decision(
         missing_required.append("validQuote")
 
     conditions = [
-        _condition("base_score", "V3 기본 점수", base_score, 65.0, base_score >= 65.0),
-        _condition("personal_score", "개인화 점수", personal_score, 65.0, personal_score >= 65.0),
+        _condition("custom_score", "사용자 설정 점수", custom_score, 65.0, custom_score >= 65.0),
         _condition("evidence_reliability", "근거 신뢰도", reliability, 75.0, reliability >= 75.0),
         _condition(
             "current_relative_strength",
@@ -207,15 +208,14 @@ def build_decision(
     confirmation_failures = [
         condition
         for condition in failed
-        if condition["code"] not in {"base_score", "personal_score", "evidence_reliability"}
+        if condition["code"] not in {"custom_score", "evidence_reliability"}
     ]
     all_required = not missing_required
     direct = all_required and not failed
     conditional = (
         all_required
         and not direct
-        and base_score >= 60.0
-        and personal_score >= 60.0
+        and custom_score >= 60.0
         and reliability >= 70.0
         and _number(raw.get("overextensionAtr"), math.inf) <= 2.0
         and len(confirmation_failures) <= 1
@@ -768,8 +768,7 @@ def build_counter_evidence(item: dict[str, Any], decision: dict[str, Any]) -> di
 
 def counter_evidence_sentence(code: str) -> str:
     return {
-        "base_score": "종합 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
-        "personal_score": "개인화 판단 점수가 직접 매수 기준에 미치지 못했습니다.",
+        "custom_score": "사용자 설정 점수가 직접 매수 기준에 미치지 못했습니다.",
         "evidence_reliability": "사용된 가격·거래 근거의 신뢰도가 직접 매수 기준에 미치지 못했습니다.",
         "current_relative_strength": "당일에는 SPY보다 약해 시장 대비 강도가 부족했습니다.",
         "last60_relative_strength": "마감 전에는 시장 대비 강도가 약해 추가 확인이 필요합니다.",
@@ -787,45 +786,25 @@ def decision_explanation(item: dict[str, Any], *, target_session_date: str) -> d
     explanation = deepcopy(_record(item.get("explanation")))
     action = str(item.get("action") or "watch")
     label = ACTION_LABELS.get(action, ACTION_LABELS["watch"])
-    evidence = item.get("keyEvidence") or []
-    interpretations = [
-        str(row.get("interpretation") or "").strip()
-        for row in evidence
-        if isinstance(row, dict) and str(row.get("interpretation") or "").strip()
-    ]
-    counter = _record(item.get("counterEvidence"))
-    counter_sentence = str(counter.get("sentence") or "").strip()
-    if action == "buy":
-        headline = "시장보다 강한 흐름과 활발한 거래가 이어져, 계획된\u00a0가격대에서 매수를 검토할 수 있습니다."
-        body_sentences = []
-    elif action == "conditional_buy":
-        headline = "시장보다 강한 흐름과 거래\u00a0참여는\u00a0확인됐지만, 남은 조건을 확인한 뒤 매수를 검토해야 합니다."
-        body_sentences = [
-            "가격 구조와 체결 여건은 진입 계획에 사용할 수 있지만, 유의할 점의 남은 조건이 해소되기 전에는 주문하지 않습니다."
-        ]
-    elif action == "not_suitable":
-        headline = "시장 근거와 별개로 현재 계좌 한도에서는 신규 진입에 적합하지 않습니다."
-        body_sentences = [interpretations[0] if interpretations else "", counter_sentence or "현재 계좌의 위험예산·현금·집중도 한도에서 한 주 이상 배정할 수 없습니다."]
-    else:
-        headline = "현재는 직접 매수 조건이 충분하지 않아 관찰 대상으로 유지합니다."
-        body_sentences = interpretations[1:3]
-    body = " ".join(dict.fromkeys(sentence for sentence in body_sentences if sentence))
+    primary = render_decision_primary(item)
+    primary_payload = {
+        key: value for key, value in primary.items()
+        if key not in {"companyRefs", "evidenceRefs"}
+    }
     explanation.update({
         "version": "recommendation-explanation.v1",
         "locale": "ko-KR",
         "decisionLabel": label,
         "primary": {
-            "source": "deterministic",
-            "status": "ready",
-            "headline": headline,
-            "body": body,
-            "model": None,
-            "promptVersion": "recommendation-decision-renderer.ko.v7",
-            "generatedAt": explanation.get("primary", {}).get("generatedAt") if isinstance(explanation.get("primary"), dict) else None,
+            **primary_payload,
+            "generatedAt": primary.get("generatedAt") or (
+                explanation.get("primary", {}).get("generatedAt")
+                if isinstance(explanation.get("primary"), dict) else None
+            ),
         },
     })
     deterministic = _record(explanation.get("deterministic"))
-    deterministic["summary"] = body
+    deterministic["summary"] = primary["body"]
     deterministic["evidence"] = []
     deterministic["risks"] = []
     deterministic["dataQuality"] = {
@@ -837,7 +816,16 @@ def decision_explanation(item: dict[str, Any], *, target_session_date: str) -> d
         "stale": False,
     }
     explanation["deterministic"] = deterministic
-    explanation.setdefault("provenance", {})
+    provenance = explanation.setdefault("provenance", {})
+    context = _record(item.get("narrativeContext"))
+    ten_k = _record(context.get("tenK"))
+    provenance.update({
+        "companyContextStatus": context.get("status") or "partial",
+        "companyContextDigest": context.get("digest") or "",
+        "companyProfileAccession": ten_k.get("sourceAccession") or "",
+        "usedCompanyRefs": primary.get("companyRefs") or [],
+        "usedEvidenceRefs": primary.get("evidenceRefs") or [],
+    })
     return explanation
 
 

@@ -640,8 +640,66 @@ def provider_request_symbols(request: ProviderRequest) -> list[str]:
     return symbols
 
 
+def normalize_ten_k_business_model(value: Any) -> tuple[str | dict[str, Any] | None, str]:
+    """Preserve structured profile cards without leaking Python repr strings."""
+    if isinstance(value, str):
+        text = value.strip()
+        return (text or None), text
+    if not isinstance(value, dict):
+        return None, ""
+
+    structure = value.get("structure")
+    structure = structure.strip() if isinstance(structure, str) else ""
+
+    segments: list[dict[str, str]] = []
+    raw_segments = value.get("segments")
+    if isinstance(raw_segments, list):
+        for segment in raw_segments:
+            if not isinstance(segment, dict):
+                continue
+            name = segment.get("name")
+            detail = segment.get("detail")
+            name = name.strip() if isinstance(name, str) else ""
+            detail = detail.strip() if isinstance(detail, str) else ""
+            if name and detail:
+                segments.append({"name": name, "detail": detail})
+
+    revenue_model: list[str] = []
+    raw_revenue_model = value.get("revenueModel")
+    if isinstance(raw_revenue_model, list):
+        for item in raw_revenue_model:
+            text = item.strip() if isinstance(item, str) else ""
+            if text and text not in revenue_model:
+                revenue_model.append(text)
+
+    platform = value.get("platform")
+    platform = platform.strip() if isinstance(platform, str) else ""
+
+    if not structure and not segments and not revenue_model and not platform:
+        return None, ""
+
+    normalized = {
+        "structure": structure,
+        "segments": segments,
+        "revenueModel": revenue_model,
+        "platform": platform or None,
+    }
+    first_segment = segments[0] if segments else None
+    summary = (
+        structure
+        or (
+            f"{first_segment['name']} — {first_segment['detail']}"
+            if first_segment
+            else ""
+        )
+        or (revenue_model[0] if revenue_model else "")
+        or platform
+    )
+    return normalized, summary
+
+
 def ten_k_profile_to_evidence(payload: dict[str, Any], symbol: str) -> EvidenceItem:
-    business_model = str(payload.get("businessModel") or "").strip()
+    business_model, business_summary = normalize_ten_k_business_model(payload.get("businessModel"))
     risk_factors = [item for item in payload.get("riskFactors") or [] if isinstance(item, dict)]
     if not business_model and not risk_factors:
         return EvidenceItem.no_data(
@@ -649,7 +707,7 @@ def ten_k_profile_to_evidence(payload: dict[str, Any], symbol: str) -> EvidenceI
             f"{symbol} 10-K profile is empty",
             f"{symbol}의 10-K 프로파일 카드에 사업 또는 리스크 요약이 없습니다.",
         )
-    summary = business_model or f"{symbol} 10-K 리스크 요약 {len(risk_factors)}건"
+    summary = business_summary or f"{symbol} 10-K 리스크 요약 {len(risk_factors)}건"
     return EvidenceItem(
         provider="ten-k-profile",
         status="available",

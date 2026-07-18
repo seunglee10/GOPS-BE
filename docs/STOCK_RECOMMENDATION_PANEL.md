@@ -1,6 +1,25 @@
-# 장중 매수 추천 패널: 현재 구현과 개선 계약
+# 통합 추천 패널: 현재 구현과 개선 계약
 
 이 문서는 장중 매수 추천이 어디에서 시작되고, 어떤 데이터와 규칙을 거쳐 화면과 알림으로 전달되는지 설명한다.
+
+> 현재 구현 기준: 추천 패널은 S&P 500 통합 탐색 패널이며 `추천 / 인기 Top 15 / 급등주 / 거래대금 / 전체 종목`
+> 목록을 분리한다. 추천에만 사용자 점수를 표시하고, 급등주는 등락률, 거래대금 목록은
+> 실제 거래대금으로 정렬한다. 전체 종목은 티커순이며 검색·등락 방향·섹터·전체 수치 필터는
+> 다섯 목록에 공통으로 적용된다. 모드명과 결과 개수를 반복하는 보조 행은 표시하지 않는다.
+> 장전/본장 선택은 공개 UI와 API에서 제거됐고, 추천 로직 설정은 목록과 같은 레벨의
+> 패널 내부 탭이다. 모든 지표는 전체 100% 누적 바와 펼쳐진 신호 카드로 구성된 비중
+> 믹서에서 바로 추가·제거하고 slider·숫자 입력으로 조절한다. 캔버스 이동이나 연결선은
+> 사용하지 않는다. 모멘텀·균형·안정은 읽기 전용 시작 프리셋이며
+> 사용자의 저장된 로직과 같은 프로필 목록에 섞지 않는다.
+> `내 로직`의 자연어 요청은 한국어 query fragment와 고정 신호 문서를 검색하고 최신
+> immutable evidence/news snapshot을 근거로 LLM 가중치 초안을 제안한다. hover/focus에서
+> 제안 근거를 확인하고 명시적으로 초안에 적용한 뒤에만 편집·저장·활성화할 수 있다.
+> 선택한 프리셋은 흰색 채움으로 표시하고 전체 비중은 초기 저채도 신호 팔레트를 사용한다.
+> 추천 점수는 흰색 알약으로 표시하며 hover/focus 시 실제 적용 블록 점수와 비중을 펼친다.
+> 설정은 immutable 기본 프로필을
+> 복제해 만드는 이름 있는 `recommendation-score-profile.v1` custom 프로필이다.
+> fill 기반 자동 개인화와 `continuous-v2`, 독립 `popular` 패널은 제거됐다. 이 문서의
+> 이전 V2 필드·환경변수 설명은 migration 이전 역사로만 취급한다.
 
 문서의 내용은 세 가지 상태로 구분한다.
 
@@ -15,14 +34,16 @@
 | 항목 | 현재 구현 |
 | --- | --- |
 | 대상 시장 | 미국 주식 |
-| 추천 세션 | `pre`, `regular` |
+| 추천 세션 | UI에서 구분하지 않음; 서버가 활성 세션을 내부 판단 |
 | 추천 방향 | `buy`만 지원 |
 | 생성 주기 | 미국 동부시간 기준 30분 슬롯 |
-| 최대 표시 수 | 15개 |
+| 최대 표시 수 | 점수가 계산된 전체 종목; 최초 50개 이후 50개씩 더 보기 |
 | 추천 방식 | LLM이 아닌 결정론적 규칙 점수화 |
 | 자동 주문 | 없음 |
-| 추천 클릭 | 차트 즉시 전환이 아니라 `recommendation.stock` Agent 참조 선택 |
-| 사용자 설정 | 추천 패널 안의 `추천 설정` 버튼과 중앙 dialog |
+| 추천 클릭 | 행 전체가 선택/해제 버튼이며 선택 시 흰색; 화면 전환 없음 |
+| 점수 표시·정렬 | 추천 모드에서만 활성 프로필 적용 점수와 순위 표시 |
+| 독립 목록 | 인기 Top 15·거래대금은 실제 거래대금순, 급등주는 등락률순, 전체 종목은 티커순; 별도 환산 점수 없음 |
+| 사용자 설정 | 추천 패널 안의 `추천 로직 설정` 탭과 직접 조작형 비중 믹서 |
 | 운영상 중요 위험 | 캔들 필터 탈락 후보도 backend fallback으로 저장될 수 있음 |
 
 LIVE 추천 결과가 만들어지는 경로는 백엔드가 소유한다.
@@ -43,7 +64,7 @@ LIVE 추천 결과가 만들어지는 경로는 백엔드가 소유한다.
 - **멱등성**: 같은 30분 슬롯을 여러 번 요청해도 새 결과를 계속 만들지 않고 기존 결과를 재사용하는 성질이다.
 - **hard filter**: 조건을 만족하지 못하면 점수를 계산하더라도 추천으로 채택하지 않는 필수 차단 규칙이다.
 
-## 세션과 슬롯
+## 내부 세션과 슬롯
 
 미국 동부시간 `America/New_York`을 기준으로 평일 시간만 확인한다.
 
@@ -52,7 +73,9 @@ LIVE 추천 결과가 만들어지는 경로는 백엔드가 소유한다.
 | `pre` | 04:00 이상 09:30 미만 |
 | `regular` | 09:30 이상 16:00 미만 |
 
-현재는 미국 공휴일과 반장 일정을 확인하지 않는다. 평일이면 위 시간표만으로 시장 세션을 판단한다.
+이 구분은 worker와 점수 계산의 내부 freshness/liquidity 정책이다. 사용자는 세션을
+선택하지 않는다. 공개 refresh는 현재 시각으로 내부 세션을 선택하며 latest는 세션과
+무관하게 사용자에게 저장된 가장 최근 run을 반환한다.
 
 슬롯은 현재 시각을 매시 `00분` 또는 `30분`으로 내린 30분 bucket이다. 현재 `runKey` 형식은 다음과 같다.
 
@@ -64,23 +87,27 @@ LIVE 추천 결과가 만들어지는 경로는 백엔드가 소유한다.
 
 ## 현재 사용자 흐름
 
-1. 사용자가 추천 패널에 hover하거나 키보드 focus한다.
-2. 패널 왼쪽 위의 `추천 설정` 버튼을 누른다.
-3. 중앙 dialog에서 위험성향, 선호 섹터, 제외 섹터, 제외 종목을 저장한다.
-4. 패널이 현재 세션의 최근 추천을 다시 조회한다.
-5. 사용자가 추천 행을 선택하면 해당 종목이 Agent의 `recommendation.stock` 참조로 추가된다.
-6. 선택한 추천은 `recommendationExplain` 패널의 점수·근거·위험·개인화 provenance와 동기화된다.
+1. 사용자가 추천 패널의 `추천 로직 설정` 탭으로 전환한다.
+2. 읽기 전용 모멘텀·균형·안정 프리셋을 새 로직의 시작점으로 불러오거나 `내 로직`에서
+   저장한 사용자 구성을 선택한다.
+3. 비중 믹서의 여섯 근거 블록과 실제 세부 지표를 추가·제거하고 포트폴리오 적합도까지
+   바로 편집한다. 그룹 안의 한 값을 바꾸면 나머지 활성 값이 비례 재배분되어 합계
+   100%를 유지한다.
+4. 저장·활성화하면 종목 목록 탭으로 돌아가 최근 추천을 다시 조회한다.
+5. 사용자가 추천 행을 누르면 행이 흰색 선택 상태가 되고 Agent의
+   `recommendation.stock` 참조로 추가된다. 같은 행을 다시 누르면 선택이 해제된다.
+6. 선택된 추천은
+   `recommendationExplain` 패널의 점수·근거·provenance와 동기화된다.
 
-추천 행 선택만으로 차트 종목이 즉시 바뀌지는 않는다. 선택한 추천을 바탕으로 기업 상세 화면을 열어 달라는 Agent 명령이 들어오면 별도의 navigation 로직이 종목 화면 이동을 결정한다.
-
-추천 카드와 추천 목록은 같은 `StockRecommendationsPanel`을 서로 다른 variant로 사용한다.
+추천 카드와 추천 목록은 같은 `StockDiscoveryPanel`을 사용한다.
 별도 `StockRecommendationExplainPanel`은 선택 또는 상위 추천을 5×4 기본 크기의
 `recommendationExplain` layout kind로 설명한다. latest 응답만 사용하며 별도 API,
 feedback control, tracking, 자동 주문 경로를 만들지 않는다.
 
 ## 사용자 설정
 
-프로필이 없으면 추천 API는 `profile_required`를 반환한다. 이때 패널은 설정 저장 안내를 보여주며 `추천 설정` 버튼은 계속 사용할 수 있다.
+투자 프로필이 없으면 추천 API는 `profile_required`를 반환한다. 점수 가중치 프로필은
+`추천 로직 설정` 탭에서 별도로 생성·복제·편집·활성화한다.
 
 | 필드 | 설명 |
 | --- | --- |
@@ -107,12 +134,19 @@ feedback control, tracking, 자동 주문 경로를 만들지 않는다.
 
 ```mermaid
 flowchart TD
-  Profile["추천 패널 > 추천 설정 dialog"] --> ProfileAPI["PUT /api/recommendations/profile"]
+  Profile["추천 패널 > 추천 로직 설정 탭"] --> ScoreAPI["score-profiles CRUD / active"]
+  Prompt["내 로직 자연어 요청"] --> IntentRAG["형태소 fragment + 신호 문서 검색"]
+  EvidenceRAG["latest evidence/news snapshot"] --> IntentRAG
+  IntentRAG --> SuggestionAPI["score-profiles/suggestions"]
+  SuggestionAPI --> Draft["저장되지 않은 AI 제안 초안"]
+  Draft --> Profile
+  ScoreAPI --> ScoreProfiles["user_recommendation_score_profiles"]
   Holdings["GET /api/account/holdings"] --> Snapshot["user_portfolio_snapshots"]
   Worker["recommendation-worker"] --> Service["RecommendationService.refresh"]
   Panel["latest / refresh"] --> Service
   ProfileAPI --> Profiles["user_investment_profiles"]
   Profiles --> Service
+  ScoreProfiles --> Service
   Snapshot --> Service
 
   Watchlist["관심종목"] --> DataSource["RecommendationDataSource"]
@@ -152,6 +186,8 @@ flowchart TD
 | `systems/order/shared/kis_trader/migrations/0012_continuous_recommendation_v2.sql` | continuous V2 선호·위험·펀더멘털 상태 |
 | `systems/order/shared/kis_trader/migrations/0013_deterministic_evidence_v3.sql` | V3 evidence snapshot·candidate |
 | `systems/order/shared/kis_trader/migrations/0014_recommendation_explanations.sql` | versioned explanation JSONB |
+| `systems/order/shared/kis_trader/migrations/0015_direct_recommendation_v1.sql` | 직접 추천 action·decision 계약 |
+| `systems/order/shared/kis_trader/migrations/0016_recommendation_narrative_context.sql` | cutoff 시점 기업·뉴스 narrative context JSONB |
 
 ### 프런트
 
@@ -165,6 +201,12 @@ flowchart TD
 | `apps/gops-frontend/src/recommendations/recommendationNavigation.ts` | 선택 추천을 기업 화면 이동 의도로 해석 |
 | `apps/gops-frontend/src/components/PanelContentRenderer.tsx` | `recommendations`, `recommendationsList`, `recommendationExplain` 렌더링 |
 | `apps/gops-frontend/src/layout/panelRegistry.ts` | 추천 패널 kind와 기본 크기 등록 |
+
+V3 설명은 evidence candidate의 `recommendation-narrative-context.v1`을 사용한다. 이 context는
+cutoff 이하 10-K 프로필, 저장 뉴스 최대 2건, 기업명·업종과 관측된 기업 품질을 immutable하게
+보존한다. `recommendation-decision-renderer.ko.v8`은 이 기업 근거와 매수 action을 조합하되
+순위·진입가·수량을 다시 계산하지 않는다. 목록은 `explanation.primary.listSummary`, 해설 패널은
+종목별 `headline`과 3~5문장 `body`를 사용한다.
 
 ## API 계약
 
@@ -200,27 +242,24 @@ flowchart TD
 - `maxDrawdownPct`를 생략하면 `6`을 사용한다.
 - 섹터 배열은 최대 12개, 제외 종목은 최대 50개로 정리한다.
 
-### `GET /api/recommendations/stocks/latest?sessionMode=pre|regular`
+### `GET /api/recommendations/stocks/latest`
 
-선택한 세션의 가장 최근 저장 run을 반환한다.
+사용자의 가장 최근 저장 run을 반환한다.
 
 - 프로필 없음: `profile_required`
 - 저장 run 없음: `empty`
-- `sessionMode` 생략: `regular`
 
 ### `POST /api/recommendations/stocks/refresh`
 
 ```json
 {
-  "activeSymbol": "AAPL",
-  "sessionMode": "regular"
+  "activeSymbol": "AAPL"
 }
 ```
 
 | 필드 | 현재 의미 |
 | --- | --- |
 | `activeSymbol` | 새 run을 계산할 때 추천 제외 목록에 추가 |
-| `sessionMode` | `pre` 또는 `regular`; 생략 시 `regular` |
 
 중요한 현재 제약이 있다. 같은 슬롯 run이 이미 있으면 서비스가 `activeSymbol`을 적용하기 전에 기존 결과를 반환한다. 따라서 worker가 먼저 run을 만들었다면 `activeSymbol` 제외는 보장되지 않는다.
 
@@ -449,8 +488,8 @@ snapshot 보강 점수는 다음으로 구성된다.
 
 ## 프런트 추천 표시
 
-LIVE mode에서는 `pre`와 `regular` 각각의 API 결과만 표시한다. 선택한 세션의 item이
-비어 있으면 빈 상태를 표시하며, 다른 세션 결과나 고정 종목으로 대체하지 않는다.
+LIVE mode에서는 API가 반환한 가장 최근 활성 세션 결과를 표시한다. item이 비어 있으면
+추천 영역만 빈 상태로 유지하고 S&P 500 시장 목록과 인기·상세 필터는 계속 사용한다.
 
 ### SIM 모드
 
@@ -540,7 +579,7 @@ fill에서 장기·세션 선호를 연속적으로 학습하고, 계좌 위험�
 | `RECOMMENDATION_WORKER_POLL_SECONDS` | `1800` | worker polling 주기, 최소 10초 |
 | `RECOMMENDATION_ALPACA_NEWS_FALLBACK_LIMIT` | batch 기준 최대 `50` | Alpaca fallback article 수 |
 | `RECOMMENDATION_ALPACA_NEWS_INCLUDE_CONTENT` | `false` | Alpaca 원문 content 포함 여부 |
-| `RECOMMENDATION_ALGORITHM_VERSION` | 없음 | `legacy`, `professional-v1`, `continuous-v2` 명시 선택. 지정하면 아래 기존 flag보다 우선하며 V2는 shadow를 무시 |
+| `RECOMMENDATION_ALGORITHM_VERSION` | 없음 | `legacy`, `professional-v1`, `deterministic-evidence-v3` 명시 선택. `continuous-v2`는 거부 |
 | `RECOMMENDATION_FIXED_REPLAY_ENABLED` | `false` | 검증된 고정 역사 추천 provider 활성화. 활성 중 latest/refresh와 worker 계산을 override |
 | `RECOMMENDATION_DECISION_V1_ENABLED` | `false` | fixed candidate pool에 cutoff 사용자 context를 적용해 직접 매수 action·진입계획·수량을 반환 |
 | `RECOMMENDATION_FIXED_REPLAY_PATH` | image 기본 artifact 경로 | `recommendation.json`과 `manifest.json`이 있는 scenario 경로 |
