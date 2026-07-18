@@ -210,8 +210,8 @@ def _comparison_summary(current: dict[str, Any], candidate: dict[str, Any], *, s
             continue
         if (left == right) is same:
             matches.append(label)
-    prefix = "같은 조건" if same else "다른 조건"
-    return f"{prefix}: {' · '.join(matches[:4])}" if matches else f"{prefix}을 계산할 데이터가 부족합니다."
+    prefix = "오늘과 닮은 점은" if same else "오늘과 다른 점은"
+    return f"{prefix} {' · '.join(matches[:4])}입니다." if matches else f"{prefix} 아직 충분히 비교하기 어렵습니다."
 
 
 def calculate_outcomes(entry_price: Any, exit_price: Any, series: list[dict[str, Any]], side: str) -> dict[str, float | None]:
@@ -299,15 +299,16 @@ def _decision_assessment(fill: dict[str, Any], snapshot: CoachInputSnapshot) -> 
     missed = [item for item in checks if item.get("status") == "unchecked"]
     recorded_keys = {str(item.get("checkKey") or "") for item in checks} & EXPECTED_DECISION_CHECK_KEYS
     if not checks:
-        grade = "insufficient_data"; process = "확인 기록 없음"; summary = "손익과 별개로 판단 절차를 평가할 확인 기록이 없습니다."
+        grade = "insufficient_data"; process = "확인 기록 없음"; summary = "이번 거래는 주문 전에 무엇을 확인했는지 기록이 없어, 잘한 점과 보완할 점을 나눠 보기 어렵습니다."
     elif len(missed) >= 2:
-        grade = "risk"; process = f"{len(missed)}개 핵심 조건 미확인"; summary = "여러 핵심 확인 절차를 건너뛴 판단이었습니다."
+        grade = "risk"; process = f"{len(missed)}개 핵심 조건 미확인"; summary = "확인하지 않고 넘어간 항목이 여러 개입니다. 다음에는 주문 전에 확인 순서를 짧게라도 정해 두세요."
     elif missed:
-        grade = "attention"; process = f"{missed[0].get('label') or '핵심 조건'} 미확인"; summary = "결과와 무관하게 보완해야 할 확인 절차가 있습니다."
+        missing_label = str(missed[0].get("label") or "핵심 조건")
+        grade = "attention"; process = f"{missing_label} 미확인"; summary = f"대부분 확인했지만 {missing_label}은 빠졌습니다. 다음 주문 전에는 이 항목만 한 번 더 챙겨 보세요."
     elif recorded_keys != EXPECTED_DECISION_CHECK_KEYS:
-        grade = "insufficient_data"; process = f"확인 기록 불완전 ({len(recorded_keys)}/{len(EXPECTED_DECISION_CHECK_KEYS)})"; summary = "기록된 항목만으로 전체 판단 절차가 적절했다고 평가할 수 없습니다."
+        grade = "insufficient_data"; process = f"확인 기록 불완전 ({len(recorded_keys)}/{len(EXPECTED_DECISION_CHECK_KEYS)})"; summary = "확인한 내용은 남아 있지만 일부 기록이 비어 있어, 매수 판단을 온전히 돌아보기는 어렵습니다."
     else:
-        grade = "good"; process = "기록된 확인 절차 충족"; summary = "기록된 범위에서는 필요한 판단 절차를 확인했습니다."
+        grade = "good"; process = "기록된 확인 절차 충족"; summary = "가격만 보고 서두르지 않고 필요한 항목을 차례로 확인한 점이 좋습니다."
     return {
         "grade": grade, "summary": summary, "processAssessment": process,
         "outcomeAssessment": _trade_summary(fill, snapshot)["currentReturnPercent"],
@@ -367,15 +368,15 @@ def _watch_conditions(case: dict[str, Any]) -> list[dict[str, Any]]:
     resistance = max((value for value in highs if value is not None), default=None)
     conditions: list[dict[str, Any]] = []
     for suffix, label, threshold, operator, action in (
-        ("support", f"{support:.2f} 아래 일봉 마감" if support is not None else "지지선 이탈", support, "<", "비중 축소 검토"),
-        ("resistance", f"다음 저항 {resistance:.2f} 접근" if resistance is not None else "저항선 접근", resistance, ">=", "분할 청산 검토"),
+        ("support", f"{support:.2f} 아래 일봉 마감" if support is not None else "지지선 이탈", support, "<", "처음 매수한 이유를 다시 확인하세요"),
+        ("resistance", f"다음 저항 {resistance:.2f} 접근" if resistance is not None else "저항선 접근", resistance, ">=", "일부 이익 실현을 검토해 보세요"),
     ):
         if threshold is not None:
-            conditions.append({"id": f"{case.get('caseId')}-{suffix}", "type": "price", "label": label, "currentValue": observed_price, "threshold": round(threshold, 4), "operator": operator, "reason": "최근 20개 완료 일봉의 가격 수준과 체결 이후 현재가 비교", "recommendedAction": action, "alertSupported": True, "alertRequest": {"symbol": symbol, "type": "price_cross", "targetPrice": str(round(threshold, 4)), "repeatLimit": 1}})
+            conditions.append({"id": f"{case.get('caseId')}-{suffix}", "type": "price", "label": label, "currentValue": observed_price, "threshold": round(threshold, 4), "operator": operator, "reason": "최근 주가가 여러 번 방향을 바꾼 가격대와 지금 가격을 비교했습니다.", "recommendedAction": action, "alertSupported": True, "alertRequest": {"symbol": symbol, "type": "price_cross", "targetPrice": str(round(threshold, 4)), "repeatLimit": 1}})
     if latest.get("relativeVolume") is not None:
-        conditions.append({"id": f"{case.get('caseId')}-volume", "type": "volume", "label": "상대 거래량 1.2 회복", "currentValue": latest.get("relativeVolume"), "threshold": 1.2, "operator": ">=", "reason": "참여 강도 회복 확인", "recommendedAction": "재관찰", "alertSupported": False})
+        conditions.append({"id": f"{case.get('caseId')}-volume", "type": "volume", "label": "상대 거래량 1.2 회복", "currentValue": latest.get("relativeVolume"), "threshold": 1.2, "operator": ">=", "reason": "거래량이 다시 붙어야 상승 흐름에 힘이 실렸다고 보기 쉽습니다.", "recommendedAction": "거래량이 회복되는지 지켜보세요", "alertSupported": False})
     if latest.get("rsi") is not None:
-        conditions.append({"id": f"{case.get('caseId')}-rsi", "type": "rsi", "label": "RSI 과열 구간 이탈", "currentValue": latest.get("rsi"), "threshold": 70, "operator": "<", "reason": "과열 완화 여부 확인", "recommendedAction": "추세 재평가", "alertSupported": False})
+        conditions.append({"id": f"{case.get('caseId')}-rsi", "type": "rsi", "label": "RSI 과열 구간 이탈", "currentValue": latest.get("rsi"), "threshold": 70, "operator": "<", "reason": "과열이 식은 뒤에도 상승 흐름이 이어지는지 확인할 수 있습니다.", "recommendedAction": "추세가 다시 살아나는지 확인하세요", "alertSupported": False})
     return conditions
 
 
@@ -449,10 +450,9 @@ def _habit_report(stage: str, cases: list[dict[str, Any]], period_label: str, re
     availability = "ready" if sample >= 5 else "insufficient_sample"
     if stage == "exit":
         summary = (
-            f"{sample}건의 매도 체결 후 가격 경로를 매도 체결가 기준으로 집계했습니다. "
-            "이 값은 실현 손익이나 당시 판단 품질을 뜻하지 않습니다."
+            f"최근 매도 {sample}건을 살펴봤습니다. 결과가 좋았는지보다, 계획한 가격에서 흔들리지 않고 팔았는지를 먼저 봅니다."
             if sample
-            else "분석할 매도 후 가격 경로 표본이 없습니다."
+            else "아직 매도 습관을 살펴볼 거래가 충분하지 않습니다."
         )
         behavior = [
             {"label": "매도 후 최종 가격 경로(매도 관점)", "value": _coach_value(_average(returns), "%")},
@@ -462,8 +462,8 @@ def _habit_report(stage: str, cases: list[dict[str, Any]], period_label: str, re
         ]
     else:
         summary = (
-            f"{sample}건의 진입 결과와 판단 확인 기록 보유 여부를 분리해 집계했습니다."
-            if sample else "분석할 거래 표본이 없습니다."
+            f"최근 매수 {sample}건을 살펴봤습니다. 수익보다, 사기 전에 어떤 조건을 확인했는지를 먼저 봅니다."
+            if sample else "아직 매수 습관을 살펴볼 거래가 충분하지 않습니다."
         )
         behavior = [
             {"label": "평균 수익률", "value": _coach_value(_average(returns), "%")},
@@ -531,7 +531,6 @@ def _long_term_profile(cases: list[dict[str, Any]], outcomes: list[dict[str, Any
 
     sample = len(rows)
     total = total_trade_count if total_trade_count is not None else sample
-    basis = f"최근 6개월 전체 {total}건 중 분석 가능한 {sample}건 기준으로" if total != sample else f"최근 6개월 {sample}건 기준으로"
     recorded_count = sum(1 for row in rows if row["recorded"])
     confirmed_count = sum(1 for row in rows if row["process"] == "confirmed")
     missed_count = sum(1 for row in rows if row["missed"])
@@ -570,14 +569,13 @@ def _long_term_profile(cases: list[dict[str, Any]], outcomes: list[dict[str, Any
     patterns = patterns[:3]
     representatives = _representative_habit_trades(rows)
     if sample < 5:
-        headline = f"{basis}, 장기 투자 성향을 단정하기에는 표본이 부족합니다."
-    elif patterns:
-        lead = patterns[0]
-        headline = f"{basis}, {lead['occurrenceCount']}건에서 {lead['title']} 패턴이 반복됐습니다. 수익 여부보다 어떤 조건을 확인했는지 먼저 봐야 합니다."
-    elif unconfirmed_count:
-        headline = f"{basis}, {unconfirmed_count}건은 필수 확인 기록이 완전하지 않아 판단 과정의 일관성을 검증할 수 없습니다."
+        headline = "아직 반복해서 잘하고 있는 습관을 말하기에는 거래가 조금 더 필요합니다."
+    elif confirmed_count >= max(1, sample // 2):
+        headline = f"결과가 좋든 나쁘든 주문 전에 확인할 항목을 챙기는 습관이 좋습니다. 최근 거래 {sample}건 중 {confirmed_count}건에서 정해 둔 확인 순서를 지켰습니다."
+    elif recorded_count:
+        headline = "매매 전에 무엇을 보고 결정했는지 남기려는 습관이 보입니다. 기록을 조금만 더 꾸준히 하면 내 강점을 더 분명하게 찾을 수 있습니다."
     else:
-        headline = f"{basis}, 모든 분석 대상에 필수 확인 기록이 남아 있어 결과 손익과 판단 과정을 분리해 장기 습관을 비교할 수 있습니다."
+        headline = "아직 주문 전 확인 기록이 없어, 반복해서 잘하고 있는 습관을 찾기 어렵습니다. 다음 거래부터 확인한 항목을 짧게 남겨 보세요."
     return {
         "headline": headline,
         "decisionRecords": {
@@ -737,7 +735,7 @@ def _portfolio_habit_report(
         insights.append({"id": "portfolio-concentration", "stage": "portfolio", "kind": "improvement_candidate", "title": "상위 종목 집중", "condition": "상위 3개 종목 합산 비중 60% 이상", "observedBehavior": "높은 집중 상태가 반복되었습니다.", "sampleSize": high_count, "confidence": "low" if high_count < 15 else "high", "metrics": {"riskContribution": _average(valid)}, "recurrenceScore": high_count / max(1, sample), "impactScore": min(1.0, (_average(valid) or 0) / 100), "controllabilityScore": 0.8})
     diversification = _portfolio_market_diversification(snapshot, cutoff, requested_timestamp)
     confidence = "high" if sample >= 50 else "medium" if sample >= 20 else "low" if sample >= 5 else "insufficient"
-    return {"stage": "portfolio", "availability": "ready" if sample >= 5 else "insufficient_sample", "periodLabel": period_label, "sampleSize": sample, "totalTradeCount": sample, "analyzedTradeCount": sample, "excludedTradeCount": 0, "excludedReasons": [], "confidence": confidence, "evidenceQuality": confidence, "missingData": [] if sample else ["포트폴리오 이력 부족"], "summary": f"{sample}개 포트폴리오 snapshot의 집중도를 집계했습니다." if sample else "포트폴리오 이력이 부족합니다.", "behavior": [{"label": "평균 상위 종목 집중도", "value": _coach_value(_average(valid), "%")}], "planConsistency": {"availability": "no_confirmation_record"}, "longTermProfile": _portfolio_long_term_profile(valid, sample, diversification), "insights": insights}
+    return {"stage": "portfolio", "availability": "ready" if sample >= 5 else "insufficient_sample", "periodLabel": period_label, "sampleSize": sample, "totalTradeCount": sample, "analyzedTradeCount": sample, "excludedTradeCount": 0, "excludedReasons": [], "confidence": confidence, "evidenceQuality": confidence, "missingData": [] if sample else ["포트폴리오 이력 부족"], "summary": f"최근 계좌 기록 {sample}건을 보며 한 종목에 쏠리지 않도록 비중을 조절했는지 살펴봤습니다." if sample else "아직 분산 습관을 살펴볼 계좌 기록이 충분하지 않습니다.", "behavior": [{"label": "평균 상위 종목 집중도", "value": _coach_value(_average(valid), "%")}], "planConsistency": {"availability": "no_confirmation_record"}, "longTermProfile": _portfolio_long_term_profile(valid, sample, diversification), "insights": insights}
 
 
 def _portfolio_long_term_profile(concentrations: list[float], sample: int, diversification: dict[str, Any]) -> dict[str, Any]:
@@ -774,11 +772,11 @@ def _portfolio_long_term_profile(concentrations: list[float], sample: int, diver
                 "confidence": "high" if len(concentrations) >= 15 else "medium" if len(concentrations) >= 8 else "low",
             })
     if sample < 5:
-        headline = f"확정된 거래 후 포트폴리오 snapshot이 {sample}건뿐이라 장기 집중 성향을 단정할 수 없습니다."
+        headline = "아직 분산 습관을 장점으로 말하기에는 계좌 기록이 조금 더 필요합니다."
     elif high:
-        headline = f"확정된 거래 후 snapshot {sample}건 중 {len(high)}건에서 상위 3개 종목 집중도가 60% 이상이었습니다. 수익 여부와 별개로 집중 위험을 장기적으로 점검해야 합니다."
+        headline = "여러 종목에 나눠 담으려는 흐름은 보이지만, 상위 종목 몇 개의 영향이 큰 때가 있었습니다. 다음 매수 전에는 매수 후 비중을 먼저 확인해 보세요."
     else:
-        headline = f"확정된 거래 후 snapshot {sample}건에서 상위 3개 종목 집중도가 60% 미만으로 유지됐습니다. 집중도와 실제 변동성 기여도를 계속 함께 비교하세요."
+        headline = "몇 종목에 과하게 몰리지 않도록 꾸준히 비중을 조절한 점이 좋습니다. 지금처럼 새 종목을 살 때 계좌 전체 비중을 함께 보세요."
     return {"headline": headline, "patterns": patterns, "marketDiversification": diversification}
 
 
@@ -935,7 +933,7 @@ def _build_improvement_page(page2: dict[str, Any] | None) -> dict[str, Any] | No
     priorities.sort(key=lambda item: (-float(item.get("priorityScore") or 0), str(item.get("id") or "")))
     experiments = [_experiment_for_insight(item) for item in priorities if item.get("priority") == "improve"][:2]
     guardrails = [_guardrail_for_insight(item) for item in priorities if item.get("priority") == "improve"][:3]
-    return {"availability": "ready" if priorities else "insufficient_sample", "summary": "반복성과 영향이 확인된 조건부터 다음 거래에서 검증합니다." if priorities else "우선순위를 계산할 충분한 반복 표본이 없습니다.", "priorities": priorities[:6], "experiments": experiments, "guardrails": guardrails}
+    return {"availability": "ready" if priorities else "insufficient_sample", "summary": "지금 잘하고 있는 습관은 그대로 가져가고, 자주 놓친 한 가지부터 다음 거래에서 바꿔 보세요." if priorities else "아직 어떤 습관을 먼저 바꿀지 말하기에는 거래가 조금 더 필요합니다.", "priorities": priorities[:6], "experiments": experiments, "guardrails": guardrails}
 
 
 def _build_action_center(snapshot: CoachInputSnapshot, page1: dict[str, Any] | None, page3: dict[str, Any] | None) -> dict[str, Any]:
@@ -1124,7 +1122,7 @@ def _coach_value(value: Any, unit: str) -> dict[str, Any]:
 
 
 def _experiment_for_insight(item: dict[str, Any]) -> dict[str, Any]:
-    return {"id": f"experiment-{item.get('id')}", "sourceStages": [item.get("stage")], "title": f"{item.get('title')} 확인 절차", "hypothesis": f"{item.get('condition')}을 거래 전에 확인하면 같은 실수를 줄일 수 있습니다.", "sampleTarget": 5, "appliedCount": 0, "checklist": [str(item.get("condition") or "조건 확인"), "진입 전 계획 기록"], "successMetrics": ["계획 준수율", "MAE"], "stopConditions": ["데이터 표본이 왜곡되면 중단"], "confidence": item.get("confidence") or "low", "status": "candidate"}
+    return {"id": f"experiment-{item.get('id')}", "sourceStages": [item.get("stage")], "title": f"다음 5번은 {item.get('title')}", "hypothesis": f"거래 전에 {item.get('condition')}을 한 번 더 보면 같은 실수를 줄일 수 있습니다.", "sampleTarget": 5, "appliedCount": 0, "checklist": [str(item.get("condition") or "조건 확인"), "주문 전에 이유 한 줄 남기기"], "successMetrics": ["계획 준수율", "MAE"], "stopConditions": ["이 기준이 오히려 판단을 방해할 때"], "confidence": item.get("confidence") or "low", "status": "candidate"}
 
 
 def _guardrail_for_insight(item: dict[str, Any]) -> dict[str, Any]:

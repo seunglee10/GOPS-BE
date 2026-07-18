@@ -252,7 +252,8 @@ class CoachAnalyticsTests(unittest.TestCase):
                 "판단 확인 기록 보유 거래",
             ],
         )
-        self.assertIn("실현 손익이나 당시 판단 품질을 뜻하지 않습니다", exit_report["summary"])
+        self.assertIn("결과가 좋았는지보다", exit_report["summary"])
+        self.assertIn("계획한 가격에서 흔들리지 않고 팔았는지", exit_report["summary"])
         self.assertNotIn("평균 수익률", {item["label"] for item in exit_report["behavior"]})
         self.assertNotIn("평균 MFE", {item["label"] for item in exit_report["behavior"]})
         self.assertNotIn("평균 MAE", {item["label"] for item in exit_report["behavior"]})

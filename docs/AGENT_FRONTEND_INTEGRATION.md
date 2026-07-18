@@ -341,6 +341,26 @@ Bid/Ask도 order-flow row 가격과 axis tick을 분리해 같은 높이 기반 
 AI 투자 코치 패널은 가로 2칸을 최소 너비로 사용하며 세로 길이는 레이아웃에 맞춰
 확장할 수 있다.
 
+개발·seeded 계좌 리포트도 사용자 화면에서는 `DEV DEMO`, `fixture`, `fixed replay`,
+내부 저장소 이름 같은 구현 문구를 노출하지 않는다. 체결 내역, 일봉 차트, 기업 뉴스,
+실적 일정, 계좌 분석처럼 사용자가 판단 근거를 이해할 수 있는 이름과 상황별 코칭 문장을
+사용한다. seeded 리포트의 판단 기록은 해당 시나리오에 포함된 고정 기록이며 실제 사용자
+행동으로 저장하거나 운영 리포트에 섞지 않는다. LIVE와 SIM은 동일하게 이미 선택된 코치
+리포트와 문장을 유지한다.
+
+코칭 문장은 숫자·표본·계좌 현황을 먼저 나열하는 보고서 문체를 쓰지 않는다. 특히
+`내 투자성향의 장점`은 `나눠 산다`, `확인하고 산다`, `나눠 판다`처럼 사용자가 반복해서
+잘한 행동을 첫 문장에 직접 말한다. 수치가 필요하면 그 다음 문장이나 별도 근거 행에 둔다.
+보완점도 `위험 증가`, `검증 필요` 같은 판정문보다 다음 거래에서 무엇을 하면 되는지
+사용자에게 말하는 문장으로 쓴다.
+
+네 페이지의 typography는 `DESIGN.md`의 세 역할만 사용한다. 핵심 코칭 문장과 제목은
+`title-sm`(18px), 설명 본문·행·지표·탭·텍스트 동작은 `label-md`(16px), 상태·출처·시각·
+표 머리글 같은 보조 정보는 `caption`(14px/500)을 사용한다. 크기만 따로 선언하지 않고
+각 역할의 font, line-height, weight,
+letter-spacing, text-transform을 함께 적용한다. container나 breakpoint에서도 임의
+`font-size`, `font-weight`, `clamp()` 글자 크기를 만들지 않는다.
+
 AI 투자 코치의 알람 생성 UI는 4페이지 `실행·알람 관리`에만 둔다. 1페이지의
 매도·관찰 조건은 조건명과 현재값·기준값만 보이는 단일 미리보기로 표시한다.
 좌우 화살표로 한 조건씩 전환하고 첫·마지막 항목에서는 해당 화살표를 비활성화한다.
@@ -635,8 +655,10 @@ build time. Prices are rebased to the paper fill only because the chart is a fil
 view; candle returns, volume, RSI(14), MACD, signal, and relative volume come from those stored rows.
 The fixture must not generate sine-wave or random candles. Page-1 confirmation evidence renders as
 a flat to-do list with status boxes and inline evidence, not as nested cards or hover-only tooltips.
-Its typography uses the shared `title-sm`, `label-md`, `body-md`, `caption`, and `button` roles from
-`DESIGN.md`, without local fluid sizes or custom heavy weights.
+Its typography uses only three shared `DESIGN.md` roles across all four pages: `title-sm` (18px) for
+core coaching sentences and titles, `label-md` (16px) for explanation copy, rows, metrics, tabs, and
+text actions, and `caption` (14px/500) for status, source, time, and table metadata. Local fluid sizes
+and custom heavy weights are not allowed.
 
 When the runtime does not already hold a `coachReport`, the provider makes one authenticated
 request to `GET /api/ai-coach/reports/latest` for the current user/account generation. Panel
