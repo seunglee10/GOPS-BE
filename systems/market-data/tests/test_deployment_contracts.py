@@ -125,22 +125,7 @@ class DeploymentContractsTest(unittest.TestCase):
         manual = (REPO_ROOT / "scripts/aws/run-chart-geometry-build-job.sh").read_text(encoding="utf-8")
         self.assertIn('INTERVALS="${INTERVALS:-1m,1D}"', manual)
 
-    def test_nvda_news_keywords_run_twice_daily_without_event_worker(self):
-        cron = load_yaml("infra/k8s/overlays/aws/scheduled/cronjob-news-daily-summary-nvda.yaml")
-        self.assertEqual(cron["spec"]["schedule"], "0 10,22 * * *")
-        self.assertEqual(cron["spec"]["timeZone"], "Asia/Seoul")
-        self.assertEqual(cron["spec"]["concurrencyPolicy"], "Forbid")
-        self.assertFalse(cron["spec"]["suspend"])
-        job_spec = cron["spec"]["jobTemplate"]["spec"]
-        pod_spec = job_spec["template"]["spec"]
-        container = pod_spec["containers"][0]
-        env = {item["name"]: item["value"] for item in container["env"]}
-        self.assertEqual(env["NEWS_DAILY_SUMMARY_REBUILD_SYMBOLS"], "NVDA")
-        self.assertEqual(env["NEWS_DAILY_SUMMARY_REBUILD_DAYS"], "5")
-        self.assertEqual(env["NEWS_DAILY_SUMMARY_REBUILD_MAX_GROUPS"], "5")
-        self.assertEqual(env["NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN"], "false")
-        self.assertEqual(pod_spec["nodeSelector"]["karpenter.sh/nodepool"], "batch")
-
+    def test_nvda_news_keywords_use_one_shot_fixed_range_without_recurring_cronjob(self):
         completed = subprocess.run(
             ["kubectl", "kustomize", "infra/k8s/overlays/aws-incluster-app-ci"],
             cwd=REPO_ROOT,
@@ -156,6 +141,10 @@ class DeploymentContractsTest(unittest.TestCase):
             and item.get("metadata", {}).get("name") == "alfaka-market-data-config"
         )
         self.assertEqual(config["data"]["NEWS_DAILY_SUMMARY_EVENT_DRIVEN_ENABLED"], "false")
+        self.assertEqual(config["data"]["NEWS_DAILY_SUMMARY_REBUILD_SYMBOLS"], "NVDA")
+        self.assertEqual(config["data"]["NEWS_DAILY_SUMMARY_REBUILD_FROM_DATE"], "2026-07-10")
+        self.assertEqual(config["data"]["NEWS_DAILY_SUMMARY_REBUILD_TO_DATE"], "2026-07-14")
+        self.assertEqual(config["data"]["NEWS_DAILY_SUMMARY_REBUILD_MAX_GROUPS"], "5")
         deployment = next(
             item
             for item in resources
@@ -163,6 +152,32 @@ class DeploymentContractsTest(unittest.TestCase):
             and item.get("metadata", {}).get("name") == "alfaka-news-daily-summary-worker"
         )
         self.assertEqual(deployment["spec"]["replicas"], 0)
+        self.assertFalse(any(
+            item.get("kind") == "CronJob"
+            and item.get("metadata", {}).get("name") == "alfaka-news-daily-summary-nvda"
+            for item in resources
+        ))
+
+        manual_job = load_yaml("infra/k8s/base/job-news-daily-summary-rebuild.yaml")
+        pod_spec = manual_job["spec"]["template"]["spec"]
+        container = pod_spec["containers"][0]
+        env = {item["name"]: item["value"] for item in container["env"]}
+        self.assertEqual(env["NEWS_DAILY_SUMMARY_REBUILD_SYMBOLS"], "NVDA")
+        self.assertEqual(env["NEWS_DAILY_SUMMARY_REBUILD_FROM_DATE"], "2026-07-10")
+        self.assertEqual(env["NEWS_DAILY_SUMMARY_REBUILD_TO_DATE"], "2026-07-14")
+        self.assertEqual(env["NEWS_DAILY_SUMMARY_REBUILD_MAX_GROUPS"], "5")
+        secrets = {
+            item["secretRef"]["name"]: item["secretRef"].get("optional")
+            for item in container["envFrom"]
+            if "secretRef" in item
+        }
+        self.assertFalse(secrets["alfaka-clickhouse-secret"])
+        self.assertFalse(secrets["alfaka-openai-secret"])
+
+        workflow = (REPO_ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+        local_deploy = (REPO_ROOT / "scripts/aws/deploy-dev-local.sh").read_text(encoding="utf-8")
+        self.assertIn("kubectl delete cronjob alfaka-news-daily-summary-nvda", workflow)
+        self.assertIn("kubectl delete cronjob alfaka-news-daily-summary-nvda", local_deploy)
 
     def test_aws_overlay_preserves_chart_builder_memory_contract(self):
         completed = subprocess.run(

@@ -8037,10 +8037,10 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIsNone(event)
         self.assertEqual(producer.sent, [])
 
-    def test_news_daily_summary_rebuild_filters_nvda_and_caps_five_groups(self):
+    def test_news_daily_summary_rebuild_filters_nvda_to_explicit_five_day_window(self):
         rebuild = load_news_daily_summary_rebuild_module()
         client = SequentialQueryClickHouseClient([[
-            {"symbol": "NVDA", "date": "2026-07-17", "locale": "ko-KR"},
+            {"symbol": "NVDA", "date": "2026-07-10", "locale": "ko-KR"},
         ]])
 
         groups = rebuild.read_dirty_groups(
@@ -8048,15 +8048,86 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             days=5,
             max_groups=5,
             symbols=["nvda", "NVDA"],
+            from_date="2026-07-10",
+            to_date="2026-07-14",
         )
 
         query, parameters = client.queries[0]
         self.assertIn("target_symbol IN {symbols:Array(String)}", query)
+        self.assertIn(
+            "toDate(published_at) BETWEEN toDate({fromDate:String}) AND toDate({toDate:String})",
+            query,
+        )
+        self.assertNotIn("INTERVAL {days:UInt32}", query)
         self.assertEqual(parameters["symbols"], ["NVDA"])
-        self.assertEqual(parameters["days"], 5)
+        self.assertEqual(parameters["fromDate"], "2026-07-10")
+        self.assertEqual(parameters["toDate"], "2026-07-14")
+        self.assertEqual(parameters["relevanceLevels"], ["primary", "secondary", "mention"])
+        self.assertNotIn("days", parameters)
         self.assertEqual(parameters["maxGroups"], 5)
         self.assertEqual(groups[0]["symbol"], "NVDA")
         self.assertIsNone(rebuild.normalized_rebuild_status("auto"))
+        self.assertEqual(
+            rebuild.normalized_date_range("2026-07-10", "2026-07-14"),
+            ("2026-07-10", "2026-07-14"),
+        )
+        with self.assertRaises(ValueError):
+            rebuild.normalized_date_range("2026-07-14", "2026-07-10")
+        with self.assertRaises(ValueError):
+            rebuild.normalized_date_range("2026-07-10", None)
+
+    def test_news_daily_summary_recovers_stale_mention_when_nvda_is_in_headline(self):
+        worker = load_news_daily_summary_worker_module()
+        rows = [
+            {
+                "articleId": "60404495",
+                "symbol": "NVDA",
+                "symbols": ["AMD", "AVGO", "NVDA"],
+                "targetSymbol": "NVDA",
+                "subjectRelevance": "mention",
+                "headline": "Nvidia Stock is Finally Soaring, and Rare Chart Pattern Points to More Upside",
+                "summary": "Nvidia stock price is rising and a falling wedge points to a rebound.",
+                "localizedHeadline": "엔비디아 주가 반등",
+                "localizedSummary": "엔비디아 주가가 반등했습니다.",
+                "impactDirection": "positive",
+                "sentiment": "positive",
+                "publishedAt": "2026-07-11T20:11:39.000Z",
+            },
+            {
+                "articleId": "60403984",
+                "symbol": "NVDA",
+                "symbols": ["AVGO", "MSFT", "MU", "NVDA", "PLTR"],
+                "targetSymbol": "NVDA",
+                "subjectRelevance": "mention",
+                "headline": "Benzinga Bulls and Bears: Stocks End Week With Solid Gains",
+                "summary": "Benzinga examined many investors' favorite stocks over the last week.",
+                "localizedHeadline": "주간 증시 강세 마감",
+                "localizedSummary": "여러 종목의 주간 흐름을 점검했습니다.",
+                "impactDirection": "neutral",
+                "sentiment": "neutral",
+                "publishedAt": "2026-07-11T12:01:31.000Z",
+            },
+        ]
+        client = SequentialQueryClickHouseClient([rows, []])
+
+        record = worker.process_dirty_event(
+            {"eventType": "NEWS_DAILY_SUMMARY_DIRTY", "symbol": "NVDA", "date": "2026-07-11", "locale": "ko-KR"},
+            clickhouse_client=client,
+            redis_client=MemoryRedis(),
+            summarize_fn=lambda **_kwargs: {
+                "summary": "엔비디아 주가 반등 기사 요약입니다.",
+                "keyPoints": ["주가 반등|positive", "상승 패턴|positive"],
+                "positivePoints": ["기술적 반등"],
+                "concerns": [],
+                "impactDirection": "positive",
+                "sentiment": "positive",
+            },
+            model="unit-model",
+        )
+
+        self.assertEqual(record["articleIds"], ["60404495"])
+        self.assertEqual(record["mentionCount"], 1)
+        self.assertEqual(client.inserts[0][0], "news_company_daily_summaries")
 
     def test_daily_summary_row_and_redis_cache_keep_lightweight_brief(self):
         record = build_daily_summary_record(
@@ -8210,10 +8281,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             {
                 "articleId": "aapl-mention-worker-1",
                 "symbol": "NVDA",
+                "symbols": ["AAPL", "NVDA", "MSFT", "GOOGL", "META"],
                 "targetSymbol": "AAPL",
                 "subjectRelevance": "mention",
-                "headline": "Broad tech roundup mentions Apple",
-                "summary": "Apple appears in a broad list.",
+                "headline": "Broad tech roundup",
+                "summary": "Several companies appear in a broad list.",
                 "localizedHeadline": "기술주 라운드업",
                 "localizedSummary": "애플이 넓은 목록에 언급됐습니다.",
                 "impactDirection": "neutral",

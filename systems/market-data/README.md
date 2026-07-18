@@ -287,9 +287,9 @@ Alpaca News API
 -> Redis news:v2:latest:ko:{symbol}
 -> API/agent response
 
-NVDA daily keywords
--> recent 5 days in ClickHouse
--> alfaka-news-daily-summary-nvda at 10:00 and 22:00 Asia/Seoul
+NVDA one-shot keywords
+-> 2026-07-10 through 2026-07-14 in ClickHouse
+-> manual alfaka-news-daily-summary-rebuild Job
 -> ClickHouse/Redis news daily v2
 -> NewsKeywordPanel background refresh every 5 minutes
 ```
@@ -303,11 +303,14 @@ Storage boundaries:
 
 AWS does not regenerate a company/day summary after every article. The
 `alfaka-news-daily-summary-worker` Deployment is scaled to zero and
-`NEWS_DAILY_SUMMARY_EVENT_DRIVEN_ENABLED=false`. The scheduled
-`alfaka-news-daily-summary-nvda` CronJob runs at 10:00 and 22:00 Asia/Seoul,
-filters to `NVDA`, and considers at most the five most recent daily groups.
-The existing article hash/version guard prevents an OpenAI call when the stored
-v2 summary already matches the collected article set.
+`NEWS_DAILY_SUMMARY_EVENT_DRIVEN_ENABLED=false`. There is no recurring news
+daily-summary CronJob. The manual rebuild is fixed to `NVDA` and the inclusive
+`2026-07-10..2026-07-14` range, with at most five date groups. Dates without a
+direct NVDA article are skipped. For this fixed-range repair, stored `mention`
+rows are rechecked with the current deterministic subject classifier so a stale
+row whose headline directly names Nvidia is not dropped. The existing article
+hash/version guard prevents an OpenAI call when the stored v2 summary already
+matches the collected article set.
 
 The Kubernetes `alfaka-news-backfill`, `alfaka-news-intelligence-rebuild`, and
 manual `alfaka-news-daily-summary-rebuild` Jobs are safe by default: they render with
@@ -319,8 +322,8 @@ warms Redis by default from the recent ClickHouse localization rows without
 rewriting ClickHouse. Set `NEWS_INTELLIGENCE_REBUILD_REWRITE_CLICKHOUSE=true`
 only for an intentional relevance-row rewrite maintenance run.
 The GitHub Actions deploy runs the manual news rebuild Jobs only when
-`rebuild_news_cache=true`; the twice-daily NVDA CronJob is applied with the
-normal app overlay.
+`rebuild_news_cache=true`. Normal app deploys also delete the retired
+`alfaka-news-daily-summary-nvda` CronJob so no future schedule remains.
 
 Local small smoke:
 

@@ -756,6 +756,9 @@ deploy_app_workloads() {
   kubectl delete deployment alfaka-alpaca-tick-ingestor-sip \
     -n "${K8S_NAMESPACE}" \
     --ignore-not-found=true
+  kubectl delete cronjob alfaka-news-daily-summary-nvda \
+    -n "${K8S_NAMESPACE}" \
+    --ignore-not-found=true
 
   (
     cd "${WORKTREE_DIR}"

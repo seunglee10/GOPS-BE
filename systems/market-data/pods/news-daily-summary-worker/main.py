@@ -10,6 +10,7 @@ import redis
 
 from alfaka.common.env import load_dotenv
 from alfaka.common.kafka_io import create_json_consumer
+from alfaka.news.relevance import classify_subject_relevance, normalize_subject_level
 from alfaka.serving.news_hot_cache import write_company_daily_summary_to_redis
 from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
 from alfaka.storage.news_daily_summary import (
@@ -83,8 +84,9 @@ def process_dirty_event(
     locale = locale or event.get("locale") or os.getenv("NEWS_INTELLIGENCE_LOCALE", "ko-KR")
     model = model or os.getenv("NEWS_DAILY_SUMMARY_MODEL", os.getenv("OPENAI_MODEL", "gpt-5.4-mini"))
     rows = read_daily_candidate_rows(clickhouse_client, symbol=symbol, date=date, locale=locale)
-    direct_rows = [row for row in rows if str(row.get("subjectRelevance") or row.get("subject_relevance") or "").lower() in {"primary", "secondary"}]
-    mention_count = sum(1 for row in rows if str(row.get("subjectRelevance") or row.get("subject_relevance") or "").lower() == "mention")
+    resolved_rows = [(row, resolved_daily_subject_level(row, symbol)) for row in rows]
+    direct_rows = [row for row, level in resolved_rows if level in {"primary", "secondary"}]
+    mention_count = sum(1 for _row, level in resolved_rows if level == "mention")
     article_ids = canonical_article_ids(direct_rows)
     if not article_ids:
         return None
@@ -137,6 +139,22 @@ def process_dirty_event(
         locale=locale,
     )
     return record
+
+
+def resolved_daily_subject_level(row, symbol):
+    stored_level = normalize_subject_level(
+        row.get("subjectRelevance") or row.get("subject_relevance")
+    )
+    if stored_level in {"primary", "secondary"}:
+        return stored_level
+    relevance = classify_subject_relevance(
+        target_symbol=symbol,
+        headline=row.get("headline") or row.get("localizedHeadline") or row.get("localized_headline"),
+        summary=row.get("summary") or row.get("localizedSummary") or row.get("localized_summary"),
+        content=row.get("content"),
+        symbols=row.get("symbols") or [row.get("symbol")],
+    )
+    return normalize_subject_level(relevance.get("subjectRelevance"))
 
 
 def read_daily_candidate_rows(client, *, symbol, date, locale):

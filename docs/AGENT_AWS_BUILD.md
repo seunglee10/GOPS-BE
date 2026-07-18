@@ -91,13 +91,17 @@ by that diff. Use a comma-separated service list such as `frontend,backend` to
 override detection, or `all` to force every app image to rebuild.
 When `rebuild_news_cache=true` is explicitly selected with `market-storage`,
 the local script or workflow runs `scripts/aws/run-news-cache-rebuild-jobs.sh`
-after a healthy rollout. The normal AWS daily-keyword path is narrower:
-`alfaka-news-daily-summary-nvda` uses the market-storage image at 10:00 and
-22:00 Asia/Seoul, scans at most five recent NVDA date groups, and relies on the
-article hash/version guard to skip unchanged v2 summaries. The immediate
+after a healthy rollout. The daily-keyword rebuild is a manual, one-shot path
+fixed to NVDA and the inclusive `2026-07-10..2026-07-14` date range. There is no
+recurring news daily-summary CronJob. The article hash/version guard skips
+unchanged v2 summaries. The fixed-range repair also rechecks stored `mention`
+rows with the current deterministic subject classifier, recovering direct-title
+articles that were persisted with stale relevance metadata. The immediate
 per-article daily-summary producer is disabled in AWS and its former consumer
 Deployment stays at zero replicas; article collection and article-level news
 intelligence continue normally.
+Normal app deploys delete the retired `alfaka-news-daily-summary-nvda` CronJob
+left by older manifests.
 
 The frontend Logo.dev ticker logo key is a Vite build-time value. When
 `frontend` is selected, the local deploy script or manual workflow reads AWS

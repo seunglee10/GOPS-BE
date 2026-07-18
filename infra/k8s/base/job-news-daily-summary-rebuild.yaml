@@ -1,4 +1,4 @@
-# 역할: 기존 localization row에서 회사/날짜 뉴스 daily brief를 재생성합니다.
+# 역할: NVDA 2026-07-10~2026-07-14 localization row에서 뉴스 키워드를 한 번 생성합니다.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -29,12 +29,22 @@ spec:
           env:
             - name: NEWS_DAILY_SUMMARY_REBUILD_DRY_RUN
               value: "true"
+            - name: NEWS_DAILY_SUMMARY_REBUILD_SYMBOLS
+              value: NVDA
+            - name: NEWS_DAILY_SUMMARY_REBUILD_FROM_DATE
+              value: "2026-07-10"
+            - name: NEWS_DAILY_SUMMARY_REBUILD_TO_DATE
+              value: "2026-07-14"
+            - name: NEWS_DAILY_SUMMARY_REBUILD_MAX_GROUPS
+              value: "5"
+            - name: NEWS_DAILY_SUMMARY_REBUILD_STATUS
+              value: auto
           envFrom:
             - configMapRef:
                 name: alfaka-market-data-config
             - secretRef:
                 name: alfaka-clickhouse-secret
-                optional: true
+                optional: false
             - secretRef:
                 name: alfaka-openai-secret
-                optional: true
+                optional: false
