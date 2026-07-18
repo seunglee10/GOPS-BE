@@ -49,7 +49,7 @@ Default-preserve 대상:
 
 | NodePool | EC2 class | Workload |
 | --- | --- | --- |
-| `app-agent` | 4 x `m5a.large` or `m6a.large`, 2 vCPU / 8 GiB | backend, frontend, AI agent, market/news workers |
+| `app-agent` | 5 x `m5a.large` or `m6a.large`, 2 vCPU / 8 GiB | backend, frontend, AI agent, market/news workers |
 | `cache-db` | 1 x `r5a.large`, 2 vCPU / 16 GiB | Redis, Postgres |
 | `streaming` | 1 x `m5a.large` or `m6a.large`, 2 vCPU / 8 GiB | Kafka only |
 | `graphdb` | 1 x `r5a.large`, 2 vCPU / 16 GiB | GraphDB only |
@@ -59,9 +59,9 @@ Default-preserve 대상:
 Expected vCPU:
 
 ```text
-steady state excluding add-ons: 18 vCPU
-steady state with 2-vCPU general-purpose add-on node: 20 vCPU
-with batch: 24 vCPU
+steady state excluding add-ons: 20 vCPU
+steady state with 2-vCPU general-purpose add-on node: 22 vCPU
+with batch: 26 vCPU
 ```
 
 The live cluster may also keep one small `general-purpose` node for EKS add-ons

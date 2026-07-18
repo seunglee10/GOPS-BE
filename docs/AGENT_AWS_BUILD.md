@@ -299,7 +299,7 @@ infra/k8s/base/job-answer-grounding-eval.yaml
 In-cluster dedicated rebuild sizing:
 
 ```text
-app-agent:  4 x m5a/m6a large class, 2 vCPU / 8 GiB, app + agent + workers
+app-agent:  5 x m5a/m6a large class, 2 vCPU / 8 GiB, app + agent + workers
 cache-db:   1 x r5a large class, 2 vCPU / 16 GiB, Redis + Postgres
 streaming:  1 x m5a/m6a large class, 2 vCPU / 8 GiB, Kafka
 graphdb:    1 x r5a large class, 2 vCPU / 16 GiB, GraphDB
@@ -307,10 +307,10 @@ clickhouse: 1 x m5a/m6a xlarge class, 4 vCPU / 16 GiB, ClickHouse
 batch:      0 steady nodes, dynamic capacity for ad hoc Jobs
 ```
 
-This profile uses 18 vCPU in steady state, excluding cluster add-ons. The live
+This profile uses 20 vCPU in steady state, excluding cluster add-ons. The live
 cluster keeps one 2 vCPU `general-purpose` node for CoreDNS, AWS Load Balancer
 Controller, metrics-server, and external-secrets, bringing the normal total to
-20 vCPU. A dynamic batch node temporarily brings it to 24 vCPU.
+22 vCPU. A dynamic batch node temporarily brings it to 26 vCPU.
 
 `app-agent`, `cache-db`, `streaming`, `graphdb`, and `clickhouse` use static
 `spec.replicas` to hold the intended node count. Scheduled and ad hoc Jobs use
