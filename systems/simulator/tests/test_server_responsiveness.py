@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -10,6 +12,11 @@ from fastapi.testclient import TestClient
 os.environ.pop("REDIS_URL", None)
 os.environ.pop("CLICKHOUSE_URL", None)
 os.environ["SIM_ENV_FILE"] = "/tmp/gops-simulator-test-no-env"
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SIMULATOR_ROOT = REPO_ROOT / "systems" / "simulator"
+if str(SIMULATOR_ROOT) not in sys.path:
+    sys.path.insert(0, str(SIMULATOR_ROOT))
 
 from systems.simulator.gops_simul.server import create_app
 
@@ -70,6 +77,13 @@ class SimulatorServerResponsivenessTests(unittest.TestCase):
 
     def test_status_uses_non_blocking_snapshot_while_replay_pump_is_blocked(self) -> None:
         self._assert_endpoint_stays_responsive("/api/control/status")
+
+    def test_simulator_does_not_expose_account_order_or_condition_ledgers(self) -> None:
+        app = create_app(replay_controller=_BlockingReplayController())
+        paths = {route.path for route in app.routes}
+        self.assertNotIn("/api/control/account", paths)
+        self.assertNotIn("/api/control/orders", paths)
+        self.assertNotIn("/api/control/conditions", paths)
 
 
 if __name__ == "__main__":

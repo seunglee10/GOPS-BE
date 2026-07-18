@@ -91,6 +91,8 @@ class CompanyJournalRepository:
             ORDER BY date DESC LIMIT 520 FORMAT JSONEachRow
             """
         )
+        dates = [str(row.get("date")) for row in prices if row.get("date")]
+        analysis_as_of = max(dates) if dates else date.today().isoformat()
         news = self._rows(
             f"""
             SELECT date, summary, key_points, positive_points, concerns, article_ids, generated_at
@@ -151,6 +153,52 @@ class CompanyJournalRepository:
             """,
             {"symbol": symbol},
         )
+        analyst_actions = self._safe_rows(
+            f"""
+            SELECT action_at, firm,
+                   argMax(action, collected_at) AS action,
+                   argMax(from_grade, collected_at) AS from_grade,
+                   argMax(to_grade, collected_at) AS to_grade,
+                   argMax(prior_price_target, collected_at) AS prior_price_target,
+                   argMax(price_target, collected_at) AS price_target,
+                   max(collected_at) AS collected_at,
+                   argMax(source, collected_at) AS source
+            FROM {self.database}.yahoo_analyst_actions
+            WHERE symbol = {{symbol:String}}
+              AND action_at < addDays(toDateTime({{analysis_as_of:String}}, 'UTC'), 1)
+              AND action_at >= subtractDays(toDateTime({{analysis_as_of:String}}, 'UTC'), 120)
+            GROUP BY action_at, firm
+            ORDER BY action_at DESC, firm ASC
+            LIMIT 20
+            FORMAT JSONEachRow
+            """,
+            {"symbol": symbol, "analysis_as_of": analysis_as_of},
+        )
+        analyst_consensus = self._safe_rows(
+            f"""
+            SELECT snapshot_date,
+                   argMax(current_price, collected_at) AS current_price,
+                   argMax(target_low, collected_at) AS target_low,
+                   argMax(target_high, collected_at) AS target_high,
+                   argMax(target_mean, collected_at) AS target_mean,
+                   argMax(target_median, collected_at) AS target_median,
+                   argMax(strong_buy, collected_at) AS strong_buy,
+                   argMax(buy, collected_at) AS buy,
+                   argMax(hold, collected_at) AS hold,
+                   argMax(sell, collected_at) AS sell,
+                   argMax(strong_sell, collected_at) AS strong_sell,
+                   max(collected_at) AS collected_at,
+                   argMax(source, collected_at) AS source
+            FROM {self.database}.yahoo_analyst_consensus
+            WHERE symbol = {{symbol:String}}
+              AND snapshot_date <= toDate({{analysis_as_of:String}})
+            GROUP BY snapshot_date
+            ORDER BY snapshot_date DESC
+            LIMIT 30
+            FORMAT JSONEachRow
+            """,
+            {"symbol": symbol, "analysis_as_of": analysis_as_of},
+        )
         graph = self._safe_one(
             f"""
             SELECT relation_version, generated_at, payload
@@ -160,8 +208,6 @@ class CompanyJournalRepository:
             """,
             {"symbol": symbol},
         )
-        dates = [str(row.get("date")) for row in prices if row.get("date")]
-        analysis_as_of = max(dates) if dates else date.today().isoformat()
         return {
             "symbol": symbol,
             "analysisAsOf": analysis_as_of,
@@ -172,6 +218,8 @@ class CompanyJournalRepository:
             "financialMetrics": metrics,
             "earningsActuals": earnings_actuals,
             "earningsEstimates": earnings_estimates,
+            "analystActions": analyst_actions,
+            "analystConsensus": analyst_consensus,
             "filings": filings,
             "graph": compact_graph_expansion(graph or {}),
         }

@@ -192,6 +192,9 @@ select_services_for_path() {
     systems/simulator/*)
       add_service simulator
       ;;
+    systems/fundamentals/*)
+      add_service market-storage
+      ;;
     systems/market-data/config/*)
       add_service backend
       add_service agent-orchestrator
@@ -221,7 +224,7 @@ select_services_for_path() {
       add_service order-worker
       add_service kis-adapter
       ;;
-    systems/order/pods/order-outbox/* | systems/order/pods/paper-order-matcher/* | systems/order/jobs/*)
+    systems/order/pods/order-outbox/* | systems/order/pods/paper-order-matcher/* | systems/order/pods/simulation-paper-matcher/* | systems/order/jobs/*)
       add_service order-worker
       ;;
     systems/order/pods/kis-adapter/*)

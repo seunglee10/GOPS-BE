@@ -19,7 +19,11 @@ for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(ORDER_TEST_ROOT), str(BA
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.alerts.repository import InMemoryAlertRepository
+from app.trade_conditions.repository import InMemoryTradeConditionRepository
 from kis_trader.persistence.memory import InMemoryOrderRepository
+from kis_trader.paper.fixture import SEED_PROFILE
+from kis_trader.paper.memory import InMemoryPaperTradingRepository
 from systems.order.tests.kis_trader.fixtures.orders import sample_order_request
 
 
@@ -148,6 +152,15 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.app = create_app()
         self.app.state.simulator_gateway = self.gateway
         self.app.state.order_repository = self.repository
+        self.paper_repository = InMemoryPaperTradingRepository(seed_profile=SEED_PROFILE)
+        self.app.state.paper_trading_repository = self.paper_repository
+        self.alert_repository = InMemoryAlertRepository()
+        self.app.state.alert_repository = self.alert_repository
+        self.app.state.trade_condition_repository = InMemoryTradeConditionRepository(self.alert_repository)
+        self.app.state.alert_projection = SimpleNamespace(
+            upsert_alert=lambda _alert: None,
+            delete_alert=lambda _alert_id, symbol=None: None,
+        )
         self.client = TestClient(self.app)
 
     def test_mode_control_is_exposed_to_the_frontend(self):
@@ -199,16 +212,16 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertNotIn(("quote", "NVDA"), self.gateway.calls)
 
-    def test_simulation_holdings_replace_kis_with_semiconductor_dummy_account(self):
+    def test_simulation_holdings_use_shared_diversified_paper_account(self):
         self.gateway.mode = "simulation"
 
         response = self.client.get("/api/account/holdings?market=overseas&currency=USD")
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(payload["source"], "gops-simulator")
-        self.assertEqual({item["symbol"] for item in payload["positions"]}, {"NVDA", "AMD"})
-        self.assertIn("SIMULATED", payload["account"]["alias"])
+        self.assertEqual(payload["source"], "paper-shared")
+        self.assertEqual({item["symbol"] for item in payload["positions"]}, {"GOOGL", "MSFT", "JPM", "XOM", "JNJ", "COST", "HD"})
+        self.assertIn("7섹터", payload["account"]["alias"])
         self.assertEqual(payload["asOf"], "2026-07-15T00:00:00+09:00")
 
     def test_kis_holdings_source_bypasses_simulation_account(self):
@@ -238,14 +251,16 @@ class SimulatorRoutesTest(unittest.TestCase):
         response = self.client.post(
             "/api/orders",
             headers={"Idempotency-Key": "manual-one"},
-            json=sample_order_request(symbol="XOM", side="buy", qty="3", price="140.00"),
+            json={**sample_order_request(symbol="XOM", side="buy", qty="3", price="140.00"), "risk_acknowledged": True},
         )
 
         self.assertEqual(response.status_code, 202)
-        self.assertEqual(response.json()["status"], "filled")
+        self.assertEqual(response.json()["status"], "accepted")
         self.assertTrue(response.json()["simulation"])
         self.assertEqual(self.repository.orders, {})
-        self.assertIn(("individual", "dev-auth-disabled", "XOM", "buy", 3, "limit", 140.0, "manual-one"), self.gateway.calls)
+        stored = self.paper_repository.get_order("dev-auth-disabled", response.json()["order_id"])
+        self.assertEqual(stored["execution_mode"], "simulation")
+        self.assertEqual(stored["runId"], "run-1")
 
     def test_market_order_does_not_require_a_price_in_simulation_mode(self):
         self.gateway.mode = "simulation"
@@ -265,7 +280,8 @@ class SimulatorRoutesTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json()["order_type"], "market")
-        self.assertIn(("individual", "dev-auth-disabled", "NVDA", "buy", 2, "market", None, "market-one"), self.gateway.calls)
+        self.assertEqual(response.json()["status"], "filled")
+        self.assertEqual(response.json()["runId"], "run-1")
 
     def test_simulation_chart_and_symbol_routes_only_use_replay_gateway(self):
         self.gateway.mode = "simulation"
@@ -372,8 +388,14 @@ class SimulatorRoutesTest(unittest.TestCase):
     def test_simulation_order_history_and_trade_conditions_stay_in_run_ledger(self):
         self.gateway.mode = "simulation"
 
-        order = self.client.get("/api/orders/sim-one")
-        events = self.client.get("/api/orders/sim-one/events")
+        submitted = self.client.post(
+            "/api/orders",
+            headers={"Idempotency-Key": "history-one"},
+            json={"market": "overseas", "symbol": "GOOGL", "side": "buy", "qty": "1", "exchange": "NASD", "order_type": "market"},
+        ).json()
+        order_id = submitted["order_id"]
+        order = self.client.get(f"/api/orders/{order_id}")
+        events = self.client.get(f"/api/orders/{order_id}/events")
         listed = self.client.get("/api/trade-conditions")
         created = self.client.post(
             "/api/trade-conditions",

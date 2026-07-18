@@ -10,6 +10,7 @@ from app.company_journal.repository import CompanyJournalRepository, compact_gra
 from app.company_journal.routes import get_company_journal_service, router
 from app.company_journal.service import (
     CompanyJournalService,
+    calculate_analyst_outlook,
     calculate_server_metrics,
     company_journal_history_years,
     source_receipt,
@@ -35,6 +36,25 @@ def source_bundle() -> dict:
         "earningsEstimates": [
             {"metric": "eps", "average": 2.18, "fiscal_year": 2026, "fiscal_period": "Q2", "collected_at": "2026-07-14 21:15:00.000"},
             {"metric": "revenue", "average": 94_800_000_000, "fiscal_year": 2026, "fiscal_period": "Q2", "collected_at": "2026-07-14 21:15:00.000"},
+        ],
+        "analystActions": [
+            {
+                "firm": "JPMorgan", "action": "main", "from_grade": "Overweight", "to_grade": "Overweight",
+                "prior_price_target": 180, "price_target": 200, "action_at": "2026-07-15 12:00:00.000",
+                "source": "yahoo-finance", "collected_at": "2026-07-15 21:15:00.000",
+            }
+        ],
+        "analystConsensus": [
+            {
+                "snapshot_date": "2026-07-15", "target_mean": 205, "target_median": 200,
+                "strong_buy": 10, "buy": 20, "hold": 5, "sell": 1, "strong_sell": 0,
+                "source": "yahoo-finance", "collected_at": "2026-07-15 21:15:00.000",
+            },
+            {
+                "snapshot_date": "2026-07-14", "target_mean": 200, "target_median": 198,
+                "strong_buy": 9, "buy": 20, "hold": 6, "sell": 1, "strong_sell": 0,
+                "source": "yahoo-finance", "collected_at": "2026-07-14 21:15:00.000",
+            },
         ],
         "filings": [{"accession": "sec-1", "form": "10-Q"}], "graph": {"relation_version": "graph-7"},
     }
@@ -87,7 +107,26 @@ def test_server_metrics_are_deterministic_and_separate_from_narrative():
     assert first["benchmarkReturnPercent"] == 1.6
     assert first["relativeReturnPercentagePoints"] == 2.6
     assert first["financial"]["liabilitiesToEquity"] == 0.42
+    assert first["analystOutlook"]["recentActions"][0]["firm"] == "JPMorgan"
+    assert first["analystOutlook"]["consensusMeanTargetChangePercent"] == 2.5
+    assert "JPMorgan은 투자의견 Overweight를 유지" in first["analystOutlook"]["summary"]
+    assert "시장 평균 목표주가는 $205" in first["analystOutlook"]["summary"]
     assert "revenue_growth_yoy" in first_missing
+
+
+def test_analyst_outlook_never_invents_missing_target_change_or_consensus_direction():
+    bundle = source_bundle()
+    bundle["analystActions"][0]["prior_price_target"] = None
+    bundle["analystConsensus"] = bundle["analystConsensus"][:1]
+
+    outlook = calculate_analyst_outlook(bundle)
+
+    assert outlook["recentActions"][0]["priceTarget"] == 200
+    assert outlook["recentActions"][0]["priorPriceTarget"] is None
+    assert outlook["previousConsensus"] is None
+    assert outlook["consensusMeanTargetChangePercent"] is None
+    assert "상향" not in outlook["summary"]
+    assert "시장 평균 목표주가는 현재 $205" in outlook["summary"]
 
 
 def test_source_receipt_contains_ids_not_duplicated_source_documents():
@@ -95,6 +134,8 @@ def test_source_receipt_contains_ids_not_duplicated_source_documents():
         "newsIds": ["news-1"], "secFilingIds": ["sec-1"], "priceAsOf": "2026-07-15",
         "graphRelationIds": ["graph-7"], "financialAccessions": ["sec-1"],
         "earningsPeriods": ["2026-Q2"], "earningsEstimateAsOf": "2026-07-14 21:15:00.000",
+        "analystActionIds": ["JPMorgan|2026-07-15 12:00:00.000|main"],
+        "analystConsensusAsOf": "2026-07-15 21:15:00.000",
     }
 
 
@@ -148,6 +189,8 @@ def test_company_journal_source_bundle_reads_actual_history_from_2021_without_fa
     assert all("period_end >= toDate('2021-01-01')" in query for query in history_queries)
     assert bundle["earningsActuals"] == []
     assert bundle["earningsEstimates"] == []
+    assert bundle["analystActions"] == []
+    assert bundle["analystConsensus"] == []
 
 
 def test_performance_series_deduplicates_candles_before_per_symbol_limit():
@@ -179,6 +222,7 @@ def test_worker_persists_only_a_validated_report_then_completes_request():
     assert repository.inserted is not None
     assert [event[1] for event in repository.events] == ["processing", "completed"]
     assert repository.inserted["receipt"]["newsIds"] == ["news-1"]
+    assert repository.inserted["draft"].recent_movement.startswith("JPMorgan은 투자의견 Overweight를 유지")
 
 
 def test_missing_market_data_does_not_generate_numbers():

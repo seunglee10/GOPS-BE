@@ -115,6 +115,8 @@ sec_derived_metrics
 sec_frames
 sec_collection_runs
 yahoo_earnings_estimates
+yahoo_analyst_actions
+yahoo_analyst_consensus
 ```
 
 Redis stale checks are not part of the Financial Agent runtime. Sync or nightly
@@ -142,9 +144,11 @@ The Yahoo estimates entrypoint is:
 python -u systems/fundamentals/jobs/yahoo-estimates-sync/main.py
 ```
 
-It runs in the `gops-market-storage` image and writes only
-`market_data.yahoo_earnings_estimates`. It does not write SEC actual tables or
-Redis fundamentals summaries. In AWS/EKS the scheduled collector is
+It runs in the `gops-market-storage` image and writes Yahoo EPS/revenue consensus,
+firm rating actions, and daily analyst target consensus to
+`market_data.yahoo_earnings_estimates`, `market_data.yahoo_analyst_actions`, and
+`market_data.yahoo_analyst_consensus`. It does not write SEC actual tables or Redis
+fundamentals summaries. In AWS/EKS the scheduled collector is
 `infra/k8s/overlays/aws/scheduled/cronjob-yahoo-estimates-sync.yaml`, running on
 weekdays at `22:30 UTC`.
 
@@ -170,6 +174,13 @@ Earnings-date rows use `fiscal_period=EVENT` and preserve announcement time,
 market session, actual EPS, estimate, surprise percentage, and
 scheduled/reported status. An empty universe or a zero-row live run exits with
 failure and prints structured requested/succeeded/row/error counts.
+
+Analyst-action rows preserve only Yahoo Finance fields actually returned by
+yfinance: firm, action date, rating action/from/to grade, and optional prior/current
+price targets. Missing targets or reasons are never inferred. Daily consensus rows
+preserve current/low/high/mean/median targets and recommendation counts when Yahoo
+provides them. Consecutive snapshot dates allow the Company Journal to describe a
+consensus direction without reconstructing history from a single current value.
 
 ## 10-K Profile Backfill
 

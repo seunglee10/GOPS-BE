@@ -149,6 +149,46 @@ CREATE TABLE IF NOT EXISTS market_data.yahoo_earnings_estimates
 ENGINE = ReplacingMergeTree(collected_at)
 ORDER BY (symbol, metric, fiscal_year, fiscal_period, period_end);
 
+CREATE TABLE IF NOT EXISTS market_data.yahoo_analyst_actions
+(
+    symbol LowCardinality(String),
+    action_at DateTime64(3, 'UTC'),
+    firm String,
+    action LowCardinality(String),
+    from_grade String,
+    to_grade String,
+    prior_price_target Nullable(Float64),
+    price_target Nullable(Float64),
+    source LowCardinality(String),
+    collected_at DateTime64(3, 'UTC'),
+    raw String,
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(collected_at)
+ORDER BY (symbol, action_at, firm, action);
+
+CREATE TABLE IF NOT EXISTS market_data.yahoo_analyst_consensus
+(
+    symbol LowCardinality(String),
+    snapshot_date Date,
+    current_price Nullable(Float64),
+    target_low Nullable(Float64),
+    target_high Nullable(Float64),
+    target_mean Nullable(Float64),
+    target_median Nullable(Float64),
+    strong_buy Nullable(UInt16),
+    buy Nullable(UInt16),
+    hold Nullable(UInt16),
+    sell Nullable(UInt16),
+    strong_sell Nullable(UInt16),
+    source LowCardinality(String),
+    collected_at DateTime64(3, 'UTC'),
+    raw String,
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(collected_at)
+ORDER BY (symbol, snapshot_date);
+
 -- Existing environments keep this file idempotent and receive the additive event fields.
 ALTER TABLE market_data.yahoo_earnings_estimates ADD COLUMN IF NOT EXISTS event_at Nullable(DateTime64(3, 'UTC')) AFTER analyst_count;
 ALTER TABLE market_data.yahoo_earnings_estimates ADD COLUMN IF NOT EXISTS actual_value Nullable(Float64) AFTER event_at;

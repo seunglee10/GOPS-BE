@@ -87,7 +87,7 @@ class IntegratedOrderRoutesTest(unittest.TestCase):
         self.app.state.kis_client = fake_client
         self.app.state.portfolio_sector_provider = lambda: [{"symbol": "MU", "sector": "Technology"}]
 
-        response = self.client.get("/api/account/holdings?market=overseas&currency=USD")
+        response = self.client.get("/api/account/holdings?market=overseas&currency=USD&source=kis")
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -156,7 +156,7 @@ class IntegratedOrderRoutesTest(unittest.TestCase):
             redis_provider=SimpleNamespace(redis=None),
         )
 
-        response = self.client.get("/api/account/holdings?market=overseas&currency=USD")
+        response = self.client.get("/api/account/holdings?market=overseas&currency=USD&source=kis")
 
         self.assertEqual(response.status_code, 200)
         position = response.json()["positions"][0]

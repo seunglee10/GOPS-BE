@@ -58,13 +58,14 @@ def list_trade_conditions(
     request: Request,
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
-    if simulator_mode_active(request.app):
-        try:
-            return simulator_gateway_from_app(request.app).conditions(user.sub)
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
     repository = _repository_from_app(request.app)
-    return {"conditions": jsonable_encoder(repository.list_conditions(user.sub))}
+    conditions = repository.list_conditions(user.sub)
+    mode, run_id, _sequence = _execution_context(request.app)
+    if mode == "simulation":
+        conditions = [row for row in conditions if row.get("execution_mode") == mode and row.get("simulation_run_id") == run_id]
+    else:
+        conditions = [row for row in conditions if row.get("execution_mode", "paper") == "paper"]
+    return {"conditions": jsonable_encoder(conditions), "runId": run_id}
 
 
 @router.post("/api/trade-conditions", status_code=status.HTTP_201_CREATED)
@@ -73,24 +74,6 @@ def create_trade_condition(
     request: Request,
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
-    if simulator_mode_active(request.app):
-        try:
-            return simulator_gateway_from_app(request.app).create_condition(
-                user.sub,
-                {
-                    "symbol": body.symbol,
-                    "side": body.side,
-                    "direction": body.direction,
-                    "triggerPrice": str(body.triggerPrice),
-                    "limitPrice": str(body.limitPrice),
-                    "quantity": body.quantity,
-                    "executionEnabled": body.executionEnabled,
-                    "alertsEnabled": body.alertsEnabled,
-                    "validity": body.validity,
-                },
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
     created = _create_from_values(
         request,
         user_sub=user.sub,
@@ -120,15 +103,6 @@ def update_trade_condition(
         raise HTTPException(status_code=422, detail="status or alertsEnabled is required")
     if body.status is not None and body.status not in USER_MUTABLE_STATUSES:
         raise HTTPException(status_code=422, detail="status must be watching or paused")
-    if simulator_mode_active(request.app):
-        try:
-            return simulator_gateway_from_app(request.app).update_condition(
-                user.sub,
-                condition_id,
-                {"status": body.status, "alertsEnabled": body.alertsEnabled},
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
     repository = _repository_from_app(request.app)
     existing = repository.get_condition(user.sub, condition_id)
     if existing is None:
@@ -154,11 +128,6 @@ def delete_trade_condition(
     request: Request,
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
-    if simulator_mode_active(request.app):
-        try:
-            return simulator_gateway_from_app(request.app).delete_condition(user.sub, condition_id)
-        except Exception as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
     repository = _repository_from_app(request.app)
     condition = repository.get_condition(user.sub, condition_id)
     if condition is None:
@@ -271,7 +240,14 @@ def _create_from_values(
         quantity_value = 0
     if quantity_value <= 0 or Decimal(str(quantity)) != Decimal(quantity_value):
         raise HTTPException(status_code=422, detail="quantity must be a positive whole-share value")
-    current_price = _resolve_current_price(request.app, normalized_symbol)
+    if simulator_mode_active(request.app):
+        try:
+            replay_quote = simulator_gateway_from_app(request.app).quote(normalized_symbol)
+            current_price = Decimal(str(replay_quote.get("ask") or replay_quote.get("bid")))
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=f"simulation quote is unavailable: {exc}") from exc
+    else:
+        current_price = _resolve_current_price(request.app, normalized_symbol)
     if normalized_direction == "atOrBelow" and trigger >= current_price:
         raise HTTPException(status_code=422, detail="atOrBelow triggerPrice must be below the current price")
     if normalized_direction == "atOrAbove" and trigger <= current_price:
@@ -281,6 +257,7 @@ def _create_from_values(
     if alert_repository.active_alert_count(user_sub) >= ACTIVE_ALERT_LIMIT:
         raise HTTPException(status_code=409, detail=f"활성 알림은 최대 {ACTIVE_ALERT_LIMIT}개까지 등록할 수 있습니다.")
     repository = _repository_from_app(request.app)
+    execution_mode, simulation_run_id, simulation_sequence = _execution_context(request.app)
     created = repository.create_condition(
         TradeConditionCreate(
             user_sub=user_sub,
@@ -298,11 +275,28 @@ def _create_from_values(
             proposal_id=proposal_id,
             analysis_id=analysis_id,
             expires_at=expires_at,
+            execution_mode=execution_mode,
+            simulation_run_id=simulation_run_id,
+            simulation_submitted_sequence=simulation_sequence,
         )
     )
     alert = alert_repository.get_alert(user_sub, int(created["alert_id"]))
     projection_status = _sync_projection(request.app, "upsert", alert) if alert else "pending"
     return {"condition": jsonable_encoder(created), "projectionStatus": projection_status}
+
+
+def _execution_context(app: Any) -> tuple[str, str | None, int | None]:
+    if not simulator_mode_active(app):
+        return "paper", None, None
+    try:
+        status_payload = simulator_gateway_from_app(app).status()
+        run_id = str(status_payload.get("runId") or "") or None
+        sequence = int(status_payload.get("processedEventCount") or 0)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"simulation run is unavailable: {exc}") from exc
+    if not run_id:
+        raise HTTPException(status_code=409, detail="simulation run is unavailable")
+    return "simulation", run_id, sequence
 
 
 def _repository_from_app(app: Any):

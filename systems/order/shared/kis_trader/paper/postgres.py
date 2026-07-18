@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 from decimal import Decimal
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import psycopg
 from psycopg.conninfo import make_conninfo
@@ -11,6 +12,17 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from kis_trader.domain.commands import OrderRequest
+
+from .fixture import (
+    DEMO_FILLS,
+    DEMO_FINAL_CASH,
+    DEMO_HOLDINGS,
+    HOLDING_BY_SYMBOL,
+    SEED_PROFILE,
+    configured_seed_profile,
+    fallback_price,
+    seed_snapshot_history,
+)
 
 from .models import (
     CANCELLED_STATUS,
@@ -34,10 +46,12 @@ class PostgresPaperTradingRepository:
         *,
         default_starting_cash: Decimal = DEFAULT_STARTING_CASH,
         max_active_order_symbols: int = MAX_ACTIVE_ORDER_SYMBOLS,
+        seed_profile: str | None = None,
     ) -> None:
         self.conninfo = conninfo
         self.default_starting_cash = Decimal(default_starting_cash)
         self.max_active_order_symbols = max_active_order_symbols
+        self.seed_profile = seed_profile
 
     @classmethod
     def from_env(cls) -> "PostgresPaperTradingRepository":
@@ -54,6 +68,7 @@ class PostgresPaperTradingRepository:
             conninfo,
             default_starting_cash=Decimal(os.getenv("PAPER_STARTING_CASH", str(DEFAULT_STARTING_CASH))),
             max_active_order_symbols=int(os.getenv("PAPER_MAX_ACTIVE_ORDER_SYMBOLS", str(MAX_ACTIVE_ORDER_SYMBOLS))),
+            seed_profile=configured_seed_profile(),
         )
 
     def ensure_account(self, user_id: str) -> dict[str, Any]:
@@ -103,6 +118,9 @@ class PostgresPaperTradingRepository:
                         "available_cash": run["cash_balance"] - run["reserved_cash"],
                         "realized_pnl": realized_row["realized_pnl"],
                         "started_at": run["started_at"],
+                        "seed_profile": account.get("seed_profile"),
+                        "seeded_at": account.get("seeded_at"),
+                        "seed_suppressed_at": account.get("seed_suppressed_at"),
                     },
                     "positions": [dict(row) for row in positions],
                     "open_orders": [public_order(dict(row)) for row in open_orders],
@@ -115,6 +133,11 @@ class PostgresPaperTradingRepository:
         idempotency_key_hash: str,
         body_hash: str,
         request: OrderRequest,
+        execution_mode: str = "paper",
+        simulation_run_id: str | None = None,
+        simulation_submitted_sequence: int | None = None,
+        virtual_submitted_at: str | None = None,
+        order_type: str = "limit",
     ) -> PaperOrderCreationResult:
         with self._connect() as conn:
             with conn.transaction():
@@ -132,24 +155,25 @@ class PostgresPaperTradingRepository:
                         raise PaperIdempotencyConflictError("idempotency key reused with a different request body")
                     return PaperOrderCreationResult(public_order(dict(existing)), True)
 
-                # Admission is global because Alpaca's realtime symbol cap is global.
-                conn.execute("SELECT pg_advisory_xact_lock(hashtext('paper-active-order-symbol-capacity'))")
-                active_row = conn.execute(
-                    """
-                    SELECT count(DISTINCT symbol) AS symbol_count,
-                           bool_or(symbol = %s) AS symbol_exists
-                    FROM paper_orders
-                    WHERE status = 'pending'
-                    """,
-                    (request.symbol,),
-                ).fetchone()
-                if (
-                    int(active_row["symbol_count"] or 0) >= self.max_active_order_symbols
-                    and not bool(active_row["symbol_exists"])
-                ):
-                    raise PaperCapacityError(
-                        f"paper order realtime subscription limit reached ({self.max_active_order_symbols} symbols)"
-                    )
+                if execution_mode == "paper":
+                    # Admission is global because Alpaca's realtime symbol cap is global.
+                    conn.execute("SELECT pg_advisory_xact_lock(hashtext('paper-active-order-symbol-capacity'))")
+                    active_row = conn.execute(
+                        """
+                        SELECT count(DISTINCT symbol) AS symbol_count,
+                               bool_or(symbol = %s) AS symbol_exists
+                        FROM paper_orders
+                        WHERE status = 'pending' AND execution_mode = 'paper'
+                        """,
+                        (request.symbol,),
+                    ).fetchone()
+                    if (
+                        int(active_row["symbol_count"] or 0) >= self.max_active_order_symbols
+                        and not bool(active_row["symbol_exists"])
+                    ):
+                        raise PaperCapacityError(
+                            f"paper order realtime subscription limit reached ({self.max_active_order_symbols} symbols)"
+                        )
 
                 position = self._ensure_position(
                     conn,
@@ -191,8 +215,11 @@ class PostgresPaperTradingRepository:
                     """
                     INSERT INTO paper_orders (
                         order_id, user_id, generation, market, symbol, side, qty, limit_price,
-                        exchange, order_division, status, idempotency_key_hash, body_hash
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
+                        exchange, order_division, order_type, execution_mode, simulation_run_id,
+                        simulation_submitted_sequence, virtual_submitted_at,
+                        status, idempotency_key_hash, body_hash
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                              'pending', %s, %s)
                     """,
                     (
                         order_id,
@@ -205,6 +232,11 @@ class PostgresPaperTradingRepository:
                         request.price,
                         request.exchange,
                         request.order_division,
+                        order_type,
+                        execution_mode,
+                        simulation_run_id,
+                        simulation_submitted_sequence,
+                        virtual_submitted_at,
                         idempotency_key_hash,
                         body_hash,
                     ),
@@ -392,7 +424,11 @@ class PostgresPaperTradingRepository:
                 conn.execute(
                     """
                     UPDATE paper_accounts
-                    SET current_generation = %s, updated_at = now()
+                    SET current_generation = %s,
+                        seed_profile = NULL,
+                        seeded_at = NULL,
+                        seed_suppressed_at = now(),
+                        updated_at = now()
                     WHERE user_id = %s
                     """,
                     (next_generation, user_id),
@@ -416,6 +452,10 @@ class PostgresPaperTradingRepository:
         ask_price: Decimal | None,
         quote_timestamp: str | None,
         quote_event_id: str | None,
+        execution_mode: str = "paper",
+        simulation_run_id: str | None = None,
+        quote_sequence: int | None = None,
+        virtual_timestamp: str | None = None,
     ) -> list[dict[str, Any]]:
         symbol = symbol.upper()
         bid = Decimal(bid_price) if bid_price is not None else None
@@ -426,11 +466,15 @@ class PostgresPaperTradingRepository:
                 rows = conn.execute(
                     """
                     SELECT * FROM paper_orders
-                    WHERE symbol = %s AND status = 'pending'
+                    WHERE symbol = %s AND status = 'pending' AND execution_mode = %s
+                      AND (%s <> 'simulation' OR simulation_run_id = %s)
+                      AND (%s::bigint IS NULL OR simulation_submitted_sequence IS NULL
+                           OR (order_type = 'market' AND simulation_submitted_sequence <= %s::bigint)
+                           OR (order_type = 'limit' AND simulation_submitted_sequence < %s::bigint))
                     ORDER BY created_at, order_id
                     FOR UPDATE SKIP LOCKED
                     """,
-                    (symbol,),
+                    (symbol, execution_mode, execution_mode, simulation_run_id, quote_sequence, quote_sequence, quote_sequence),
                 ).fetchall()
                 for row in rows:
                     fill_price = ask if row["side"] == "buy" and ask is not None and ask <= row["limit_price"] else None
@@ -499,10 +543,11 @@ class PostgresPaperTradingRepository:
                         UPDATE paper_orders
                         SET status = 'filled', filled_qty = qty, fill_price = %s,
                             quote_event_id = %s, quote_timestamp = %s,
-                            filled_at = now(), updated_at = now(), reason = NULL
+                            filled_at = now(), virtual_filled_at = %s,
+                            updated_at = now(), reason = NULL
                         WHERE order_id = %s
                         """,
-                        (fill_price, quote_event_id, quote_timestamp, row["order_id"]),
+                        (fill_price, quote_event_id, quote_timestamp, virtual_timestamp, row["order_id"]),
                     )
                     updated = conn.execute("SELECT * FROM paper_orders WHERE order_id = %s", (row["order_id"],)).fetchone()
                     self._append_event(
@@ -527,13 +572,71 @@ class PostgresPaperTradingRepository:
                         cash_delta=cash_delta,
                         reserved_cash_delta=reserved_delta,
                     )
+                    self._append_portfolio_snapshot(
+                        conn,
+                        row["user_id"],
+                        row["generation"],
+                        virtual_timestamp or quote_timestamp,
+                        {symbol: fill_price},
+                    )
                     matched.append(public_order(dict(updated)))
         return matched
+
+    def cancel_simulation_run(self, run_id: str, *, reason: str = "simulation_run_ended") -> list[dict[str, Any]]:
+        cancelled: list[dict[str, Any]] = []
+        with self._connect() as conn:
+            with conn.transaction():
+                rows = conn.execute(
+                    """
+                    SELECT * FROM paper_orders
+                    WHERE execution_mode = 'simulation' AND simulation_run_id = %s AND status = 'pending'
+                    ORDER BY created_at, order_id
+                    FOR UPDATE
+                    """,
+                    (run_id,),
+                ).fetchall()
+                for row in rows:
+                    run = self._run(conn, row["user_id"], row["generation"], for_update=True)
+                    reserved_delta = self._release_reservation(conn, row, run)
+                    conn.execute(
+                        """
+                        UPDATE paper_orders
+                        SET status = 'cancelled', reason = %s, cancelled_at = now(), updated_at = now()
+                        WHERE order_id = %s
+                        """,
+                        (reason, row["order_id"]),
+                    )
+                    updated = conn.execute(
+                        "SELECT * FROM paper_orders WHERE order_id = %s", (row["order_id"],)
+                    ).fetchone()
+                    self._append_event(conn, updated, "order.cancelled", CANCELLED_STATUS, reason)
+                    current_run = self._run(conn, row["user_id"], row["generation"])
+                    self._append_ledger(
+                        conn, row["user_id"], row["generation"], current_run,
+                        "order.reservation_released", order_id=row["order_id"],
+                        reserved_cash_delta=reserved_delta,
+                    )
+                    cancelled.append(public_order(dict(updated)))
+                conn.execute(
+                    """
+                    WITH canceled AS (
+                        UPDATE trade_conditions
+                        SET status = 'canceled', updated_at = now(), version = version + 1
+                        WHERE execution_mode = 'simulation' AND simulation_run_id = %s
+                          AND status IN ('watching', 'paused', 'triggered', 'executing')
+                        RETURNING alert_id
+                    )
+                    UPDATE alerts SET status = 'disabled'
+                    WHERE id IN (SELECT alert_id FROM canceled)
+                    """,
+                    (run_id,),
+                )
+        return cancelled
 
     def active_order_symbols(self) -> list[str]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT DISTINCT symbol FROM paper_orders WHERE status = 'pending' ORDER BY symbol"
+                "SELECT DISTINCT symbol FROM paper_orders WHERE status = 'pending' AND execution_mode = 'paper' ORDER BY symbol"
             ).fetchall()
             return [str(row["symbol"]) for row in rows]
 
@@ -592,7 +695,136 @@ class PostgresPaperTradingRepository:
                 "account.opened",
                 cash_delta=self.default_starting_cash,
             )
+        self._maybe_seed_account(conn, dict(account), dict(run))
+        account = conn.execute(
+            f"SELECT * FROM paper_accounts WHERE user_id = %s{' FOR UPDATE' if for_update else ''}",
+            (user_id,),
+        ).fetchone()
+        run = self._run(conn, user_id, account["current_generation"], for_update=for_update)
         return dict(account), dict(run)
+
+    def _maybe_seed_account(
+        self,
+        conn: psycopg.Connection,
+        account: dict[str, Any],
+        run: dict[str, Any],
+    ) -> None:
+        if self.seed_profile != SEED_PROFILE:
+            return
+        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 1818))", (account["user_id"],))
+        account = dict(conn.execute(
+            "SELECT * FROM paper_accounts WHERE user_id = %s FOR UPDATE", (account["user_id"],)
+        ).fetchone())
+        if account.get("seed_profile") or account.get("seed_suppressed_at"):
+            return
+        user_id = account["user_id"]
+        generation = account["current_generation"]
+        state = conn.execute(
+            """
+            SELECT
+              EXISTS(SELECT 1 FROM paper_orders WHERE user_id = %s) AS has_orders,
+              EXISTS(SELECT 1 FROM paper_positions WHERE user_id = %s AND qty > 0) AS has_positions
+            """,
+            (user_id, user_id),
+        ).fetchone()
+        current_run = self._run(conn, user_id, generation, for_update=True)
+        if (
+            state["has_orders"] or state["has_positions"]
+            or current_run["cash_balance"] != self.default_starting_cash
+            or current_run["reserved_cash"] != 0
+        ):
+            return
+        conn.execute(
+            """
+            UPDATE paper_account_runs SET cash_balance = %s, reserved_cash = 0
+            WHERE user_id = %s AND generation = %s
+            """,
+            (DEMO_FINAL_CASH, user_id, generation),
+        )
+        realized_by_symbol = {"GOOGL": Decimal("211.20"), "XOM": Decimal("127.50"), "HD": Decimal("-84.00")}
+        for holding in DEMO_HOLDINGS:
+            conn.execute(
+                """
+                INSERT INTO paper_positions (
+                    user_id, generation, symbol, qty, reserved_qty, average_price, realized_pnl, updated_at
+                ) VALUES (%s, %s, %s, %s, 0, %s, %s, now())
+                ON CONFLICT (user_id, generation, symbol) DO UPDATE
+                SET qty = EXCLUDED.qty, reserved_qty = 0, average_price = EXCLUDED.average_price,
+                    realized_pnl = EXCLUDED.realized_pnl, updated_at = now()
+                """,
+                (
+                    user_id, generation, holding.symbol, holding.quantity, holding.average_price,
+                    realized_by_symbol.get(holding.symbol, Decimal("0")),
+                ),
+            )
+        seed_cash = self.default_starting_cash
+        for index, fill in enumerate(DEMO_FILLS, start=1):
+            order_id = f"paper_seed_{uuid5(NAMESPACE_URL, f'{SEED_PROFILE}:{user_id}:{index}').hex}"
+            conn.execute(
+                """
+                INSERT INTO paper_orders (
+                    order_id, user_id, generation, market, symbol, side, qty, limit_price,
+                    exchange, order_division, order_type, execution_mode, seed_profile,
+                    status, filled_qty, fill_price, quote_event_id, quote_timestamp,
+                    idempotency_key_hash, body_hash, created_at, updated_at, filled_at
+                ) VALUES (
+                    %s, %s, %s, 'overseas', %s, %s, %s, %s,
+                    %s, '00', 'limit', 'paper', %s,
+                    'filled', %s, %s, %s, %s, %s, %s, %s, %s, %s
+                ) ON CONFLICT (order_id) DO NOTHING
+                """,
+                (
+                    order_id, user_id, generation, fill.symbol, fill.side, fill.quantity, fill.price,
+                    HOLDING_BY_SYMBOL[fill.symbol].exchange, SEED_PROFILE,
+                    fill.quantity, fill.price, f"seed:{SEED_PROFILE}:{index}", fill.filled_at,
+                    f"seed:{SEED_PROFILE}:{index}", SEED_PROFILE,
+                    fill.filled_at, fill.filled_at, fill.filled_at,
+                ),
+            )
+            order = conn.execute("SELECT * FROM paper_orders WHERE order_id = %s", (order_id,)).fetchone()
+            self._append_event(
+                conn, order, "order.filled", FILLED_STATUS,
+                payload={"seed_profile": SEED_PROFILE, "fill_price": str(fill.price)},
+            )
+            cash_delta = fill.quantity * fill.price * (Decimal("-1") if fill.side == "buy" else Decimal("1"))
+            seed_cash += cash_delta
+            conn.execute(
+                """
+                INSERT INTO paper_cash_ledger (
+                    entry_id, user_id, generation, order_id, event_type,
+                    cash_delta, reserved_cash_delta, cash_balance_after,
+                    reserved_cash_after, payload, created_at
+                ) VALUES (%s, %s, %s, %s, 'order.filled', %s, 0, %s, 0, %s, %s)
+                ON CONFLICT (entry_id) DO NOTHING
+                """,
+                (
+                    f"paper_seed_led_{uuid5(NAMESPACE_URL, f'{SEED_PROFILE}:{user_id}:ledger:{index}').hex}",
+                    user_id, generation, order_id, cash_delta, seed_cash,
+                    Jsonb({"seed_profile": SEED_PROFILE}), fill.filled_at,
+                ),
+            )
+        for source_as_of, snapshot in seed_snapshot_history():
+            conn.execute(
+                """
+                INSERT INTO user_portfolio_snapshot_history (user_sub, payload, source_as_of)
+                VALUES (%s, %s, %s)
+                """,
+                (user_id, Jsonb(json.loads(json.dumps(snapshot, default=str))), source_as_of),
+            )
+        conn.execute(
+            """
+            UPDATE paper_accounts SET seed_profile = %s, seeded_at = now(), updated_at = now()
+            WHERE user_id = %s
+            """,
+            (SEED_PROFILE, user_id),
+        )
+        seeded_run = self._run(conn, user_id, generation)
+        self._append_ledger(
+            conn, user_id, generation, seeded_run, "account.seeded",
+            cash_delta=Decimal("0"),
+        )
+        if seed_cash != DEMO_FINAL_CASH:
+            raise AssertionError("demo fixture cash invariant failed")
 
     def _run(
         self,
@@ -612,6 +844,61 @@ class PostgresPaperTradingRepository:
         if row is None:
             raise PaperOrderError("paper account run not found")
         return dict(row)
+
+    def _append_portfolio_snapshot(
+        self,
+        conn: psycopg.Connection,
+        user_id: str,
+        generation: int,
+        as_of: str | None,
+        price_overrides: dict[str, Decimal],
+    ) -> None:
+        run = self._run(conn, user_id, generation)
+        rows = conn.execute(
+            """
+            SELECT symbol, qty, average_price
+            FROM paper_positions
+            WHERE user_id = %s AND generation = %s AND qty > 0
+            ORDER BY symbol
+            """,
+            (user_id, generation),
+        ).fetchall()
+        positions: list[dict[str, Any]] = []
+        market_value = Decimal("0")
+        holdings_cost = Decimal("0")
+        for row in rows:
+            price = price_overrides.get(row["symbol"]) or fallback_price(row["symbol"]) or row["average_price"]
+            value = row["qty"] * price
+            cost = row["qty"] * row["average_price"]
+            market_value += value
+            holdings_cost += cost
+            positions.append({
+                "symbol": row["symbol"],
+                "quantity": row["qty"],
+                "averagePrice": row["average_price"],
+                "currentPrice": price,
+                "marketValueForeign": value,
+                "purchaseAmountForeign": cost,
+            })
+        equity = run["cash_balance"] + market_value
+        payload = {
+            "asOf": as_of,
+            "source": "account-history",
+            "account": {
+                "cashForeign": run["cash_balance"],
+                "stockValueForeign": market_value,
+                "totalValueForeign": equity,
+                "unrealizedPnlForeign": market_value - holdings_cost,
+            },
+            "positions": positions,
+        }
+        conn.execute(
+            """
+            INSERT INTO user_portfolio_snapshot_history (user_sub, payload, source_as_of)
+            VALUES (%s, %s, COALESCE(%s::timestamptz, now()))
+            """,
+            (user_id, Jsonb(json.loads(json.dumps(payload, default=str))), as_of),
+        )
 
     def _ensure_position(
         self,

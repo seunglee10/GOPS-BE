@@ -1,9 +1,8 @@
 """Build a RiskContext from live app data for pre-trade risk checks.
 
 Data sources, in order of preference:
-- portfolio: simulator account (simulation mode) or the latest holdings
-  snapshot remembered by GET /api/account/holdings, falling back to a direct
-  KIS demo fetch.
+- portfolio: the shared persistent paper account in LIVE/SIM, falling back to
+  the latest holdings snapshot remembered by GET /api/account/holdings.
 - symbol metrics: the live heatmap quote when available, then the latest daily
   candle close; ADV comes from the last 20 daily sessions (fat-finger checks).
 
@@ -66,10 +65,9 @@ def _portfolio_snapshot(app: Any, user_sub: str) -> tuple[Decimal | None, list[P
 
 def _holdings_payload(app: Any, user_sub: str) -> dict[str, Any] | None:
     try:
-        from app.routes.simulator import simulator_gateway_from_app, simulator_mode_active
+        from app.routes.paper_trading import _enriched_account_snapshot, paper_repository_from_app
 
-        if simulator_mode_active(app):
-            return simulator_gateway_from_app(app).account(user_sub)
+        return _enriched_account_snapshot(app, paper_repository_from_app(app), user_sub)
     except Exception:
         pass
     snapshots = getattr(app.state, "portfolio_holdings_snapshots", None)

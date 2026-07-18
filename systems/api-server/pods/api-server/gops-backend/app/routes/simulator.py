@@ -52,11 +52,14 @@ def simulator_status(request: Request) -> dict[str, Any]:
 
 @router.put("/mode")
 def simulator_mode(payload: SimulatorModeRequest, request: Request) -> dict[str, Any]:
+    _cancel_previous_simulation_run(request.app)
     return _call_simulator(lambda gateway: gateway.set_mode(payload.mode), request)
 
 
 @router.post("/action")
 def simulator_action(payload: SimulatorActionRequest, request: Request) -> dict[str, Any]:
+    if payload.action == "restart":
+        _cancel_previous_simulation_run(request.app)
     return _call_simulator(lambda gateway: gateway.action(payload.action), request)
 
 
@@ -97,3 +100,24 @@ def _call_simulator(callback, request: Request) -> dict[str, Any]:
         return callback(simulator_gateway_from_app(request.app))
     except SimulatorUnavailable as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+
+def _cancel_previous_simulation_run(app: Any) -> None:
+    try:
+        current = simulator_gateway_from_app(app).status()
+    except SimulatorUnavailable:
+        return
+    run_id = current.get("runId") if current.get("mode") == "simulation" else None
+    if not run_id:
+        return
+    try:
+        from app.routes.paper_trading import paper_repository_from_app
+
+        paper_repository_from_app(app).cancel_simulation_run(str(run_id))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"failed to release simulation reservations: {exc}",
+        ) from exc

@@ -7,7 +7,7 @@ from contextlib import suppress
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from gops_simul.clickhouse import ClickHouseHttpClient, ClickHouseReplayEventSource
 from gops_simul.config import Settings
@@ -26,35 +26,6 @@ class ActionRequest(BaseModel):
 
 class SpeedRequest(BaseModel):
     speed: Literal[1, 5, 20, 60, 300]
-
-
-class IndividualOrderRequest(BaseModel):
-    userId: str = Field(min_length=1, max_length=200)
-    symbol: str = Field(min_length=1, max_length=12)
-    side: Literal["buy", "sell"]
-    quantity: int = Field(gt=0)
-    orderType: Literal["market", "limit"] = "limit"
-    limitPrice: float | None = Field(default=None, gt=0)
-    idempotencyKey: str = Field(min_length=1, max_length=240)
-
-
-class ConditionRequest(BaseModel):
-    userId: str = Field(min_length=1, max_length=200)
-    symbol: str = Field(min_length=1, max_length=12)
-    side: Literal["buy", "sell"]
-    direction: Literal["atOrAbove", "atOrBelow"]
-    triggerPrice: float = Field(gt=0)
-    limitPrice: float = Field(gt=0)
-    quantity: int = Field(gt=0)
-    executionEnabled: bool = True
-    alertsEnabled: bool = True
-    validity: str = "DAY"
-
-
-class ConditionPatchRequest(BaseModel):
-    userId: str = Field(min_length=1, max_length=200)
-    status: Literal["watching", "paused"] | None = None
-    alertsEnabled: bool | None = None
 
 
 def build_default_controller(settings: Settings) -> ReplayController:
@@ -154,47 +125,25 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    @app.get("/api/control/account")
-    def replay_account(userId: str = Query(min_length=1, max_length=200)) -> dict[str, object]:
-        if controller.mode != "simulation":
-            raise HTTPException(status_code=409, detail="simulation mode is not active")
-        return controller.account(userId)
-
     @app.get("/api/control/quote")
     def replay_quote(symbol: str = Query(min_length=1, max_length=12)) -> dict[str, object]:
-        quote = controller.latest_quote(symbol)
+        quote = controller.latest_quote_details(symbol)
         if quote is None:
             raise HTTPException(status_code=404, detail="current replay quote is unavailable")
         return {"symbol": symbol.strip().upper(), **quote, "runId": controller.run_id}
 
-    @app.post("/api/control/orders")
-    def submit_order(payload: IndividualOrderRequest) -> dict[str, object]:
+    @app.get("/api/control/execution-events")
+    def replay_execution_events(
+        runId: str = Query(min_length=1, max_length=100),
+        afterSequence: int = Query(default=0, ge=0),
+        limit: int = Query(default=50_000, ge=1, le=50_000),
+    ) -> dict[str, object]:
+        if controller.mode != "simulation" or controller.run_id != runId:
+            raise HTTPException(status_code=409, detail="simulation run is not active")
         try:
-            return controller.submit_order(
-                user_id=payload.userId,
-                symbol=payload.symbol,
-                side=payload.side,
-                quantity=payload.quantity,
-                order_type=payload.orderType,
-                limit_price=payload.limitPrice,
-                idempotency_key=payload.idempotencyKey,
-            )
+            return controller.execution_events(after_sequence=afterSequence, limit=limit)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    @app.get("/api/control/orders/{order_id}")
-    def replay_order(order_id: str, userId: str = Query(min_length=1, max_length=200)) -> dict[str, object]:
-        order = controller.get_order(userId, order_id)
-        if order is None:
-            raise HTTPException(status_code=404, detail="order not found")
-        return order
-
-    @app.get("/api/control/orders/{order_id}/events")
-    def replay_order_events(order_id: str, userId: str = Query(min_length=1, max_length=200)) -> dict[str, object]:
-        order = controller.get_order(userId, order_id)
-        if order is None:
-            raise HTTPException(status_code=404, detail="order not found")
-        return {"order_id": order_id, "events": controller.order_events(userId, order_id)}
 
     @app.get("/api/control/candles")
     def replay_candles(
@@ -218,40 +167,6 @@ def create_app(
             "datasetId": controller.source.dataset_id,
             "symbols": [{"symbol": symbol, "name": symbol, "market": "US", "tradable": True} for symbol in symbols],
         }
-
-    @app.get("/api/control/conditions")
-    def replay_conditions(userId: str = Query(min_length=1, max_length=200)) -> dict[str, object]:
-        return {"conditions": controller.account(userId)["conditions"], "runId": controller.run_id}
-
-    @app.post("/api/control/conditions")
-    def create_condition(payload: ConditionRequest) -> dict[str, object]:
-        try:
-            condition = controller.create_condition(payload.userId, payload.model_dump(exclude={"userId"}))
-            return {"condition": condition, "runId": controller.run_id}
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    @app.patch("/api/control/conditions/{condition_id}")
-    def update_condition(condition_id: int, payload: ConditionPatchRequest) -> dict[str, object]:
-        try:
-            condition = controller.update_condition(
-                payload.userId,
-                condition_id,
-                status=payload.status,
-                alerts_enabled=payload.alertsEnabled,
-            )
-            return {"condition": condition, "runId": controller.run_id}
-        except ValueError as exc:
-            status_code = 404 if str(exc) == "trade condition not found" else 409
-            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
-
-    @app.delete("/api/control/conditions/{condition_id}")
-    def delete_condition(condition_id: int, userId: str = Query(min_length=1, max_length=200)) -> dict[str, object]:
-        try:
-            condition = controller.delete_condition(userId, condition_id)
-            return {"deleted": True, "condition": condition, "runId": controller.run_id}
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return app
 

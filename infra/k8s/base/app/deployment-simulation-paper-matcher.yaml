@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simulation-paper-matcher
+  namespace: alfaka-market-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: simulation-paper-matcher
+  template:
+    metadata:
+      labels:
+        app: simulation-paper-matcher
+    spec:
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: simulation-paper-matcher
+          image: YOUR_ECR_REPOSITORY/gops-order-worker:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/order/pods/simulation-paper-matcher/main.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-order-db-secret
+                optional: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          startupProbe:
+            exec:
+              command: ["python", "-m", "kis_trader.runtime_heartbeat", "--max-age-seconds", "120"]
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            exec:
+              command: ["python", "-m", "kis_trader.runtime_heartbeat", "--max-age-seconds", "30"]
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "kis_trader.runtime_heartbeat", "--max-age-seconds", "60"]
+            periodSeconds: 20
+            failureThreshold: 3

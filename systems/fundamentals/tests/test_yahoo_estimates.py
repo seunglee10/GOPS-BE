@@ -13,7 +13,9 @@ from fundamentals.yahoo_estimates import (
     earnings_event_datetime,
     estimate_row,
     period_from_yahoo_label,
+    rows_from_analyst_consensus,
     rows_from_earnings_dates,
+    rows_from_upgrades_downgrades,
     run_yahoo_estimates_sync,
     safe_call,
 )
@@ -86,6 +88,7 @@ class YahooEstimatesTests(unittest.TestCase):
             YahooEstimatesConfig(dry_run=False, symbols=["NVDA"], batch_size=10),
             clickhouse_client=client,
             fetcher=fetcher,
+            analyst_fetcher=lambda symbol, collected_at: ([], []),
         )
 
         self.assertEqual(stats.rows, 1)
@@ -93,6 +96,77 @@ class YahooEstimatesTests(unittest.TestCase):
         self.assertEqual(client.inserted[0][1][0]["symbol"], "NVDA")
         self.assertEqual(client.inserted[0][1][0]["average"], 1.23)
         self.assertTrue(any("ADD COLUMN IF NOT EXISTS event_at" in query for query in client.executed))
+
+    def test_yahoo_analyst_rows_preserve_verified_firm_action_targets_and_consensus(self):
+        collected_at = datetime(2026, 7, 18, tzinfo=timezone.utc)
+        actions = rows_from_upgrades_downgrades(
+            "NVDA",
+            FakeFrame([(
+                datetime(2026, 7, 17, tzinfo=timezone.utc),
+                {
+                    "Firm": "Morgan Stanley",
+                    "Action": "main",
+                    "FromGrade": "Overweight",
+                    "ToGrade": "Overweight",
+                    "PriorPriceTarget": 180,
+                    "PriceTarget": 200,
+                },
+            )]),
+            collected_at=collected_at,
+        )
+        consensus = rows_from_analyst_consensus(
+            "NVDA",
+            {"current": 190, "low": 150, "high": 250, "mean": 210, "median": 205},
+            FakeFrame([("0m", {"strongBuy": 12, "buy": 20, "hold": 5, "sell": 1, "strongSell": 0})]),
+            collected_at=collected_at,
+        )
+
+        self.assertEqual(actions[0]["firm"], "Morgan Stanley")
+        self.assertEqual(actions[0]["prior_price_target"], 180)
+        self.assertEqual(actions[0]["price_target"], 200)
+        self.assertEqual(consensus[0]["target_mean"], 210)
+        self.assertEqual(consensus[0]["strong_buy"], 12)
+        self.assertEqual(consensus[0]["source"], "yahoo-finance")
+
+    def test_run_sync_inserts_analyst_actions_and_daily_consensus_separately(self):
+        client = FakeClickHouseClient()
+        collected_at = datetime(2026, 7, 18, tzinfo=timezone.utc)
+        estimate = estimate_row(
+            symbol="NVDA",
+            metric="eps",
+            period=(2026, "Q3", datetime(2026, 9, 30, tzinfo=timezone.utc).date()),
+            average=1.23,
+            low=1.0,
+            high=1.5,
+            analyst_count=12,
+            collected_at=collected_at,
+            raw={},
+        )
+        action = {
+            "symbol": "NVDA", "action_at": "2026-07-17 00:00:00.000", "firm": "JPMorgan",
+            "action": "main", "from_grade": "Overweight", "to_grade": "Overweight",
+            "prior_price_target": None, "price_target": 210, "source": "yahoo-finance",
+            "collected_at": "2026-07-18 00:00:00.000", "raw": "{}",
+        }
+        consensus = {
+            "symbol": "NVDA", "snapshot_date": "2026-07-18", "current_price": 190,
+            "target_low": 150, "target_high": 250, "target_mean": 210, "target_median": 205,
+            "strong_buy": 12, "buy": 20, "hold": 5, "sell": 1, "strong_sell": 0,
+            "source": "yahoo-finance", "collected_at": "2026-07-18 00:00:00.000", "raw": "{}",
+        }
+
+        stats = run_yahoo_estimates_sync(
+            YahooEstimatesConfig(dry_run=False, symbols=["NVDA"], batch_size=10),
+            clickhouse_client=client,
+            fetcher=lambda symbol, collected_at: [estimate],
+            analyst_fetcher=lambda symbol, collected_at: ([action], [consensus]),
+        )
+
+        self.assertEqual(stats.analyst_action_rows, 1)
+        self.assertEqual(stats.analyst_consensus_rows, 1)
+        self.assertEqual([table for table, _ in client.inserted], [
+            "yahoo_earnings_estimates", "yahoo_analyst_actions", "yahoo_analyst_consensus",
+        ])
 
     def test_dedupe_rows_keeps_one_row_per_clickhouse_replacing_key(self):
         first = {
@@ -164,6 +238,7 @@ class YahooEstimatesTests(unittest.TestCase):
                 YahooEstimatesConfig(dry_run=False, symbols=["AMD"]),
                 clickhouse_client=FakeClickHouseClient(),
                 fetcher=lambda symbol, collected_at: [],
+                analyst_fetcher=lambda symbol, collected_at: ([], []),
             )
 
 

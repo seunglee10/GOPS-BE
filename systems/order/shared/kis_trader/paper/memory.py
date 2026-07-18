@@ -3,9 +3,20 @@ from __future__ import annotations
 from decimal import Decimal
 from threading import RLock
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from kis_trader.domain.commands import OrderRequest
+
+from .fixture import (
+    DEMO_FILLS,
+    DEMO_FINAL_CASH,
+    DEMO_HOLDINGS,
+    HOLDING_BY_SYMBOL,
+    DEMO_REALIZED_PNL,
+    SEED_PROFILE,
+    fallback_price,
+    seed_snapshot_history,
+)
 
 from .models import (
     CANCELLED_STATUS,
@@ -31,9 +42,11 @@ class InMemoryPaperTradingRepository:
         *,
         default_starting_cash: Decimal = DEFAULT_STARTING_CASH,
         max_active_order_symbols: int = MAX_ACTIVE_ORDER_SYMBOLS,
+        seed_profile: str | None = None,
     ) -> None:
         self.default_starting_cash = Decimal(default_starting_cash)
         self.max_active_order_symbols = max_active_order_symbols
+        self.seed_profile = seed_profile
         self.accounts: dict[str, dict[str, Any]] = {}
         self.runs: dict[tuple[str, int], dict[str, Any]] = {}
         self.positions: dict[tuple[str, int, str], dict[str, Any]] = {}
@@ -41,6 +54,7 @@ class InMemoryPaperTradingRepository:
         self.events: dict[str, list[dict[str, Any]]] = {}
         self.idempotency: dict[tuple[str, str], tuple[str, str]] = {}
         self.ledger: list[dict[str, Any]] = []
+        self.portfolio_history: list[dict[str, Any]] = []
         self._lock = RLock()
 
     def ensure_account(self, user_id: str) -> dict[str, Any]:
@@ -76,6 +90,9 @@ class InMemoryPaperTradingRepository:
                     "available_cash": run["cash_balance"] - run["reserved_cash"],
                     "realized_pnl": realized_pnl,
                     "started_at": run["started_at"],
+                    "seed_profile": account.get("seed_profile"),
+                    "seeded_at": account.get("seeded_at"),
+                    "seed_suppressed_at": account.get("seed_suppressed_at"),
                 },
                 "positions": positions,
                 "open_orders": open_orders,
@@ -88,6 +105,11 @@ class InMemoryPaperTradingRepository:
         idempotency_key_hash: str,
         body_hash: str,
         request: OrderRequest,
+        execution_mode: str = "paper",
+        simulation_run_id: str | None = None,
+        simulation_submitted_sequence: int | None = None,
+        virtual_submitted_at: str | None = None,
+        order_type: str = "limit",
     ) -> PaperOrderCreationResult:
         with self._lock:
             account, run = self._current(user_id)
@@ -100,7 +122,7 @@ class InMemoryPaperTradingRepository:
                 return PaperOrderCreationResult(public_order(self.orders[order_id]), True)
 
             active_symbols = set(self.active_order_symbols())
-            if request.symbol not in active_symbols and len(active_symbols) >= self.max_active_order_symbols:
+            if execution_mode == "paper" and request.symbol not in active_symbols and len(active_symbols) >= self.max_active_order_symbols:
                 raise PaperCapacityError(
                     f"paper order realtime subscription limit reached ({self.max_active_order_symbols} symbols)"
                 )
@@ -134,6 +156,13 @@ class InMemoryPaperTradingRepository:
                 "limit_price": request.price,
                 "exchange": request.exchange,
                 "order_division": request.order_division,
+                "order_type": order_type,
+                "execution_mode": execution_mode,
+                "simulation_run_id": simulation_run_id,
+                "simulation_submitted_sequence": simulation_submitted_sequence,
+                "virtual_submitted_at": virtual_submitted_at,
+                "virtual_filled_at": None,
+                "seed_profile": None,
                 "status": PENDING_STATUS,
                 "filled_qty": Decimal("0"),
                 "fill_price": None,
@@ -258,6 +287,9 @@ class InMemoryPaperTradingRepository:
             next_generation = old_generation + 1
             account["current_generation"] = next_generation
             account["updated_at"] = utc_now()
+            account["seed_suppressed_at"] = utc_now()
+            account["seed_profile"] = None
+            account["seeded_at"] = None
             self.runs[(user_id, next_generation)] = self._new_run(starting_cash)
             self._append_ledger(
                 user_id,
@@ -276,6 +308,10 @@ class InMemoryPaperTradingRepository:
         ask_price: Decimal | None,
         quote_timestamp: str | None,
         quote_event_id: str | None,
+        execution_mode: str = "paper",
+        simulation_run_id: str | None = None,
+        quote_sequence: int | None = None,
+        virtual_timestamp: str | None = None,
     ) -> list[dict[str, Any]]:
         symbol = symbol.upper()
         bid = Decimal(bid_price) if bid_price is not None else None
@@ -283,7 +319,23 @@ class InMemoryPaperTradingRepository:
         matched: list[dict[str, Any]] = []
         with self._lock:
             pending = sorted(
-                (row for row in self.orders.values() if row["symbol"] == symbol and row["status"] == PENDING_STATUS),
+                (
+                    row for row in self.orders.values()
+                    if row["symbol"] == symbol
+                    and row["status"] == PENDING_STATUS
+                    and row.get("execution_mode", "paper") == execution_mode
+                    and (execution_mode != "simulation" or row.get("simulation_run_id") == simulation_run_id)
+                    and (
+                        execution_mode != "simulation"
+                        or quote_sequence is None
+                        or row.get("simulation_submitted_sequence") is None
+                        or (
+                            int(row["simulation_submitted_sequence"]) <= int(quote_sequence)
+                            if row.get("order_type") == "market"
+                            else int(row["simulation_submitted_sequence"]) < int(quote_sequence)
+                        )
+                    )
+                ),
                 key=lambda row: (row["created_at"], row["order_id"]),
             )
             for row in pending:
@@ -326,6 +378,7 @@ class InMemoryPaperTradingRepository:
                     reason=None,
                     filled_at=now,
                     updated_at=now,
+                    virtual_filled_at=virtual_timestamp if execution_mode == "simulation" else None,
                 )
                 self._append_event(row, "order.filled", FILLED_STATUS, payload={
                     "fill_price": str(fill_price),
@@ -341,12 +394,38 @@ class InMemoryPaperTradingRepository:
                     cash_delta=cash_delta,
                     reserved_cash_delta=reserved_delta,
                 )
+                self._append_portfolio_snapshot(row["user_id"], row["generation"], virtual_timestamp or quote_timestamp, {symbol: fill_price})
                 matched.append(public_order(row))
         return matched
 
+    def cancel_simulation_run(self, run_id: str, *, reason: str = "simulation_run_ended") -> list[dict[str, Any]]:
+        cancelled: list[dict[str, Any]] = []
+        with self._lock:
+            rows = [
+                row for row in self.orders.values()
+                if row.get("execution_mode") == "simulation"
+                and row.get("simulation_run_id") == run_id
+                and row["status"] == PENDING_STATUS
+            ]
+            for row in rows:
+                _account, run = self._current_run_for_order(row)
+                reserved_delta = self._release_reservation(row, run)
+                now = utc_now()
+                row.update(status=CANCELLED_STATUS, reason=reason, cancelled_at=now, updated_at=now)
+                self._append_event(row, "order.cancelled", CANCELLED_STATUS, reason)
+                self._append_ledger(
+                    row["user_id"], row["generation"], run, "order.reservation_released",
+                    order_id=row["order_id"], reserved_cash_delta=reserved_delta,
+                )
+                cancelled.append(public_order(row))
+        return cancelled
+
     def active_order_symbols(self) -> list[str]:
         with self._lock:
-            return sorted({row["symbol"] for row in self.orders.values() if row["status"] == PENDING_STATUS})
+            return sorted({
+                row["symbol"] for row in self.orders.values()
+                if row["status"] == PENDING_STATUS and row.get("execution_mode", "paper") == "paper"
+            })
 
     def active_position_symbols(self) -> list[str]:
         with self._lock:
@@ -362,12 +441,91 @@ class InMemoryPaperTradingRepository:
                 "currency": "USD",
                 "created_at": now,
                 "updated_at": now,
+                "seed_profile": None,
+                "seeded_at": None,
+                "seed_suppressed_at": None,
             }
             run = self._new_run(self.default_starting_cash)
             self.accounts[user_id] = account
             self.runs[(user_id, 1)] = run
             self._append_ledger(user_id, 1, run, "account.opened", cash_delta=self.default_starting_cash)
+        self._maybe_seed_account(account, self.runs[(user_id, account["current_generation"])])
         return account, self.runs[(user_id, account["current_generation"])]
+
+    def _maybe_seed_account(self, account: dict[str, Any], run: dict[str, Any]) -> None:
+        if self.seed_profile != SEED_PROFILE:
+            return
+        if account.get("seed_profile") or account.get("seed_suppressed_at"):
+            return
+        user_id = account["user_id"]
+        generation = account["current_generation"]
+        has_orders = any(row["user_id"] == user_id for row in self.orders.values())
+        has_positions = any(
+            owner == user_id and row["qty"] > 0
+            for (owner, _generation, _symbol), row in self.positions.items()
+        )
+        if has_orders or has_positions or run["cash_balance"] != self.default_starting_cash or run["reserved_cash"] != 0:
+            return
+        run["cash_balance"] = DEMO_FINAL_CASH
+        now = utc_now()
+        account["seed_profile"] = SEED_PROFILE
+        account["seeded_at"] = now
+        realized_by_symbol = {"GOOGL": Decimal("211.20"), "XOM": Decimal("127.50"), "HD": Decimal("-84.00")}
+        for holding in DEMO_HOLDINGS:
+            position = self._position(user_id, generation, holding.symbol)
+            position.update(
+                qty=holding.quantity,
+                reserved_qty=Decimal("0"),
+                average_price=holding.average_price,
+                realized_pnl=realized_by_symbol.get(holding.symbol, Decimal("0")),
+                updated_at=now,
+            )
+        seed_cash = self.default_starting_cash
+        for index, fill in enumerate(DEMO_FILLS, start=1):
+            order_id = f"paper_seed_{uuid5(NAMESPACE_URL, f'{SEED_PROFILE}:{user_id}:{index}').hex}"
+            row = {
+                "order_id": order_id, "user_id": user_id, "generation": generation,
+                "market": "overseas", "symbol": fill.symbol, "side": fill.side,
+                "qty": fill.quantity, "limit_price": fill.price, "exchange": HOLDING_BY_SYMBOL[fill.symbol].exchange,
+                "order_division": "00", "order_type": "limit", "execution_mode": "paper",
+                "simulation_run_id": None, "simulation_submitted_sequence": None,
+                "virtual_submitted_at": None, "virtual_filled_at": None,
+                "seed_profile": SEED_PROFILE, "status": FILLED_STATUS, "filled_qty": fill.quantity,
+                "fill_price": fill.price, "quote_event_id": f"seed:{SEED_PROFILE}:{index}",
+                "quote_timestamp": fill.filled_at.isoformat(), "reason": None,
+                "idempotency_key_hash": f"seed:{SEED_PROFILE}:{index}", "body_hash": SEED_PROFILE,
+                "created_at": fill.filled_at, "updated_at": fill.filled_at,
+                "filled_at": fill.filled_at, "cancelled_at": None,
+            }
+            self.orders[order_id] = row
+            self.idempotency[(user_id, row["idempotency_key_hash"])] = (SEED_PROFILE, order_id)
+            self._append_event(row, "order.filled", FILLED_STATUS, payload={"seed_profile": SEED_PROFILE})
+            cash_delta = fill.quantity * fill.price * (Decimal("-1") if fill.side == "buy" else Decimal("1"))
+            seed_cash += cash_delta
+            self.ledger.append({
+                "entry_id": f"paper_seed_led_{uuid5(NAMESPACE_URL, f'{SEED_PROFILE}:{user_id}:ledger:{index}').hex}",
+                "user_id": user_id,
+                "generation": generation,
+                "order_id": order_id,
+                "event_type": "order.filled",
+                "cash_delta": cash_delta,
+                "reserved_cash_delta": Decimal("0"),
+                "cash_balance_after": seed_cash,
+                "reserved_cash_after": Decimal("0"),
+                "created_at": fill.filled_at,
+            })
+        self.portfolio_history.extend(
+            {"user_sub": user_id, "source_as_of": source_as_of, "payload": snapshot}
+            for source_as_of, snapshot in seed_snapshot_history()
+        )
+        self._append_ledger(
+            user_id, generation, run, "account.seeded",
+            cash_delta=Decimal("0"),
+        )
+        if seed_cash != DEMO_FINAL_CASH:
+            raise AssertionError("demo fixture cash invariant failed")
+        if sum((row["realized_pnl"] for row in self.positions.values() if row["user_id"] == user_id), Decimal("0")) != DEMO_REALIZED_PNL:
+            raise AssertionError("demo fixture realized P&L invariant failed")
 
     def _current(self, user_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
         return self._ensure_account(user_id)
@@ -385,6 +543,47 @@ class InMemoryPaperTradingRepository:
             "started_at": utc_now(),
             "ended_at": None,
         }
+
+    def _append_portfolio_snapshot(
+        self,
+        user_id: str,
+        generation: int,
+        as_of: str | None,
+        price_overrides: dict[str, Decimal],
+    ) -> None:
+        run = self.runs[(user_id, generation)]
+        rendered = []
+        market_value = Decimal("0")
+        holdings_cost = Decimal("0")
+        for (owner, row_generation, symbol), row in sorted(self.positions.items()):
+            if owner != user_id or row_generation != generation or row["qty"] <= 0:
+                continue
+            price = price_overrides.get(symbol) or fallback_price(symbol) or row["average_price"]
+            value = row["qty"] * price
+            cost = row["qty"] * row["average_price"]
+            market_value += value
+            holdings_cost += cost
+            rendered.append({
+                "symbol": symbol,
+                "quantity": row["qty"],
+                "averagePrice": row["average_price"],
+                "currentPrice": price,
+                "marketValueForeign": value,
+                "purchaseAmountForeign": cost,
+            })
+        equity = run["cash_balance"] + market_value
+        payload = {
+            "asOf": as_of or utc_now().isoformat(),
+            "source": "account-history",
+            "account": {
+                "cashForeign": run["cash_balance"],
+                "stockValueForeign": market_value,
+                "totalValueForeign": equity,
+                "unrealizedPnlForeign": market_value - holdings_cost,
+            },
+            "positions": rendered,
+        }
+        self.portfolio_history.append({"user_sub": user_id, "source_as_of": payload["asOf"], "payload": payload})
 
     def _position(self, user_id: str, generation: int, symbol: str) -> dict[str, Any]:
         key = (user_id, generation, symbol)

@@ -5,6 +5,7 @@ import os
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -267,16 +268,21 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                   fiscal_year AS fiscalYear,
                   fiscal_period AS fiscalPeriod,
                   period_end AS periodEndDate,
+                  event_at AS eventAt,
+                  event_status AS eventStatus,
                   collected_at AS collectedAt,
                   raw
                 FROM {estimates_table}
                 WHERE symbol IN {{symbols:Array(String)}}
                   AND metric IN {{metrics:Array(String)}}
                   AND average IS NOT NULL
-                  AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
+                  AND (
+                    fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
+                    OR (fiscal_period = 'EVENT' AND metric = 'eps' AND event_status = 'reported')
+                  )
                   AND period_end >= addMonths(today(), -{{months:UInt16}})
                 ORDER BY symbol ASC, metric ASC, period_end DESC, collected_at DESC
-                LIMIT 1 BY symbol, metric, fiscal_year, fiscal_period
+                LIMIT 1 BY symbol, metric, fiscal_period, period_end
                 FORMAT JSONEachRow
                 """,
                 {"symbols": symbols, "metrics": list(EARNINGS_SERIES_METRICS), "months": months},
@@ -879,15 +885,23 @@ def earnings_series_from_rows(actual_rows: list[Any], estimate_rows: list[Any]) 
             continue
         symbol = read_string(row.get("symbol"))
         metric = read_string(row.get("metric"))
-        value = read_float(row.get("value") or row.get("average") or row.get("avg"))
+        value = read_float(first_present(row, "value", "average", "avg"))
         if not symbol or metric not in EARNINGS_SERIES_METRICS or value is None:
             continue
         normalized = normalize_market_symbol(symbol)
-        period_key = period_key_from_row(row)
-        point = grouped.setdefault(normalized, {}).setdefault(period_key, {
-            "period": period_label_from_row(row),
-            "periodEndDate": read_string(row.get("periodEndDate")),
-        })
+        symbol_points = grouped.setdefault(normalized, {})
+        fiscal_period = read_string(row.get("fiscalPeriod") or row.get("fiscal_period"))
+        if fiscal_period == "EVENT":
+            period_key = matching_sec_period_key(row, symbol_points)
+            if period_key is None:
+                continue
+            point = symbol_points[period_key]
+        else:
+            period_key = period_key_from_row(row)
+            point = symbol_points.setdefault(period_key, {
+                "period": period_label_from_row(row),
+                "periodEndDate": read_string(row.get("periodEndDate")),
+            })
         point.setdefault("period", period_label_from_row(row))
         point.setdefault("periodEndDate", read_string(row.get("periodEndDate")))
         point["estimateSource"] = "yahoo"
@@ -907,6 +921,41 @@ def earnings_series_from_rows(actual_rows: list[Any], estimate_rows: list[Any]) 
         ]
         for symbol, points in grouped.items()
     }
+
+
+def matching_sec_period_key(event_row: dict[str, Any], sec_points: dict[str, dict[str, Any]]) -> str | None:
+    """Match a reported Yahoo earnings event to the nearest preceding SEC quarter.
+
+    Yahoo event rows provide historical consensus EPS, but the displayed actual
+    remains the value already loaded from SEC. Future/unreported events are not
+    attached to a completed SEC quarter.
+    """
+    if (read_string(first_present(event_row, "eventStatus", "event_status")) or "").lower() != "reported":
+        return None
+    event_date = iso_date(first_present(event_row, "eventAt", "event_at", "periodEndDate"))
+    if event_date is None:
+        return None
+    candidates: list[tuple[int, str]] = []
+    for period_key, point in sec_points.items():
+        if point.get("source") != "sec":
+            continue
+        period_end = iso_date(point.get("periodEndDate"))
+        if period_end is None or period_end > event_date:
+            continue
+        gap_days = (event_date - period_end).days
+        if gap_days <= 180:
+            candidates.append((gap_days, period_key))
+    return min(candidates)[1] if candidates else None
+
+
+def iso_date(value: Any) -> date | None:
+    text = read_string(value)
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
 
 
 def financial_series_from_rows(rows: list[Any]) -> dict[str, list[FinancialSeriesPoint]]:
@@ -945,6 +994,30 @@ def financial_series_point_from_row(row: dict[str, Any]) -> FinancialSeriesPoint
     period = read_string(row.get("period")) or period_label_from_row(row)
     if not period:
         return None
+    total_assets = read_float(row.get("totalAssets") or row.get("total_assets") or row.get("assets"))
+    total_equity = read_float(row.get("totalEquity") or row.get("total_equity") or row.get("equity"))
+    total_liabilities = read_float(row.get("totalLiabilities") or row.get("total_liabilities") or row.get("liabilities"))
+    if total_liabilities is None and total_assets is not None and total_equity is not None:
+        derived_liabilities = total_assets - total_equity
+        if derived_liabilities >= 0:
+            total_liabilities = derived_liabilities
+    current_liabilities = read_float(first_present(row, "currentLiabilities", "current_liabilities"))
+    debt_ratio = read_float(first_present(row, "debtRatio", "liabilities_to_equity"))
+    if debt_ratio is None and total_liabilities is not None and total_equity not in {None, 0}:
+        debt_ratio = total_liabilities / total_equity
+    current_liability_ratio = read_float(first_present(row, "currentLiabilityRatio", "current_liabilities_to_equity"))
+    if current_liability_ratio is None and current_liabilities is not None and total_equity not in {None, 0}:
+        current_liability_ratio = current_liabilities / total_equity
+    noncurrent_liability_ratio = read_float(first_present(row, "noncurrentLiabilityRatio", "noncurrent_liabilities_to_equity"))
+    if (
+        noncurrent_liability_ratio is None
+        and total_liabilities is not None
+        and current_liabilities is not None
+        and total_equity not in {None, 0}
+    ):
+        noncurrent_liabilities = total_liabilities - current_liabilities
+        if noncurrent_liabilities >= 0:
+            noncurrent_liability_ratio = noncurrent_liabilities / total_equity
     return FinancialSeriesPoint(
         period=period,
         periodEndDate=read_string(row.get("periodEndDate") or row.get("period_end_date")),
@@ -952,19 +1025,19 @@ def financial_series_point_from_row(row: dict[str, Any]) -> FinancialSeriesPoint
         operatingIncome=read_float(row.get("operatingIncome") or row.get("operating_income")),
         netIncome=read_float(row.get("netIncome") or row.get("net_income")),
         eps=read_float(row.get("eps")),
-        totalAssets=read_float(row.get("totalAssets") or row.get("total_assets") or row.get("assets")),
-        totalLiabilities=read_float(row.get("totalLiabilities") or row.get("total_liabilities") or row.get("liabilities")),
-        totalEquity=read_float(row.get("totalEquity") or row.get("total_equity") or row.get("equity")),
+        totalAssets=total_assets,
+        totalLiabilities=total_liabilities,
+        totalEquity=total_equity,
         currentAssets=read_float(first_present(row, "currentAssets", "current_assets")),
-        currentLiabilities=read_float(first_present(row, "currentLiabilities", "current_liabilities")),
+        currentLiabilities=current_liabilities,
         cashAndCashEquivalents=read_float(first_present(row, "cashAndCashEquivalents", "cash_and_cash_equivalents")),
         interestExpense=read_float(first_present(row, "interestExpense", "interest_expense")),
         operatingCashFlow=read_float(row.get("operatingCashFlow") or row.get("operating_cash_flow")),
         freeCashFlow=read_float(row.get("freeCashFlow") or row.get("free_cash_flow")),
         sharesOutstanding=read_float(row.get("sharesOutstanding") or row.get("shares_outstanding")),
-        debtRatio=read_float(first_present(row, "debtRatio", "liabilities_to_equity")),
-        currentLiabilityRatio=read_float(first_present(row, "currentLiabilityRatio", "current_liabilities_to_equity")),
-        noncurrentLiabilityRatio=read_float(first_present(row, "noncurrentLiabilityRatio", "noncurrent_liabilities_to_equity")),
+        debtRatio=debt_ratio,
+        currentLiabilityRatio=current_liability_ratio,
+        noncurrentLiabilityRatio=noncurrent_liability_ratio,
         currentRatio=read_float(first_present(row, "currentRatio", "current_ratio")),
         totalDebt=read_float(first_present(row, "totalDebt", "total_debt")),
         interestCoverage=read_float(first_present(row, "interestCoverage", "interest_coverage")),

@@ -16,6 +16,7 @@ from app.auth.dependencies import (
     WebSocketAuthUnavailable,
 )
 from app.auth.models import AuthenticatedUser
+from app.routes.paper_trading import paper_repository_from_app
 from app.routes.simulator import simulator_gateway_from_app, simulator_mode_active
 from app.services.risk_context import build_risk_context, risk_pretrade_enabled
 from app.services.risk_settings import (
@@ -102,6 +103,7 @@ async def create_order(
             "role": payload.get("role") or "trader",
         }
     simulator_mode = simulator_mode_active(request.app)
+    simulator_quote: dict[str, Any] | None = None
     risk_acknowledged = payload.get("risk_acknowledged") is True
     order_type = str(payload.get("order_type") or "limit").strip().lower()
     limit_price: float | None = None
@@ -114,8 +116,8 @@ async def create_order(
             if side not in {"buy", "sell"}:
                 raise HTTPException(status_code=422, detail="side must be buy or sell")
             try:
-                quote = simulator_gateway_from_app(request.app).quote(str(payload.get("symbol") or "").upper())
-                market_price = quote.get("ask") if side == "buy" else quote.get("bid")
+                simulator_quote = simulator_gateway_from_app(request.app).quote(str(payload.get("symbol") or "").upper())
+                market_price = simulator_quote.get("ask") if side == "buy" else simulator_quote.get("bid")
                 validation_payload["price"] = str(float(market_price))
             except Exception as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -126,6 +128,10 @@ async def create_order(
                 raise HTTPException(status_code=422, detail="price must be positive for a limit order") from exc
             if limit_price <= 0:
                 raise HTTPException(status_code=422, detail="price must be positive for a limit order")
+            try:
+                simulator_quote = simulator_gateway_from_app(request.app).quote(str(payload.get("symbol") or "").upper())
+            except Exception:
+                simulator_quote = None
         validation_payload.setdefault("order_division", "00")
     else:
         if order_type != "limit":
@@ -134,7 +140,11 @@ async def create_order(
     repository = None
     idempotency_key_hash = None
     body_hash = None
-    if not simulator_mode:
+    if simulator_mode:
+        repository = paper_repository_from_app(request.app)
+        idempotency_key_hash = hash_idempotency_key(_scoped_idempotency_key(idempotency_key.strip(), current_user))
+        body_hash = stable_body_hash(payload)
+    else:
         repository = _repository_from_app(request.app)
         idempotency_key_hash = hash_idempotency_key(_scoped_idempotency_key(idempotency_key.strip(), current_user))
         body_hash = stable_body_hash(payload)
@@ -155,22 +165,54 @@ async def create_order(
         )
     if simulator_mode:
         try:
-            result = simulator_gateway_from_app(request.app).individual_order(
-                user_id=current_user.sub,
-                symbol=str(payload["symbol"]).upper(),
-                side=str(payload["side"]).lower(),
-                quantity=int(payload["qty"]),
-                order_type=order_type,
-                limit_price=limit_price,
-                idempotency_key=idempotency_key.strip(),
+            status_payload = simulator_gateway_from_app(request.app).status()
+            run_id = str(status_payload.get("runId") or "")
+            if not run_id:
+                raise ValueError("simulation run is unavailable")
+            submitted_sequence = int(
+                (simulator_quote or {}).get("sequence")
+                or status_payload.get("processedEventCount")
+                or 0
             )
+            virtual_time = str(
+                (simulator_quote or {}).get("virtualTime")
+                or status_payload.get("virtualTime")
+                or ""
+            ) or None
+            created = repository.create_order(
+                user_id=current_user.sub,
+                idempotency_key_hash=idempotency_key_hash,
+                body_hash=body_hash,
+                request=order_request,
+                execution_mode="simulation",
+                simulation_run_id=run_id,
+                simulation_submitted_sequence=submitted_sequence,
+                virtual_submitted_at=virtual_time,
+                order_type=order_type,
+            )
+            order = created.order
+            if simulator_quote is not None and order_type == "market":
+                matches = repository.match_quote(
+                    symbol=order_request.symbol,
+                    bid_price=simulator_quote.get("bid"),
+                    ask_price=simulator_quote.get("ask"),
+                    quote_timestamp=virtual_time,
+                    quote_event_id=f"simulation:{run_id}:{submitted_sequence}",
+                    execution_mode="simulation",
+                    simulation_run_id=run_id,
+                    quote_sequence=submitted_sequence,
+                    virtual_timestamp=virtual_time,
+                )
+                matched = next((item for item in matches if item.get("order_id") == order.get("order_id")), None)
+                if matched is not None:
+                    order = matched
         except Exception as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        order = result.get("order") if isinstance(result, dict) else None
-        if not isinstance(order, dict):
-            raise HTTPException(status_code=502, detail="simulator returned an invalid order")
         _record_buy_spend(request.app, current_user.sub, order_request)
-        return jsonable_encoder(_with_risk(order, verdict))
+        response_order = _simulation_order_response(order)
+        if created.idempotent_replay:
+            response.headers["X-Idempotent-Replay"] = "true"
+        return jsonable_encoder(_with_risk(response_order, verdict))
     envelope = build_order_command_envelope(
         order_request,
         occurred_at=datetime.now(timezone.utc).isoformat(),
@@ -327,9 +369,9 @@ def get_order_balance(
 ) -> dict[str, Any]:
     if simulator_mode_active(request.app):
         try:
-            payload = simulator_gateway_from_app(request.app).account(_user.sub)
-            account = payload.get("account") if isinstance(payload, dict) else {}
-            cash = account.get("cashForeign", 0) if isinstance(account, dict) else 0
+            snapshot = paper_repository_from_app(request.app).account_snapshot(_user.sub)
+            account = snapshot.get("account") if isinstance(snapshot, dict) else {}
+            cash = account.get("available_cash", 0) if isinstance(account, dict) else 0
             numeric_price = float(price or 0)
             return {
                 "env": "simulation",
@@ -362,10 +404,10 @@ def get_order(
     current_user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     if simulator_mode_active(request.app):
-        try:
-            return jsonable_encoder(simulator_gateway_from_app(request.app).order(current_user.sub, order_id))
-        except Exception as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        order = paper_repository_from_app(request.app).get_order(current_user.sub, order_id)
+        if order is None or order.get("execution_mode") != "simulation":
+            raise HTTPException(status_code=404, detail="order not found")
+        return jsonable_encoder(_simulation_order_response(order))
     repository = _repository_from_app(request.app)
     order = _get_owned_order(repository, order_id, current_user.sub)
     if order is None:
@@ -380,10 +422,14 @@ def get_order_events(
     current_user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     if simulator_mode_active(request.app):
-        try:
-            return jsonable_encoder(simulator_gateway_from_app(request.app).order_events(current_user.sub, order_id))
-        except Exception as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        repository = paper_repository_from_app(request.app)
+        order = repository.get_order(current_user.sub, order_id)
+        if order is None or order.get("execution_mode") != "simulation":
+            raise HTTPException(status_code=404, detail="order not found")
+        return {
+            "order_id": order_id,
+            "events": jsonable_encoder(_simulation_order_events(repository.list_order_events(current_user.sub, order_id))),
+        }
     repository = _repository_from_app(request.app)
     if _get_owned_order(repository, order_id, current_user.sub) is None:
         raise HTTPException(status_code=404, detail="order not found")
@@ -408,30 +454,30 @@ async def order_events_socket(websocket: WebSocket, order_id: str) -> None:
     await websocket.accept()
     try:
         if simulator_mode_active(websocket.app):
+            repository = paper_repository_from_app(websocket.app)
             last_fingerprint: str | None = None
             while True:
                 if not await asyncio.to_thread(simulator_mode_active, websocket.app):
                     break
-                order = await asyncio.to_thread(
-                    simulator_gateway_from_app(websocket.app).order,
-                    current_user.sub,
-                    order_id,
-                )
-                event_payload = await asyncio.to_thread(
-                    simulator_gateway_from_app(websocket.app).order_events,
-                    current_user.sub,
-                    order_id,
+                order = await asyncio.to_thread(repository.get_order, current_user.sub, order_id)
+                if order is None or order.get("execution_mode") != "simulation":
+                    await websocket.send_json({"type": "error", "detail": "order not found"})
+                    await websocket.close(code=1008)
+                    return
+                events = _simulation_order_events(
+                    await asyncio.to_thread(repository.list_order_events, current_user.sub, order_id)
                 )
                 payload = {
                     "type": "snapshot" if last_fingerprint is None else "update",
-                    "order": order,
-                    "events": event_payload.get("events", []),
+                    "order": _simulation_order_response(order),
+                    "events": jsonable_encoder(events),
                 }
                 fingerprint = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
                 if fingerprint != last_fingerprint:
                     await websocket.send_json(payload)
                     last_fingerprint = fingerprint
                 await asyncio.sleep(0.25)
+            return
         repository = _repository_from_app(websocket.app)
         last_fingerprint: str | None = None
         while True:
@@ -550,6 +596,29 @@ def _with_risk(order: dict[str, Any], verdict: PretradeVerdict | None) -> dict[s
     if verdict is None:
         return order
     return {**order, "risk": verdict.to_dict()}
+
+
+def _simulation_order_response(order: dict[str, Any]) -> dict[str, Any]:
+    status_value = "accepted" if order.get("status") == "pending" else order.get("status")
+    return {
+        **order,
+        "status": status_value,
+        "simulation": True,
+        "runId": order.get("runId") or order.get("simulation_run_id"),
+        "order_type": order.get("order_type") or "limit",
+        "virtualSubmittedAt": order.get("virtualSubmittedAt") or order.get("virtual_submitted_at"),
+        "virtualFilledAt": order.get("virtualFilledAt") or order.get("virtual_filled_at"),
+    }
+
+
+def _simulation_order_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rendered = []
+    for event in events:
+        if event.get("status") == "pending":
+            rendered.append({**event, "status": "accepted", "event_type": "order.accepted"})
+        else:
+            rendered.append(dict(event))
+    return rendered
 
 
 async def _json_body(request: Request) -> dict[str, Any]:

@@ -41,6 +41,9 @@ class OpenAIJournalWriter:
             "financialMetrics": latest_metric_rows(bundle.get("financialMetrics") or []),
             "earningsActuals": (bundle.get("earningsActuals") or [])[:24],
             "earningsEstimates": (bundle.get("earningsEstimates") or [])[:24],
+            "analystActions": (bundle.get("analystActions") or [])[:12],
+            "analystConsensus": (bundle.get("analystConsensus") or [])[:10],
+            "analystOutlook": metrics.get("analystOutlook") or {},
             "filings": bundle.get("filings") or [],
             "graphRelation": bundle.get("graph") or {},
             "missingData": missing_data,
@@ -51,7 +54,10 @@ class OpenAIJournalWriter:
                 "당신은 GOPS AI 기업저널의 한국어 편집자입니다. 제공된 서버 계산값과 근거만 사용하세요. "
                 "숫자를 새로 계산하거나 원인을 단정하지 말고, 데이터가 없으면 확인할 수 없다고 쓰세요. "
                 "키워드는 빠른 인식용, 문장은 의미와 다음 확인 행동을 설명하는 자연스러운 존댓말로 작성하세요. "
-                "각 탭 문장은 해당 차트에서 먼저 볼 지표, 지표의 의미, 다음 확인 행동을 순서대로 설명하세요."
+                "각 탭 문장은 해당 차트에서 먼저 볼 지표, 지표의 의미, 다음 확인 행동을 순서대로 설명하세요. "
+                "analystOutlook은 서버가 검증 문장으로 recentMovement 앞에 별도 결합하므로 기관 의견을 반복하지 마세요. "
+                "기관별 이전·현재 목표주가가 모두 없으면 목표주가 상향·하향을 말하지 말고, 서로 다른 수집일의 "
+                "컨센서스가 없으면 시장 컨센서스가 상승·하락했다고 쓰지 마세요. 기관 의견의 이유는 근거에 없으면 만들지 마세요."
             ),
             "input": json.dumps(evidence, ensure_ascii=False, default=str),
             "text": {
@@ -184,6 +190,7 @@ class CompanyJournalService:
                     continue
                 metrics, missing_data = calculate_server_metrics(bundle)
                 draft = self.writer.generate(bundle, metrics, missing_data)
+                draft = attach_verified_analyst_comment(draft, metrics)
                 errors = validate_narrative(draft)
                 if errors:
                     raise ValueError("; ".join(errors))
@@ -222,6 +229,9 @@ def calculate_server_metrics(bundle: dict[str, Any]) -> tuple[dict[str, Any], li
         missing.append("earnings_actuals")
     if not earnings_estimates:
         missing.append("earnings_estimates")
+    analyst_outlook = calculate_analyst_outlook(bundle)
+    if not analyst_outlook["recentActions"] and analyst_outlook["latestConsensus"] is None:
+        missing.append("yahoo_analyst_outlook")
     metrics_by_name = latest_metric_values(bundle.get("financialMetrics") or [])
     requested = {
         "revenueGrowthYoY": "revenue_growth_yoy",
@@ -254,7 +264,155 @@ def calculate_server_metrics(bundle: dict[str, Any]) -> tuple[dict[str, Any], li
             "earningsEstimateRows": len(earnings_estimates),
         },
         "financial": financial,
+        "analystOutlook": analyst_outlook,
     }, sorted(set(missing)))
+
+
+def calculate_analyst_outlook(bundle: dict[str, Any]) -> dict[str, Any]:
+    recent_actions: list[dict[str, Any]] = []
+    upgrades = 0
+    downgrades = 0
+    for row in (bundle.get("analystActions") or [])[:12]:
+        action = analyst_action_category(str(row.get("action") or ""))
+        if action == "upgrade":
+            upgrades += 1
+        elif action == "downgrade":
+            downgrades += 1
+        recent_actions.append({
+            "firm": str(row.get("firm") or "")[:120],
+            "action": action,
+            "fromGrade": str(row.get("from_grade") or "")[:80],
+            "toGrade": str(row.get("to_grade") or "")[:80],
+            "priorPriceTarget": finite_number(row.get("prior_price_target")),
+            "priceTarget": finite_number(row.get("price_target")),
+            "actionAt": str(row.get("action_at") or ""),
+            "source": str(row.get("source") or "yahoo-finance"),
+        })
+    consensus_rows = bundle.get("analystConsensus") or []
+    latest = compact_analyst_consensus(consensus_rows[0]) if consensus_rows else None
+    previous = compact_analyst_consensus(consensus_rows[1]) if len(consensus_rows) > 1 else None
+    current_mean = finite_number((latest or {}).get("targetMean"))
+    previous_mean = finite_number((previous or {}).get("targetMean"))
+    consensus_change = None
+    if current_mean is not None and previous_mean not in {None, 0}:
+        consensus_change = round(((current_mean / previous_mean) - 1) * 100, 4)
+    result = {
+        "source": "yahoo-finance",
+        "recentWindowDays": 120,
+        "upgradeCount": upgrades,
+        "downgradeCount": downgrades,
+        "recentActions": recent_actions,
+        "latestConsensus": latest,
+        "previousConsensus": previous,
+        "consensusMeanTargetChangePercent": consensus_change,
+    }
+    result["summary"] = analyst_outlook_summary(result)
+    return result
+
+
+def attach_verified_analyst_comment(draft: NarrativeDraft, metrics: dict[str, Any]) -> NarrativeDraft:
+    summary = str((metrics.get("analystOutlook") or {}).get("summary") or "").strip()
+    if not summary:
+        return draft
+    recent_movement = draft.recent_movement.strip()
+    if summary in recent_movement:
+        return draft
+    return NarrativeDraft(
+        headline=draft.headline,
+        keywords=draft.keywords,
+        recent_movement=f"{summary} {recent_movement}".strip(),
+        financial_stability=draft.financial_stability,
+        watch_items=draft.watch_items,
+        tabs=draft.tabs,
+        model=draft.model,
+    )
+
+
+def analyst_outlook_summary(outlook: dict[str, Any]) -> str:
+    action_sentences: list[str] = []
+    for row in (outlook.get("recentActions") or [])[:2]:
+        firm = str(row.get("firm") or "").strip()
+        if not firm:
+            continue
+        action = str(row.get("action") or "")
+        from_grade = str(row.get("fromGrade") or "").strip()
+        to_grade = str(row.get("toGrade") or "").strip()
+        prior_target = finite_number(row.get("priorPriceTarget"))
+        target = finite_number(row.get("priceTarget"))
+        if action == "upgrade" and from_grade and to_grade:
+            sentence = f"{firm}은 투자의견을 {from_grade}에서 {to_grade}로 상향했습니다."
+        elif action == "downgrade" and from_grade and to_grade:
+            sentence = f"{firm}은 투자의견을 {from_grade}에서 {to_grade}로 하향했습니다."
+        elif action == "maintain" and to_grade:
+            sentence = f"{firm}은 투자의견 {to_grade}를 유지했습니다."
+        elif action == "initiate" and to_grade:
+            sentence = f"{firm}은 투자의견 {to_grade}로 분석을 시작했습니다."
+        elif to_grade:
+            sentence = f"{firm}의 최신 투자의견은 {to_grade}입니다."
+        else:
+            continue
+        if prior_target is not None and target is not None:
+            direction = "상향" if target > prior_target else "하향" if target < prior_target else "유지"
+            sentence = sentence[:-1] + f", 목표주가는 {format_usd(prior_target)}에서 {format_usd(target)}로 {direction}했습니다."
+        elif target is not None:
+            sentence = sentence[:-1] + f", 확인된 목표주가는 {format_usd(target)}입니다."
+        action_sentences.append(sentence)
+    latest = outlook.get("latestConsensus") or {}
+    mean_target = finite_number(latest.get("targetMean"))
+    consensus_change = finite_number(outlook.get("consensusMeanTargetChangePercent"))
+    consensus_sentence = ""
+    if mean_target is not None and consensus_change is not None:
+        direction = "상승" if consensus_change > 0 else "하락" if consensus_change < 0 else "변동이 없습니다"
+        if consensus_change == 0:
+            consensus_sentence = f"시장 평균 목표주가는 {format_usd(mean_target)}로 이전 수집일과 비교해 변동이 없습니다."
+        else:
+            consensus_sentence = (
+                f"시장 평균 목표주가는 {format_usd(mean_target)}로 이전 수집일보다 "
+                f"{abs(consensus_change):.1f}% {direction}했습니다."
+            )
+    elif mean_target is not None:
+        consensus_sentence = f"시장 평균 목표주가는 현재 {format_usd(mean_target)}입니다."
+    return " ".join([*action_sentences, consensus_sentence]).strip()
+
+
+def format_usd(value: float) -> str:
+    return f"${value:,.2f}".rstrip("0").rstrip(".")
+
+
+def analyst_action_category(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in {"up", "upgrade", "upgraded"}:
+        return "upgrade"
+    if normalized in {"down", "downgrade", "downgraded"}:
+        return "downgrade"
+    if normalized in {"main", "maintain", "maintained", "reit", "reiterate", "reiterated"}:
+        return "maintain"
+    if normalized in {"init", "initiated", "initiate"}:
+        return "initiate"
+    return normalized or "unknown"
+
+
+def compact_analyst_consensus(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "snapshotDate": str(row.get("snapshot_date") or ""),
+        "currentPrice": finite_number(row.get("current_price")),
+        "targetLow": finite_number(row.get("target_low")),
+        "targetHigh": finite_number(row.get("target_high")),
+        "targetMean": finite_number(row.get("target_mean")),
+        "targetMedian": finite_number(row.get("target_median")),
+        "strongBuy": integer_or_none(row.get("strong_buy")),
+        "buy": integer_or_none(row.get("buy")),
+        "hold": integer_or_none(row.get("hold")),
+        "sell": integer_or_none(row.get("sell")),
+        "strongSell": integer_or_none(row.get("strong_sell")),
+        "collectedAt": str(row.get("collected_at") or ""),
+        "source": str(row.get("source") or "yahoo-finance"),
+    }
+
+
+def integer_or_none(value: Any) -> int | None:
+    number = finite_number(value)
+    return int(number) if number is not None and number >= 0 else None
 
 
 def trailing_return(rows: list[dict[str, Any]], sessions: int) -> float | None:
@@ -291,6 +449,8 @@ def source_receipt(bundle: dict[str, Any]) -> dict[str, Any]:
         for row in [*(bundle.get("earningsActuals") or []), *(bundle.get("earningsEstimates") or [])]
         if row.get("fiscal_year") and row.get("fiscal_period")
     })
+    analyst_actions = bundle.get("analystActions") or []
+    analyst_consensus = bundle.get("analystConsensus") or []
     return {
         "newsIds": news_ids,
         "secFilingIds": filing_ids,
@@ -300,6 +460,15 @@ def source_receipt(bundle: dict[str, Any]) -> dict[str, Any]:
         "earningsPeriods": earnings_periods,
         "earningsEstimateAsOf": max(
             (str(row.get("collected_at")) for row in bundle.get("earningsEstimates") or [] if row.get("collected_at")),
+            default=None,
+        ),
+        "analystActionIds": sorted({
+            f"{row.get('firm') or ''}|{row.get('action_at') or ''}|{row.get('action') or ''}"
+            for row in analyst_actions
+            if row.get("firm") and row.get("action_at")
+        }),
+        "analystConsensusAsOf": max(
+            (str(row.get("collected_at")) for row in analyst_consensus if row.get("collected_at")),
             default=None,
         ),
     }

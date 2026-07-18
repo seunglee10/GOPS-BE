@@ -306,6 +306,10 @@ def test_score_profile_prompt_rag_proposes_valid_unsaved_profile_with_snapshot_p
     assert suggestion["provenance"]["evidenceSnapshotId"] == snapshot["id"]
     assert suggestion["provenance"]["source"] == "deterministic"
     assert "거래대금" in suggestion["intent"]["matchedKeywords"]
+    assert len(suggestion["rationale"]) <= 180
+    assert suggestion["rationale"].count(".") == 2
+    assert "participationConfirmation" not in suggestion["rationale"]
+    assert "Cloud guidance raised" not in suggestion["rationale"]
     assert sum(suggestion["profile"]["blockWeights"].values()) == pytest.approx(100)
     for weights in suggestion["profile"]["factorWeights"].values():
         assert sum(weights.values()) == pytest.approx(100)
@@ -347,6 +351,8 @@ def test_score_profile_prompt_uses_llm_structured_output_after_retrieval(recomme
     suggestion = response.json()["suggestion"]
     assert suggestion["name"] == "뉴스 유동성 로직"
     assert suggestion["provenance"]["source"] == "llm"
+    assert len(suggestion["rationale"]) <= 180
+    assert suggestion["rationale"].count(".") == 2
     assert captured["text"]["format"]["type"] == "json_schema"
     context = json.loads(captured["input"])
     assert context["retrievedIntentDocuments"]

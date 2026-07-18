@@ -3,6 +3,17 @@ from decimal import Decimal
 
 from kis_trader.domain.commands import validate_order_request_payload
 from kis_trader.paper.memory import InMemoryPaperTradingRepository
+from kis_trader.paper.fixture import (
+    DEMO_EQUITY,
+    DEMO_FINAL_CASH,
+    DEMO_FILLS,
+    DEMO_HOLDINGS,
+    DEMO_HOLDINGS_COST,
+    DEMO_MARKET_VALUE,
+    DEMO_REALIZED_PNL,
+    DEMO_UNREALIZED_PNL,
+    SEED_PROFILE,
+)
 from kis_trader.paper.matcher import match_quote_payload
 from kis_trader.paper.models import PaperCapacityError, PaperIdempotencyConflictError, PaperOrderError, PaperOrderNotFoundError
 
@@ -163,6 +174,131 @@ class PaperTradingRepositoryTest(unittest.TestCase):
 
         self.assertEqual(matched[0]["status"], "filled")
         self.assertEqual(matched[0]["fill_price"], Decimal("99.5"))
+
+    def test_diversified_seed_has_exact_fixture_invariants(self):
+        repository = InMemoryPaperTradingRepository(seed_profile=SEED_PROFILE)
+
+        snapshot = repository.ensure_account(self.user_id)
+        positions = {position["symbol"]: position for position in snapshot["positions"]}
+
+        self.assertEqual(snapshot["account"]["cash_balance"], DEMO_FINAL_CASH)
+        self.assertEqual(snapshot["account"]["realized_pnl"], DEMO_REALIZED_PNL)
+        self.assertEqual(snapshot["account"]["seed_profile"], SEED_PROFILE)
+        self.assertEqual(len(positions), 7)
+        self.assertEqual(len(repository.orders), len(DEMO_FILLS))
+        self.assertEqual(len(repository.portfolio_history), len(DEMO_FILLS) * 2)
+        self.assertEqual(repository.portfolio_history[-1]["payload"]["snapshotPhase"], "after")
+        self.assertEqual(
+            sum((position["qty"] * position["average_price"] for position in positions.values()), Decimal("0")),
+            DEMO_HOLDINGS_COST,
+        )
+        self.assertEqual(
+            sum((holding.quantity * holding.fallback_price for holding in DEMO_HOLDINGS), Decimal("0")),
+            DEMO_MARKET_VALUE,
+        )
+        self.assertEqual(DEMO_MARKET_VALUE - DEMO_HOLDINGS_COST, DEMO_UNREALIZED_PNL)
+        self.assertEqual(DEMO_FINAL_CASH + DEMO_MARKET_VALUE, DEMO_EQUITY)
+        seeded_ledger = [row for row in repository.ledger if row["event_type"] == "order.filled"]
+        self.assertEqual(len(seeded_ledger), len(DEMO_FILLS))
+        self.assertEqual(seeded_ledger[-1]["cash_balance_after"], DEMO_FINAL_CASH)
+        seeded_orders = sorted(repository.orders.values(), key=lambda row: row["filled_at"])
+        self.assertEqual(
+            [(row["symbol"], row["side"], row["qty"], row["fill_price"]) for row in seeded_orders],
+            [(fill.symbol, fill.side, fill.quantity, fill.price) for fill in DEMO_FILLS],
+        )
+        for holding in DEMO_HOLDINGS:
+            self.assertEqual(positions[holding.symbol]["qty"], holding.quantity)
+            self.assertEqual(positions[holding.symbol]["average_price"], holding.average_price)
+
+    def test_diversified_seed_is_idempotent_and_reset_suppresses_reseed(self):
+        repository = InMemoryPaperTradingRepository(seed_profile=SEED_PROFILE)
+        first = repository.ensure_account(self.user_id)
+        second = repository.ensure_account(self.user_id)
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(repository.orders), len(DEMO_FILLS))
+
+        reset = repository.reset_account(self.user_id, Decimal("250000"))
+        reopened = repository.ensure_account(self.user_id)
+        self.assertEqual(reset["account"]["generation"], 2)
+        self.assertEqual(reopened["account"]["cash_balance"], Decimal("250000"))
+        self.assertIsNone(reopened["account"]["seed_profile"])
+        self.assertIsNotNone(reopened["account"]["seed_suppressed_at"])
+        self.assertEqual(reopened["positions"], [])
+
+    def test_simulation_limit_uses_only_future_replay_sequence(self):
+        created = self.repository.create_order(
+            user_id=self.user_id,
+            idempotency_key_hash="sim-limit",
+            body_hash="sim-limit",
+            request=order_request(symbol="MSFT", qty="1", price="101"),
+            execution_mode="simulation",
+            simulation_run_id="run-1",
+            simulation_submitted_sequence=10,
+        ).order
+
+        same_sequence = self.repository.match_quote(
+            symbol="MSFT", bid_price=Decimal("99"), ask_price=Decimal("100"),
+            quote_timestamp="2026-07-14T15:00:00Z", quote_event_id="sim:10",
+            execution_mode="simulation", simulation_run_id="run-1", quote_sequence=10,
+        )
+        future_sequence = self.repository.match_quote(
+            symbol="MSFT", bid_price=Decimal("99"), ask_price=Decimal("100"),
+            quote_timestamp="2026-07-14T15:00:01Z", quote_event_id="sim:11",
+            execution_mode="simulation", simulation_run_id="run-1", quote_sequence=11,
+        )
+
+        self.assertEqual(same_sequence, [])
+        self.assertEqual(future_sequence[0]["order_id"], created["order_id"])
+
+    def test_replay_quote_never_fills_regular_paper_order_and_run_cancel_preserves_fills(self):
+        regular = self.create(order_request(symbol="MSFT", qty="1", price="101"), key="paper", body="paper").order
+        filled = self.repository.create_order(
+            user_id=self.user_id, idempotency_key_hash="sim-market", body_hash="sim-market",
+            request=order_request(symbol="GOOGL", qty="1", price="100"), execution_mode="simulation",
+            simulation_run_id="run-1", simulation_submitted_sequence=10, order_type="market",
+        ).order
+        pending = self.repository.create_order(
+            user_id=self.user_id, idempotency_key_hash="sim-resting", body_hash="sim-resting",
+            request=order_request(symbol="XOM", qty="1", price="50"), execution_mode="simulation",
+            simulation_run_id="run-1", simulation_submitted_sequence=10,
+        ).order
+        self.repository.match_quote(
+            symbol="GOOGL", bid_price=Decimal("99"), ask_price=Decimal("100"),
+            quote_timestamp=None, quote_event_id="sim:10", execution_mode="simulation",
+            simulation_run_id="run-1", quote_sequence=10,
+        )
+
+        cancelled = self.repository.cancel_simulation_run("run-1")
+
+        self.assertEqual(self.repository.get_order(self.user_id, regular["order_id"])["status"], "pending")
+        self.assertEqual(self.repository.get_order(self.user_id, filled["order_id"])["status"], "filled")
+        self.assertEqual(self.repository.get_order(self.user_id, pending["order_id"])["status"], "cancelled")
+        self.assertEqual([item["order_id"] for item in cancelled], [pending["order_id"]])
+
+    def test_simulation_sell_updates_the_seeded_shared_position(self):
+        repository = InMemoryPaperTradingRepository(seed_profile=SEED_PROFILE)
+        repository.ensure_account(self.user_id)
+        created = repository.create_order(
+            user_id=self.user_id, idempotency_key_hash="sim-sell", body_hash="sim-sell",
+            request=order_request(symbol="GOOGL", side="sell", qty="1", price="180"),
+            execution_mode="simulation", simulation_run_id="run-1",
+            simulation_submitted_sequence=10, order_type="market",
+        ).order
+
+        repository.match_quote(
+            symbol="GOOGL", bid_price=Decimal("180"), ask_price=Decimal("180.10"),
+            quote_timestamp="2026-07-14T15:00:00Z", quote_event_id="sim:10",
+            execution_mode="simulation", simulation_run_id="run-1", quote_sequence=10,
+            virtual_timestamp="2026-07-14T15:00:00Z",
+        )
+
+        snapshot = repository.account_snapshot(self.user_id)
+        googl = next(row for row in snapshot["positions"] if row["symbol"] == "GOOGL")
+        self.assertEqual(repository.get_order(self.user_id, created["order_id"])["status"], "filled")
+        self.assertEqual(googl["qty"], Decimal("59"))
+        self.assertEqual(snapshot["account"]["cash_balance"], DEMO_FINAL_CASH + Decimal("180"))
+        self.assertEqual(snapshot["account"]["realized_pnl"], DEMO_REALIZED_PNL + Decimal("7.60"))
 
 
 if __name__ == "__main__":

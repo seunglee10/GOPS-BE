@@ -1543,6 +1543,8 @@ services:
       AUTH_COOKIE_SECURE: "${AUTH_COOKIE_SECURE:-false}"
       AUTH_COOKIE_SAMESITE: "${AUTH_COOKIE_SAMESITE:-lax}"
       GOPS_SIMULATOR_URL: "${GOPS_SIMULATOR_URL:-http://host.docker.internal:8765}"
+      PAPER_REPOSITORY: "${PAPER_REPOSITORY:-postgres}"
+      PAPER_ACCOUNT_SEED_PROFILE: "${PAPER_ACCOUNT_SEED_PROFILE:-diversified-us-v1}"
       GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
       GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-}"
       GOOGLE_OAUTH_SECRET_NAME: "${GOOGLE_OAUTH_SECRET_NAME:-}"
@@ -1797,6 +1799,29 @@ services:
     networks:
       - data_net
       - streaming_net
+
+  simulation-paper-matcher:
+    image: gops-order-worker
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-order-worker
+    container_name: alfaka-simulation-paper-matcher
+    depends_on:
+      postgres:
+        condition: service_healthy
+      order-migrations:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
+      GOPS_SIMULATOR_URL: "${GOPS_SIMULATOR_URL:-http://host.docker.internal:8765}"
+      PAPER_ACCOUNT_SEED_PROFILE: "${PAPER_ACCOUNT_SEED_PROFILE:-diversified-us-v1}"
+      SIMULATION_MATCHER_IDLE_SECONDS: "${SIMULATION_MATCHER_IDLE_SECONDS:-0.25}"
+      SIMULATION_MATCHER_BATCH_SIZE: "${SIMULATION_MATCHER_BATCH_SIZE:-50000}"
+    command: ["python", "-u", "systems/order/pods/simulation-paper-matcher/main.py"]
+    restart: unless-stopped
+    networks:
+      - app_net
+      - data_net
 
   kis-broker-adapter:
     image: gops-kis-adapter
