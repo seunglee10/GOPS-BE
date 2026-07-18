@@ -317,4 +317,5 @@ def test_company_journal_evidence_does_not_remove_other_simulation_guards():
     assert requires_point_in_time_data("/api/charts/analysis-assets", "GET") is False
     assert requires_point_in_time_data("/api/charts/analysis-assets", "DELETE") is True
     assert requires_point_in_time_data("/api/charts/analysis-assets/build", "GET") is True
-    assert requires_point_in_time_data("/api/company-journal/NVDA/evidence") is False
+    assert requires_point_in_time_data("/api/company-journal/NVDA/evidence") is True
+    assert requires_point_in_time_data("/api/company-journal/NVDA") is True

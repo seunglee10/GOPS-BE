@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -18,6 +18,7 @@ for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(ORDER_TEST_ROOT), str(BA
 
 from fastapi.testclient import TestClient
 
+from app.company_journal.routes import get_company_journal_service
 from app.main import create_app
 from app.alerts.repository import InMemoryAlertRepository
 from app.trade_conditions.repository import InMemoryTradeConditionRepository
@@ -242,6 +243,78 @@ class SimulatorRoutesTest(unittest.TestCase):
         )
         self.assertIn("7섹터", payload["account"]["alias"])
         self.assertEqual(payload["asOf"], "2026-07-15T00:00:00+09:00")
+
+    def test_simulation_holdings_do_not_fall_back_to_non_replay_prices(self):
+        self.gateway.mode = "simulation"
+        self.gateway.quote = Mock(return_value={"symbol": "GOOGL", "bid": None, "ask": None})
+        live_price_resolver = Mock(return_value={
+            "price": "999.00",
+            "source": "redis.live_trade",
+            "timestamp": "2026-07-18T00:00:00Z",
+        })
+        self.app.state.paper_price_resolver = live_price_resolver
+
+        response = self.client.get("/api/account/holdings?market=overseas&currency=USD")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "simulation_data_unavailable")
+        live_price_resolver.assert_not_called()
+
+    def test_simulation_holdings_skip_live_market_enrichment(self):
+        self.gateway.mode = "simulation"
+
+        with (
+            patch(
+                "app.routes.paper_trading.enrich_holdings_with_market_stats",
+                side_effect=lambda _app, payload: payload,
+            ) as market_stats,
+            patch(
+                "app.routes.account.enrich_holdings_with_alpaca_dividends",
+                side_effect=lambda payload: payload,
+            ) as dividends,
+        ):
+            response = self.client.get("/api/account/holdings?market=overseas&currency=USD")
+
+        self.assertEqual(response.status_code, 200)
+        market_stats.assert_not_called()
+        dividends.assert_not_called()
+
+    def test_simulation_performance_uses_virtual_time_and_excludes_future_snapshots(self):
+        self.gateway.mode = "simulation"
+        read_snapshots = Mock(return_value=[
+            {
+                "source_as_of": "2026-07-14T14:00:00Z",
+                "payload": {
+                    "source": "paper-shared",
+                    "asOf": "2026-07-14T14:00:00Z",
+                    "account": {"totalValueForeign": 100_000, "unrealizedPnlRate": 0},
+                    "positions": [],
+                },
+            },
+            {
+                "source_as_of": "2026-07-14T16:00:00Z",
+                "payload": {
+                    "source": "paper-shared",
+                    "asOf": "2026-07-14T16:00:00Z",
+                    "account": {"totalValueForeign": 999_999, "unrealizedPnlRate": 900},
+                    "positions": [],
+                },
+            },
+        ])
+        self.app.state.recommendation_repository = SimpleNamespace(
+            list_daily_portfolio_snapshots_for_sources=read_snapshots,
+        )
+        self.app.state.portfolio_performance_now_provider = lambda: datetime(2030, 1, 1, tzinfo=timezone.utc)
+        benchmark_provider = Mock(return_value={"symbol": "^GSPC", "points": []})
+        self.app.state.portfolio_benchmark_provider = benchmark_provider
+
+        response = self.client.get("/api/account/performance?range=1W")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(read_snapshots.call_args.args[1], "2026-07-07T15:00:00+00:00")
+        self.assertEqual(response.json()["asOf"], "2026-07-14T14:00:00+00:00")
+        self.assertEqual(len(response.json()["portfolio"]["points"]), 1)
+        benchmark_provider.assert_not_called()
 
     def test_kis_holdings_source_bypasses_simulation_account(self):
         class FakeKisClient:
@@ -590,6 +663,36 @@ class SimulatorRoutesTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"], "simulation_data_unavailable")
+
+    def test_company_journal_is_blocked_until_point_in_time_provider_exists(self):
+        self.gateway.mode = "simulation"
+        service = SimpleNamespace(
+            latest=Mock(return_value={"analysisAsOf": "2026-07-18"}),
+            enqueue_if_stale=Mock(),
+        )
+        self.app.dependency_overrides[get_company_journal_service] = lambda: service
+
+        response = self.client.get("/api/company-journal/NVDA")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "simulation_data_unavailable")
+        service.latest.assert_not_called()
+        service.enqueue_if_stale.assert_not_called()
+
+    def test_fixed_recommendations_wait_for_their_evidence_cutoff(self):
+        self.gateway.mode = "simulation"
+        with patch.dict(os.environ, {
+            "RECOMMENDATION_FIXED_REPLAY_ENABLED": "true",
+            "RECOMMENDATION_DECISION_V1_ENABLED": "false",
+        }):
+            before_cutoff = self.client.get("/api/recommendations/stocks/latest")
+            self.gateway.virtual_time = "2026-07-15T05:00:00+09:00"
+            at_cutoff = self.client.get("/api/recommendations/stocks/latest")
+
+        self.assertEqual(before_cutoff.status_code, 409)
+        self.assertEqual(before_cutoff.json()["detail"], "simulation_data_unavailable")
+        self.assertEqual(at_cutoff.status_code, 200)
+        self.assertEqual(at_cutoff.json()["evidenceAsOf"], "2026-07-14T16:00:00-04:00")
 
     def test_chart_events_use_the_replay_cursor_in_simulation_mode(self):
         self.gateway.mode = "simulation"
