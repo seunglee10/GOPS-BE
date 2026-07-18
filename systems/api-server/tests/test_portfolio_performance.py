@@ -31,6 +31,7 @@ try:
 
     from app.main import create_app
     from app.recommendations.repository import InMemoryRecommendationRepository
+    from app.routes.account import _performance_principal_for_snapshots
     from app.services.portfolio_performance import build_portfolio_performance
     from kis_trader.paper.fixture import DEMO_EQUITY, SEED_PROFILE
     from kis_trader.paper.memory import InMemoryPaperTradingRepository
@@ -108,6 +109,47 @@ def test_performance_preserves_snapshot_value_and_current_holdings_cost_basis() 
     assert [point["portfolioValue"] for point in points] == [10_500, 11_200]
     assert [point["holdingsCostBasis"] for point in points] == [10_000, 10_000]
     assert "netInvestedPrincipal" not in points[-1]
+
+
+def test_performance_keeps_net_principal_separate_from_holdings_cost_basis() -> None:
+    payload = build_portfolio_performance(
+        [
+            snapshot("2026-07-15T00:00:00Z", 5, portfolio_value=10_500, purchase_amounts=(6_000, 4_000)),
+            snapshot("2026-07-16T00:00:00Z", 10, portfolio_value=11_200, purchase_amounts=(7_000, 4_000)),
+        ],
+        None,
+        range_value="1W",
+        net_invested_principal=12_000,
+    )
+
+    points = payload["portfolio"]["points"]
+    assert [point["holdingsCostBasis"] for point in points] == [10_000, 11_000]
+    assert [point["netInvestedPrincipal"] for point in points] == [12_000, 12_000]
+
+
+def test_current_paper_principal_is_not_backfilled_across_account_resets_or_simulation() -> None:
+    current_run_started_at = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    current_run = [snapshot("2026-07-16T00:00:00Z", 5), snapshot("2026-07-17T00:00:00Z", 10)]
+    prior_run = [snapshot("2026-07-15T00:00:00Z", 3), *current_run]
+
+    assert _performance_principal_for_snapshots(
+        current_run,
+        current_principal=12_000,
+        current_principal_started_at=current_run_started_at,
+        simulation_time=None,
+    ) == 12_000
+    assert _performance_principal_for_snapshots(
+        prior_run,
+        current_principal=12_000,
+        current_principal_started_at=current_run_started_at,
+        simulation_time=None,
+    ) is None
+    assert _performance_principal_for_snapshots(
+        current_run,
+        current_principal=12_000,
+        current_principal_started_at=current_run_started_at,
+        simulation_time=datetime(2026, 7, 16, 12, tzinfo=timezone.utc),
+    ) is None
 
 
 def test_account_performance_route_uses_user_daily_snapshots_and_benchmark() -> None:

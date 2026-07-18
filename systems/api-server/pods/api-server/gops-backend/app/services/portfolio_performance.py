@@ -32,6 +32,7 @@ def build_portfolio_performance(
     benchmark: Mapping[str, Any] | None,
     *,
     range_value: str,
+    net_invested_principal: float | None = None,
 ) -> dict[str, Any]:
     normalized_range = normalize_performance_range(range_value)
     observed = sorted(
@@ -39,6 +40,10 @@ def build_portfolio_performance(
         key=lambda point: point["time"],
     )
     portfolio_points = _normalize_reported_returns(observed)
+    fallback_principal = finite_float(net_invested_principal)
+    if fallback_principal is not None and fallback_principal >= 0:
+        for point in portfolio_points:
+            point.setdefault("netInvestedPrincipal", round(fallback_principal, 6))
     benchmark_points = _normalize_benchmark_points(
         benchmark.get("points") if isinstance(benchmark, Mapping) else None,
         portfolio_points[0]["time"] if portfolio_points else None,
@@ -86,6 +91,12 @@ def _snapshot_point(row: Mapping[str, Any]) -> dict[str, Any] | None:
     if portfolio_value is None and stock_value is not None:
         portfolio_value = stock_value + (cash_value or 0)
     holdings_cost_basis = positions_cost_basis(payload.get("positions"))
+    net_invested_principal = first_finite(
+        account,
+        "netInvestedPrincipal",
+        "startingCashForeign",
+        "starting_cash",
+    )
     reported_rate = first_finite(account, "unrealizedPnlRate", "unrealized_pnl_rate")
     if reported_rate is None:
         pnl = first_finite(account, "unrealizedPnlForeign", "unrealized_pnl")
@@ -105,6 +116,7 @@ def _snapshot_point(row: Mapping[str, Any]) -> dict[str, Any] | None:
         "reportedReturnPercent": reported_rate,
         "portfolioValue": portfolio_value,
         "holdingsCostBasis": holdings_cost_basis,
+        "netInvestedPrincipal": net_invested_principal,
     }
 
 
@@ -127,10 +139,13 @@ def _normalize_reported_returns(points: Sequence[Mapping[str, Any]]) -> list[dic
         }
         portfolio_value = finite_float(point.get("portfolioValue"))
         holdings_cost_basis = finite_float(point.get("holdingsCostBasis"))
+        net_invested_principal = finite_float(point.get("netInvestedPrincipal"))
         if portfolio_value is not None:
             normalized_point["portfolioValue"] = round(portfolio_value, 6)
         if holdings_cost_basis is not None:
             normalized_point["holdingsCostBasis"] = round(holdings_cost_basis, 6)
+        if net_invested_principal is not None:
+            normalized_point["netInvestedPrincipal"] = round(net_invested_principal, 6)
         normalized.append(normalized_point)
     return normalized
 

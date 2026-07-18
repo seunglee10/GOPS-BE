@@ -169,6 +169,11 @@ source, capture timestamp를 보내지 않으며 서버가 검증·보강한 fil
 소규모 리밸런싱 체결일에만 계단식으로 변하며 최종 현금·수량·손익은 유지한다. 시드 계좌의 성과 화면에는 별도 데모
 배지를 표시하지 않으며 실제 사용자 주문 전에는 실시간 평가와 섞이지 않은 고정 곡선을 사용한다.
 성과 API의 `dataOrigin=seeded-demo|account-history`는 내부 출처 판별에만 사용하고 화면 배지로 노출하지 않는다.
+성과 화면은 `portfolioValue`, 현재 paper generation의 `netInvestedPrincipal`, S&P 500
+비교 평가금을 동일한 금액 축으로 표시한다. 금액 이력이 없는 기존 응답은
+`returnPercent` 기반 포트폴리오·S&P 500 퍼센트 차트를 유지해 배포 전 snapshot을 빈 화면으로
+바꾸지 않는다. 시작 원금은 보유종목 매입원가와 다르며 과거 generation이나 SIM 가상시각에
+현재 값을 소급하지 않는다.
 현재 차트 종목의 양수
 보유수량과 평균 매입가가 존재하면 가격 pane에 금색 점선을 그리고 오른쪽 가격축의
 동일한 y 좌표에는 가격만 표시한다. 가격 라벨의 hover와 keyboard focus에서 종목,

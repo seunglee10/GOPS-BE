@@ -176,6 +176,11 @@ LIVE KIS는 기존 limit-only 계약을 유지한다. 주문 조회·event·WebS
 새 generation을 만들고 자동 재시드를 억제한다.
 같은 profile의 기존 계좌는 `seedHistoryVersion`을 확인해 최근 소규모 리밸런싱 체결과
 보유 원금 snapshot 곡선만 멱등 보강하며, 현재 현금·포지션·실현손익은 다시 쓰지 않는다.
+`GET /api/account/performance`의 portfolio point는 기존 필드에 optional
+`netInvestedPrincipal`을 추가할 수 있다. 이 값은 현재 paper generation의
+`starting_cash`이며 `holdingsCostBasis`와 구분한다. 현재 generation 시작 전 snapshot이
+선택 범위에 포함되거나 SIM 과거시각을 조회할 때는 현재 시작 원금을 fallback으로 소급하지
+않고, snapshot 자체에 저장된 point-in-time 값만 사용한다.
 `POST /api/paper/orders`는 `Idempotency-Key`를 필수로 받고 Postgres의 가상 현금과
 보유수량만 예약한다. KIS 주문 테이블, Outbox, broker adapter는 호출하지 않는다.
 

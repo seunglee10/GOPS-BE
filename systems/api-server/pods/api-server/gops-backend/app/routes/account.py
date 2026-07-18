@@ -82,12 +82,15 @@ def account_performance(
     now_provider = getattr(request.app.state, "portfolio_performance_now_provider", None)
     now = simulation_time or (now_provider() if callable(now_provider) else datetime.now(timezone.utc))
     start_at = performance_start_at(range_value, now)
+    performance_sources, current_principal, current_principal_started_at = _paper_performance_context(
+        request.app,
+        user.sub,
+    )
     try:
         from app.recommendations.repository import RecommendationSchemaUnavailable
         from app.recommendations.routes import _repository_from_app
 
         repository = _repository_from_app(request.app)
-        performance_sources = _paper_performance_sources(request.app, user.sub)
         source_reader = getattr(repository, "list_daily_portfolio_snapshots_for_sources", None)
         if callable(source_reader):
             snapshots = source_reader(
@@ -148,10 +151,16 @@ def account_performance(
         except Exception:
             benchmark = None
     result = build_portfolio_performance(
+        snapshots,
+        benchmark,
+        range_value=range_value,
+        net_invested_principal=_performance_principal_for_snapshots(
             snapshots,
-            benchmark,
-            range_value=range_value,
-        )
+            current_principal=current_principal,
+            current_principal_started_at=current_principal_started_at,
+            simulation_time=simulation_time,
+        ),
+    )
     result["dataOrigin"] = _performance_data_origin(snapshots)
     result["isDevFixture"] = result["dataOrigin"] == "seeded-demo"
     return jsonable_encoder(result)
@@ -264,6 +273,9 @@ def _paper_portfolio_payload(app: Any, repository: Any, user_sub: str, snapshot:
                 * 100
             ),
             "realizedPnlForeign": account.get("realized_pnl"),
+            "netInvestedPrincipal": account.get("starting_cash"),
+            "paperGeneration": account.get("generation"),
+            "paperStartedAt": account.get("started_at"),
         },
         "positions": positions,
         "orders": orders,
@@ -296,7 +308,10 @@ def _paper_performance_snapshots(snapshots: list[dict[str, Any]]) -> list[dict[s
     return result
 
 
-def _paper_performance_sources(app: Any, user_sub: str) -> tuple[str, ...]:
+def _paper_performance_context(
+    app: Any,
+    user_sub: str,
+) -> tuple[tuple[str, ...], float | None, datetime | None]:
     all_sources = tuple(sorted(PAPER_PERFORMANCE_SOURCES))
     try:
         from app.routes.paper_trading import paper_repository_from_app
@@ -304,18 +319,50 @@ def _paper_performance_sources(app: Any, user_sub: str) -> tuple[str, ...]:
         paper_repository = paper_repository_from_app(app)
         snapshot = paper_repository.account_snapshot(user_sub)
         account = snapshot.get("account") or {}
-        if not account.get("seed_profile"):
-            return all_sources
-        current_orders = paper_repository.list_orders(
-            user_sub,
-            include_previous=False,
-            limit=500,
-        )
-        if all(order.get("seed_profile") for order in current_orders):
-            return ("seeded-demo",)
+        sources = all_sources
+        if account.get("seed_profile"):
+            current_orders = paper_repository.list_orders(
+                user_sub,
+                include_previous=False,
+                limit=500,
+            )
+            if all(order.get("seed_profile") for order in current_orders):
+                sources = ("seeded-demo",)
+        try:
+            parsed_principal = float(account.get("starting_cash"))
+            principal = parsed_principal if parsed_principal >= 0 else None
+        except (TypeError, ValueError):
+            principal = None
+        return sources, principal, parse_datetime(account.get("started_at"))
     except Exception:
-        return all_sources
-    return all_sources
+        return all_sources, None, None
+
+
+def _performance_principal_for_snapshots(
+    snapshots: list[dict[str, Any]],
+    *,
+    current_principal: float | None,
+    current_principal_started_at: datetime | None,
+    simulation_time: datetime | None,
+) -> float | None:
+    """Use a live paper principal only when every visible point belongs to the current account run."""
+    if current_principal is None or simulation_time is not None:
+        return None
+    if current_principal_started_at is None:
+        return current_principal
+    observed_times: list[datetime] = []
+    for row in snapshots:
+        if not isinstance(row, dict):
+            continue
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        timestamp = parse_datetime(
+            row.get("source_as_of") or payload.get("asOf") or payload.get("sourceAsOf")
+        )
+        if timestamp is not None:
+            observed_times.append(timestamp)
+    if observed_times and min(observed_times) < current_principal_started_at:
+        return None
+    return current_principal
 
 
 def _kis_client_from_app(app: Any) -> Any:
