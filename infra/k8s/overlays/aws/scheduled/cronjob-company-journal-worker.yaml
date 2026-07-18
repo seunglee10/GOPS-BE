@@ -1,24 +1,65 @@
-# 역할: 패널 요청과 장 마감 배치가 만든 기업저널 요청을 API 요청 밖에서 처리합니다.
+# 역할: ClickHouse에 pending 기업저널 요청이 있을 때만 실제 batch 처리 Job을 생성합니다.
+# 기존 CronJob 이름을 유지해 apply 시 10분 주기의 구 worker가 클러스터에 남지 않게 합니다.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gops-company-journal-dispatcher
+  namespace: alfaka-market-data
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gops-company-journal-dispatcher
+  namespace: alfaka-market-data
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    resourceNames: ["gops-company-journal-process-template"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gops-company-journal-dispatcher
+  namespace: alfaka-market-data
+subjects:
+  - kind: ServiceAccount
+    name: gops-company-journal-dispatcher
+    namespace: alfaka-market-data
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gops-company-journal-dispatcher
+---
+# 실제 처리 Job의 선언형 템플릿입니다. suspend를 해제하지 않고 Dispatcher만 복제해 사용합니다.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: gops-company-journal-worker
+  name: gops-company-journal-process-template
   namespace: alfaka-market-data
 spec:
-  schedule: "*/10 * * * *"
+  schedule: "0 0 1 1 *"
+  suspend: true
   concurrencyPolicy: Forbid
-  startingDeadlineSeconds: 600
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 0
+  failedJobsHistoryLimit: 0
   jobTemplate:
+    metadata:
+      labels:
+        app: gops-company-journal-worker
+        gops.io/company-journal-role: processor
     spec:
-      ttlSecondsAfterFinished: 86400
+      ttlSecondsAfterFinished: 604800
       backoffLimit: 2
       activeDeadlineSeconds: 1800
       template:
         metadata:
           labels:
             app: gops-company-journal-worker
+            gops.io/company-journal-role: processor
         spec:
           restartPolicy: Never
           nodeSelector:
@@ -42,7 +83,67 @@ spec:
                     name: alfaka-market-data-config
                 - secretRef:
                     name: alfaka-clickhouse-secret
-                    optional: true
+                    optional: false
                 - secretRef:
                     name: alfaka-openai-secret
-                    optional: true
+                    optional: false
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 512Mi
+                limits:
+                  cpu: "2"
+                  memory: 2Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gops-company-journal-worker
+  namespace: alfaka-market-data
+spec:
+  # 23:30 UTC post-market Job과 동시에 시작하지 않도록 매시 30분은 비웁니다.
+  schedule: "0-29,31-59 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 2
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            app: gops-company-journal-dispatcher
+            gops.io/company-journal-role: dispatcher
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            karpenter.sh/nodepool: general-purpose
+          serviceAccountName: gops-company-journal-dispatcher
+          containers:
+            - name: company-journal-dispatcher
+              image: YOUR_ECR_REPOSITORY/gops-api-server:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-u", "-m", "app.company_journal.dispatcher"]
+              env:
+                - name: COMPANY_JOURNAL_PROCESS_TEMPLATE
+                  value: gops-company-journal-process-template
+                - name: COMPANY_JOURNAL_PROCESS_LABEL
+                  value: gops.io/company-journal-role=processor
+                - name: COMPANY_JOURNAL_KUBERNETES_TIMEOUT_SECONDS
+                  value: "10"
+              envFrom:
+                - configMapRef:
+                    name: alfaka-market-data-config
+                - secretRef:
+                    name: alfaka-clickhouse-secret
+                    optional: false
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 192Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi

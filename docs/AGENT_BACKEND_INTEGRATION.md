@@ -873,7 +873,9 @@ GET /api/company-journal/{symbol}/evidence?benchmarks=SPY,SOXX
 
 응답은 `status=ready`와 최신 verified report 또는 `status=pending`과 null report다.
 GET은 먼저 ClickHouse의 저장 결과를 반환하고 FastAPI background task에서는 원천 digest와
-생성 event만 기록한다. OpenAI 생성은 CronJob worker에서 수행한다. 결과가 없다는 이유로
+생성 event만 기록한다. OpenAI 생성은 경량 Dispatcher가 pending을 발견했을 때 생성한
+Kubernetes batch Job에서 수행한다. Dispatcher는 생성 요청이 없으면 Kubernetes API를
+호출하지 않고 종료하며, 활성 처리 Job이 있으면 중복 Job을 만들지 않는다. 결과가 없다는 이유로
 브라우저 계산 문장이나 fixture를 production 응답에 넣지 않는다. 이 route는
 `POST /api/agents/analyze`, polling/SSE, Redis report store 계약을 변경하지 않는다.
 
