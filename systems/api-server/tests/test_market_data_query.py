@@ -3230,6 +3230,15 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertIn("gops:market:on-demand:v1:latest:closed:candle:MSFT:1D", redis_state.values)
         self.assertNotIn("gops:market:on-demand:v1:subscription:symbols", redis_state.sets)
 
+    def test_market_heatmap_cache_ttl_outlives_quote_refresh(self):
+        configmap = (ROOT / "infra" / "k8s" / "base" / "app" / "configmap.yaml").read_text(encoding="utf-8")
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+        self.assertEqual(heatmap_service.DEFAULT_QUOTE_REFRESH_SECONDS, 60)
+        self.assertEqual(heatmap_service.DEFAULT_CACHE_TTL_SECONDS, 70)
+        self.assertIn('HEATMAP_CACHE_TTL_SECONDS: "70"', configmap)
+        self.assertIn("HEATMAP_CACHE_TTL_SECONDS=70", env_example)
+
     def test_market_heatmap_combines_fundamentals_quotes_seed_and_cache(self):
         seed_items = [
             {
