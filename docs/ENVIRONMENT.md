@@ -747,9 +747,11 @@ The fundamentals store must expose `shares_outstanding` in the summary metrics
 or in `sec_financial_facts`. `companyName`, `sector`, `industry`, `cik`,
 `periodEndDate`, and `filedAt` are passed through when available; the S&P500
 seed fills missing classification fields. Quotes, color, and computed market cap
-refresh every 60 seconds by default. Tile layout timestamps advance every 300
-seconds by default, so the frontend can update colors frequently without
-reshuffling the treemap on every quote refresh.
+refresh every 60 seconds by default. The fresh projection cache remains valid
+for 70 seconds by default, so the normal frontend poll reuses the current
+projection instead of synchronously rebuilding all S&P 500 items. Tile layout
+timestamps advance every 300 seconds by default, so the frontend can update
+colors frequently without reshuffling the treemap on every quote refresh.
 
 SEC actuals and Yahoo consensus estimates stay separate. SEC EDGAR actual
 financial statement rows live in `market_data.sec_financial_facts` and
