@@ -112,9 +112,17 @@ build_image() {
   fi
 
   if docker buildx version >/dev/null 2>&1; then
-    docker buildx build --platform "${DOCKER_PLATFORM}" --load "${build_args[@]}" -f "${dockerfile}" -t "${image}:${IMAGE_TAG}" .
+    if [[ "${#build_args[@]}" -gt 0 ]]; then
+      docker buildx build --platform "${DOCKER_PLATFORM}" --load "${build_args[@]}" -f "${dockerfile}" -t "${image}:${IMAGE_TAG}" .
+    else
+      docker buildx build --platform "${DOCKER_PLATFORM}" --load -f "${dockerfile}" -t "${image}:${IMAGE_TAG}" .
+    fi
   else
-    docker build --platform "${DOCKER_PLATFORM}" "${build_args[@]}" -f "${dockerfile}" -t "${image}:${IMAGE_TAG}" .
+    if [[ "${#build_args[@]}" -gt 0 ]]; then
+      docker build --platform "${DOCKER_PLATFORM}" "${build_args[@]}" -f "${dockerfile}" -t "${image}:${IMAGE_TAG}" .
+    else
+      docker build --platform "${DOCKER_PLATFORM}" -f "${dockerfile}" -t "${image}:${IMAGE_TAG}" .
+    fi
   fi
 }
 
