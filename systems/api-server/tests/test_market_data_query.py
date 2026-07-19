@@ -1468,7 +1468,17 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         previous = query_routes.get_query_service
         query_routes.get_query_service = lambda: FakeQueryService(FakeIndicatorProvider())
         try:
-            payload = query_routes.chart_indicators("aapl", "1m", None, None, "sma:5", 10)
+            payload = query_routes.chart_indicators(
+                request=types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(
+                    simulator_gateway=types.SimpleNamespace(status=lambda: {"mode": "live"}),
+                ))),
+                symbol="aapl",
+                interval="1m",
+                from_time=None,
+                to_time=None,
+                layers="sma:5",
+                limit=10,
+            )
         finally:
             query_routes.get_query_service = previous
 

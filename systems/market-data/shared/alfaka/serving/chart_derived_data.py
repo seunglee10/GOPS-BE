@@ -23,6 +23,7 @@ def build_indicator_request(
     to_time: str | None,
     specs: list[IndicatorSpec],
     limit: int,
+    cache_scope: str | None = None,
 ) -> dict[str, Any]:
     layer_ids = ",".join(spec.id for spec in specs)
     identity = {
@@ -33,6 +34,7 @@ def build_indicator_request(
         "to": to_time,
         "limit": int(limit),
         "layers": layer_ids,
+        **({"scope": cache_scope} if cache_scope else {}),
     }
     return build_request(
         DERIVED_KIND_INDICATORS,
@@ -59,6 +61,7 @@ def build_volume_profile_request(
     price_min: float | None,
     price_max: float | None,
     candle_count: int | None = None,
+    cache_scope: str | None = None,
 ) -> dict[str, Any]:
     interval = normalize_chart_interval(interval)
     identity = {
@@ -72,6 +75,7 @@ def build_volume_profile_request(
         "priceMin": price_min,
         "priceMax": price_max,
         "candleCount": int(candle_count) if candle_count is not None else None,
+        **({"scope": cache_scope} if cache_scope else {}),
     }
     return build_request(
         DERIVED_KIND_VOLUME_PROFILE,

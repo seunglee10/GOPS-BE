@@ -30,8 +30,10 @@ SAFE_SIMULATION_READ_PATHS = frozenset({
     "/api/market/indices/related",
     "/api/charts/analysis-assets",
     "/api/charts/analysis-assets/commentary",
+    "/api/charts/indicators",
     "/api/charts/order-flow/symbols",
     "/api/charts/order-flow/intraday",
+    "/api/charts/volume-profile-bins",
 })
 
 SAFE_SIMULATION_READ_PREFIXES = (
