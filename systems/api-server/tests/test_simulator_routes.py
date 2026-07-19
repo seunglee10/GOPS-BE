@@ -512,6 +512,48 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(profile_call["candlePayload"]["candles"][-1]["timestamp"], "2026-07-14T15:00:00Z")
         self.assertEqual(profile_call["cacheScope"], "simulation:sp500-full-20260715-kst-v3:run-1")
 
+    def test_simulation_daily_indicators_include_the_completed_replay_market_day(self):
+        self.gateway.mode = "simulation"
+        self.gateway.virtual_time = "2026-07-15T13:00:00+09:00"
+        self.gateway.candles = Mock(return_value={
+            "symbol": "NVDA",
+            "interval": "1D",
+            "source": "simulation_replay",
+            "feed": "sip+boats",
+            "simulation": True,
+            "asOf": "2026-07-15T04:00:00Z",
+            "candles": [{
+                "timestamp": "2026-07-14T04:00:00.000Z",
+                "open": 100.0,
+                "high": 110.0,
+                "low": 99.0,
+                "close": 108.0,
+                "volume": 1_000.0,
+                "isClosed": True,
+            }],
+        })
+        service = RecordingReplayDerivedService()
+
+        with patch("app.market_data.query.routes.get_query_service", return_value=service):
+            response = self.client.get(
+                "/api/charts/indicators",
+                params={
+                    "symbol": "NVDA",
+                    "interval": "1D",
+                    "from": "2026-07-01T04:00:00Z",
+                    "to": "2026-07-14T04:00:00Z",
+                    "layers": "bollinger:20:2",
+                    "limit": 30,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.gateway.candles.assert_called_once_with("NVDA", "1D", 5_000)
+        self.assertEqual(
+            service.indicator_calls[0]["candlePayload"]["candles"][-1]["timestamp"],
+            "2026-07-14T04:00:00.000Z",
+        )
+
     def test_simulation_candles_recompute_requested_moving_averages_across_replay_boundary(self):
         self.gateway.mode = "simulation"
         service = RecordingReplayDerivedService()
