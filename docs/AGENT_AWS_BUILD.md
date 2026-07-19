@@ -1213,7 +1213,7 @@ Compose 기본값은 `CHART_COMMENTARY_PROVIDER=disabled`와
 `CHART_COMMENTARY_REQUIRED=false`다. AWS overlay는 `provider=openai`, `required=true`로
 고정하고 `chart-asset-builder`의 `alfaka-openai-secret`을 필수로 만든다. writer는
 `CHART_COMMENTARY_MODEL`이 없으면 `OPENAI_MODEL`을 사용하고
-`chart-commentary.ko.v2`의 연속형 세 문단과 inline reference 계약을 검증한다.
+현재 writer는 `chart-commentary.ko.v5`의 간결한 세 문단과 inline reference 계약을 검증한다.
 required mode는 provider/key/model 누락 시 builder 시작을 실패시킨다. timeout, 429,
 5xx만 0.5초 뒤 한 번 재시도하며, strict output이 서버 후검증에서 탈락한 경우에도
 동일 fact pack으로 한 번만 교정한다. 영구 HTTP·인증·refusal은 재시도하지 않는다.
@@ -1241,9 +1241,11 @@ LLM enrichment 장애는 deterministic chart answer를 막지 않아야 한다.
 Geometry writer 변경은 `CHART_INTERPRETATION_ONLY=true` reader-only 프로필로 배포하지
 않는다. 일반 dev 배포에서 frontend, backend, agent-orchestrator를 함께 선택해 동일한
 immutable Git-SHA image tag의 `chart-asset-builder`까지 rollout한 뒤 force 재생성을 수행한다.
-재생성 전에는 `scripts/aws/preflight-chart-commentary-aws.sh`로 builder image, deploy mode,
-provider/required/model, key의 non-empty 여부와 prompt version을 확인한다. 스크립트는 Secret
-값이나 prompt/news 원문을 출력하지 않는다.
+일반 배포는 builder rollout 직후 `scripts/aws/preflight-chart-commentary-aws.sh`를 자동 실행해
+immutable image tag, provider/required/model, key의 non-empty 여부와
+`chart-commentary.ko.v5` prompt version을 확인한다. 실패하면 배포 성공 상태를 기록하지 않고
+기존 rollback 경로를 사용한다. 스크립트는 Secret 값이나 prompt/news 원문을 출력하지 않으며,
+자산 재생성이나 LLM 호출을 수행하지 않는다.
 
 AWS overlay는 Alpaca repair 동시성 2와 최대 range 8을 사용한다. 기존 평일 CronJob이
 queue item을 등록해도 builder는 scheduled item을 분석·복구·저장하지 않는다. API 패널과

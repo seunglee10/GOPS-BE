@@ -199,7 +199,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/control/symbols")
-    def replay_symbols(q: str = "", limit: int = Query(default=100, ge=1, le=100)) -> dict[str, object]:
+    def replay_symbols(q: str = "", limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, object]:
         query = q.strip().upper()
         symbols = [symbol for symbol in REPLAY_SYMBOLS if not query or query in symbol][:limit]
         return {

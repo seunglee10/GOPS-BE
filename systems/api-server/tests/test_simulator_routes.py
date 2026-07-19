@@ -454,6 +454,7 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(symbols.status_code, 200)
         self.assertEqual(symbols.json()["symbols"], ["NVDA"])
         self.assertTrue(symbols.json()["simulation"])
+        self.assertIn(("symbols", "", 1000), self.gateway.calls)
         self.assertEqual(intraday.status_code, 200)
         self.assertEqual(intraday.json()["sessionDate"], "2026-07-14")
         self.assertEqual(intraday.json()["minutes"][0]["bins"][0]["askVolume"], 10)

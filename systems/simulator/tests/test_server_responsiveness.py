@@ -21,6 +21,7 @@ for source_root in (SIMULATOR_ROOT, MARKET_DATA_SHARED_ROOT):
         sys.path.insert(0, str(source_root))
 
 from systems.simulator.gops_simul.server import create_app
+from systems.simulator.gops_simul.dataset import REPLAY_SYMBOLS
 from systems.simulator.gops_simul.tick_replay import InMemoryReplayEventSource, ReplayController
 
 
@@ -67,6 +68,17 @@ class _BlockingReplayController:
 
 
 class SimulatorServerResponsivenessTests(unittest.TestCase):
+    def test_symbol_endpoint_can_return_the_full_replay_universe(self) -> None:
+        app = create_app(replay_controller=ReplayController(InMemoryReplayEventSource([])))
+
+        with TestClient(app) as client:
+            response = client.get("/api/control/symbols?limit=1000")
+
+        self.assertEqual(response.status_code, 200)
+        symbols = [item["symbol"] for item in response.json()["symbols"]]
+        self.assertEqual(len(symbols), len(REPLAY_SYMBOLS))
+        self.assertIn("NVDA", symbols)
+
     def test_speed_endpoint_accepts_only_the_supported_replay_speeds(self) -> None:
         app = create_app(replay_controller=ReplayController(InMemoryReplayEventSource([])))
 

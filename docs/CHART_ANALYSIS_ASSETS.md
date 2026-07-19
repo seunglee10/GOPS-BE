@@ -203,8 +203,8 @@ SMA60/120은 차트 추가 도구가 소유하는 독립 보조지표이며 추�
 않는다. 최근 골든·데드크로스 마커만 분석 이벤트로 추세 레이어가 소유한다. 제안 OFF는
 메모리 trade plan을 삭제하지 않고 표시와 제안 가격의 Y축 반영만 중단한다.
 
-해설은 유효한 구조화 `commentary`가 있으면 본문에서 파생한 차트 연동 링크만 먼저
-흰색 평문형 링크로 표시하고 `종합 해설 보기`를 눌렀을 때 세 문단 연속형 본문과 기존
+해설은 유효한 구조화 `commentary`가 있으면 본문에서 파생한 차트 연동 명사구를 먼저
+흰색 compact 버튼으로 표시하고 `종합 해설 보기`를 눌렀을 때 세 문단 연속형 본문과 기존
 signal 색 링크를 펼친다. 펼침·접힘은 작도 고정, 지표, 봉, 이벤트 상태를 변경하지 않으며
 자산 identity가 바뀌면 다시 접힌다. commentary가 없는
 구자산은 기존 규칙 기반 종합 해설로 fallback한다. 패널 상단의 별도 표는 KIS holdings API로
@@ -263,7 +263,9 @@ DOM 라벨은 매 scene에서 Canvas와 같은 geometry를 동기적으로 사�
 
 차트 좌측 하단의 다섯 버튼은 chart hover 또는 focus-within에서만 나타나고 상태 문구는
 항상 남는다. 같은 버튼은 해설 패널의 보유 현황 아래에도 리모컨으로 표시되며 두 위치는
-하나의 document runtime visibility/availability를 공유한다.
+하나의 document runtime visibility/availability를 공유한다. 해설의 지지·저항·추세·패턴
+카드와 조건부 매수 시나리오 카드도 같은 상태를 구독하며 hover/focus는 임시 강조, 클릭은
+대응 레이어 ON/OFF를 담당한다.
 
 최신성은 `current`, `outdated_snapshot`, `source_invalid`로 구분한다. 새 완료 봉이 생긴
 정상 자산은 당시 분석 스냅샷이므로 원래 opacity를 유지하고 `N봉 전`을 표시한다.

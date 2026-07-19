@@ -356,7 +356,7 @@ def chart_order_flow_symbols(request: Request) -> dict[str, Any]:
     try:
         status = gateway.status()
         if status.get("mode") == "simulation":
-            replay_symbols = gateway.symbols(limit=100)
+            replay_symbols = gateway.symbols(limit=1000)
             symbols = [
                 str(item.get("symbol") or "").strip().upper()
                 for item in replay_symbols.get("symbols", [])
