@@ -91,7 +91,7 @@ action, decision, sizing, key evidence, 점수와 설명을 읽는다. 별도 re
 SIM에서는 status의 `virtualTime`과 `effectiveSpeed`를 사용하며 일시정지 중에는 함께
 멈춘다. SIM 전환은 사용자가 보고 있는 화면을 강제로 바꾸지 않는다. 증시지도를 보고
 있다면 전체 LIVE universe 대신 replay manifest의 502종목만 표시하고, status의 replay
-가격과 dataset 첫 체결가 기준 등락률을 해당 타일에 반영한다. 새 run에서는 이전 run의
+가격과 `2026-07-13` 정규장 종가 기준 등락률을 해당 타일에 반영한다. 새 run에서는 이전 run의
 가격·등락률을 재사용하지 않는다. phase, 합성 news, basket UI는 없다.
 
 상태는 실행 중 1초, LIVE·ready·paused·completed·연결 불가에서는 30초 간격으로
@@ -926,7 +926,9 @@ seed 응답도 즉시 렌더링하고 `quoteAsOf`를 최신 시세처럼 다시 
 표시는 같은 `sectorLabelKo` 한글 라벨을 사용한다. LIVE 등락률은 API가 제공하는
 `previousClose`(전일 정규장 종가)를 기준으로 계산된 값만 사용한다. 기준 종가가
 없으면 seed 값이나 `0%`로 대체하지 않고 `—`로 표시하며, 섹터·산업 평균에서도
-제외한다. SIM 모드의 등락률은 replay 원본 trade 기준이며 이 LIVE 계약과 분리한다.
+제외한다. SIM 모드도 status의 `previousClose`와 replay 원본 trade를 사용하며, 고정
+데이터셋의 직전 정규장인 `2026-07-13` 종가를 기준으로 계산한다. 기준 종가가 누락되면
+첫 replay 체결가나 seed 비율로 대체하지 않는다.
 
 stock recommendations panel은 `panelType="stockRecommendations"`/`kind="recommendations"`로
 표현한다. 패널은 `GET /api/recommendations/stocks/latest`로 마지막 장중 추천을

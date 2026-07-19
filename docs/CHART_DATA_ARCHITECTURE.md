@@ -106,7 +106,11 @@ must never be used as substitutes.
 When no previous regular-session close is available, both `previousClose` and
 `changePercent` are null. The frontend renders an em dash, excludes that item
 from sector and industry percentage averages, and keeps its tile visually
-neutral. SIM mode keeps its separate scenario-seed percentage contract.
+neutral. SIM status applies the same percentage formula to replay trades, using
+the fixed dataset's previous completed regular session (`2026-07-13`) as its
+baseline. The simulator loads all 502 canonical `v2/split/regular` closes once
+at process start and fails closed when the baseline is incomplete; it never
+falls back to the first replay trade or a scenario-seed percentage.
 
 ## Query Contract
 
