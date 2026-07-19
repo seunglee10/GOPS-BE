@@ -607,7 +607,8 @@ class ReplayControllerTests(unittest.TestCase):
                 trade(2, 1, "NVDA", 99.5),
                 quote(3, 3, "NVDA", 101.0, 102.0),
                 trade(4, 3, "NVDA", 101.5),
-            ]
+            ],
+            previous_closes={"NVDA": 100.0},
         )
         self.controller = ReplayController(self.source, clock=self.clock, default_speed=1)
 
@@ -639,7 +640,7 @@ class ReplayControllerTests(unittest.TestCase):
         self.assertEqual(running["processedEventCount"], 2)
         self.assertEqual(self.controller.latest_quote("NVDA"), {"bid": 99.0, "ask": 100.0})
 
-    def test_status_exposes_change_from_the_first_replay_trade(self):
+    def test_status_exposes_change_from_the_previous_regular_session_close(self):
         self.controller.set_mode("simulation")
         self.controller.resume()
         self.clock.value += 4
@@ -649,8 +650,10 @@ class ReplayControllerTests(unittest.TestCase):
         msft = next(item for item in status["symbols"] if item["symbol"] == "MSFT")
 
         self.assertEqual(nvda["price"], 101.5)
-        self.assertAlmostEqual(nvda["changePercent"], 2.01005, places=5)
+        self.assertEqual(nvda["previousClose"], 100.0)
+        self.assertEqual(nvda["changePercent"], 1.5)
         self.assertIsNone(msft["price"])
+        self.assertIsNone(msft["previousClose"])
         self.assertIsNone(msft["changePercent"])
 
     def test_status_uses_the_previous_regular_session_close_instead_of_the_first_replay_trade(self):
@@ -726,10 +729,13 @@ class ReplayControllerTests(unittest.TestCase):
 
     def test_daily_snapshot_survives_controller_restore(self):
         store = MemoryStateStore()
-        source = InMemoryReplayEventSource([
-            trade(1, 1, "NVDA", 99.5),
-            trade(2, 3, "NVDA", 101.5),
-        ])
+        source = InMemoryReplayEventSource(
+            [
+                trade(1, 1, "NVDA", 99.5),
+                trade(2, 3, "NVDA", 101.5),
+            ],
+            previous_closes={"NVDA": 100.0},
+        )
         controller = ReplayController(source, clock=self.clock, state_store=store)
         controller.set_mode("simulation")
         controller.resume()
@@ -744,7 +750,8 @@ class ReplayControllerTests(unittest.TestCase):
         self.assertEqual(payload["candles"][0]["close"], 101.5)
         self.assertFalse(payload["candles"][0]["isClosed"])
         nvda = next(item for item in restored.status()["symbols"] if item["symbol"] == "NVDA")
-        self.assertAlmostEqual(nvda["changePercent"], 2.01005, places=5)
+        self.assertEqual(nvda["previousClose"], 100.0)
+        self.assertEqual(nvda["changePercent"], 1.5)
 
     def test_speed_can_change_mid_run_without_dropping_events(self):
         self.controller.set_mode("simulation")

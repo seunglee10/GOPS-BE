@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -10,7 +11,14 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
-from gops_simul.dataset import DATASET_ID, REPLAY_SYMBOL_SET, isoformat_z, parse_timestamp
+from gops_simul.dataset import (
+    DATASET_ID,
+    HEATMAP_BASELINE_SESSION_DATE,
+    REPLAY_SYMBOL_SET,
+    REPLAY_SYMBOLS,
+    isoformat_z,
+    parse_timestamp,
+)
 from gops_simul.tick_replay import ReplayEvent
 
 
@@ -70,6 +78,39 @@ class ClickHouseReplayEventSource:
         if not rows or rows[0].get("status") != "READY": raise RuntimeError(f"replay dataset {dataset_id} is not READY")
         self.total_events = int(rows[0].get("total_events") or 0)
         if self.total_events <= 0: raise RuntimeError(f"replay dataset {dataset_id} has no events")
+
+    def previous_close_snapshot(self) -> dict[str, float]:
+        session_start = datetime.fromisoformat(HEATMAP_BASELINE_SESSION_DATE).replace(tzinfo=timezone.utc)
+        session_end = session_start + timedelta(days=1)
+        symbols = ",".join(sql_string(symbol) for symbol in REPLAY_SYMBOLS)
+        rows = self.client.query_rows(
+            "SELECT symbol, "
+            "argMax(close, tuple(inserted_at, event_time, ifNull(source_event_id, ''))) AS previous_close "
+            "FROM market_data.chart_candles "
+            f"PREWHERE symbol IN ({symbols}) AND interval IN ('1D', '1d') "
+            f"AND event_time >= parseDateTime64BestEffort({sql_string(isoformat_z(session_start))}, 3) "
+            f"AND event_time < parseDateTime64BestEffort({sql_string(isoformat_z(session_end))}, 3) "
+            "WHERE is_closed = 1 AND market_session = 'regular' "
+            "AND canonical_version = 'v2' AND price_adjustment = 'split' "
+            "AND close > 0 AND isFinite(close) GROUP BY symbol ORDER BY symbol"
+        )
+        snapshot: dict[str, float] = {}
+        for row in rows:
+            symbol = str(row.get("symbol") or "").strip().upper()
+            try:
+                previous_close = float(row.get("previous_close"))
+            except (TypeError, ValueError):
+                continue
+            if symbol in REPLAY_SYMBOL_SET and previous_close > 0 and math.isfinite(previous_close):
+                snapshot[symbol] = previous_close
+        missing = sorted(REPLAY_SYMBOL_SET.difference(snapshot))
+        if missing:
+            preview = ",".join(missing[:10])
+            raise RuntimeError(
+                "previous close baseline is incomplete: "
+                f"{len(snapshot)}/{len(REPLAY_SYMBOLS)} symbols; missing={preview}"
+            )
+        return snapshot
 
     def events_after_sequence(self, sequence: int, limit: int) -> list[ReplayEvent]:
         rows = self.client.query_rows("SELECT sequence, event_time, feed, payload FROM market_data.simulation_replay_events "
