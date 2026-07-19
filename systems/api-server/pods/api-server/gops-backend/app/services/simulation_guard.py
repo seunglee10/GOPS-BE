@@ -30,12 +30,14 @@ SAFE_SIMULATION_READ_PATHS = frozenset({
     "/api/market/indices/related",
     "/api/charts/analysis-assets",
     "/api/charts/analysis-assets/commentary",
+    "/api/charts/analysis-assets/coverage",
     "/api/charts/order-flow/symbols",
     "/api/charts/order-flow/intraday",
 })
 
 SAFE_SIMULATION_READ_PREFIXES = (
     "/api/company-journal/",
+    "/api/charts/analysis-assets/build/",
 )
 
 
@@ -47,6 +49,13 @@ _CUTOFF_SAFE_COMPANY_JOURNAL_EVIDENCE_PATH = re.compile(
 def supports_cutoff_safe_simulation_read(path: str, method: str = "GET") -> bool:
     """Return whether middleware may attach replay virtualTime and continue safely."""
 
+    if method.upper() == "POST" and (
+        path == "/api/charts/analysis-assets/build"
+        or (path.startswith("/api/charts/analysis-assets/build/") and path.endswith("/cancel"))
+    ):
+        # This authenticated developer operation freezes its own dataset/startTime
+        # context in the route and only queues a precomputed simulation snapshot.
+        return True
     return method.upper() == "GET" and bool(_CUTOFF_SAFE_COMPANY_JOURNAL_EVIDENCE_PATH.fullmatch(path))
 
 

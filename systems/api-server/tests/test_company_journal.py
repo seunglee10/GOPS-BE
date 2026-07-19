@@ -592,9 +592,13 @@ def test_company_journal_evidence_does_not_remove_other_simulation_guards():
     assert requires_point_in_time_data("/api/charts/order-flow/daily", "GET") is True
     assert requires_point_in_time_data("/api/charts/analysis-assets", "DELETE") is True
     assert requires_point_in_time_data("/api/charts/analysis-assets/build", "GET") is True
+    assert requires_point_in_time_data("/api/charts/analysis-assets/build/cab-test", "GET") is False
+    assert requires_point_in_time_data("/api/charts/analysis-assets/coverage", "GET") is False
     assert requires_point_in_time_data("/api/company-journal/NVDA/evidence") is False
     assert requires_point_in_time_data("/api/company-journal/NVDA") is False
     assert requires_point_in_time_data("/api/company-journal/NVDA", "POST") is True
     assert supports_cutoff_safe_simulation_read("/api/company-journal/NVDA/evidence") is True
+    assert supports_cutoff_safe_simulation_read("/api/charts/analysis-assets/build", "POST") is True
+    assert supports_cutoff_safe_simulation_read("/api/charts/analysis-assets/build/cab-test/cancel", "POST") is True
     assert supports_cutoff_safe_simulation_read("/api/company-journal/NVDA/evidence", "POST") is False
     assert supports_cutoff_safe_simulation_read("/api/company-journal/NVDA") is False

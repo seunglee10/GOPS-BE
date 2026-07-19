@@ -745,35 +745,20 @@ class SimulatorRoutesTest(unittest.TestCase):
             now=datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc),
         )
 
-    def test_simulation_analysis_assets_are_built_from_replay_safe_candles(self):
+    def test_simulation_analysis_assets_are_read_from_prebuilt_dataset_snapshot(self):
         self.gateway.mode = "simulation"
         self.gateway.virtual_time = "2026-07-15T02:00:00+09:00"
-        replay_rows = [
-            {
-                "timestamp": f"2026-07-14T{15 + index // 60:02d}:{index % 60:02d}:00Z",
-                "open": 100.0 + index / 100,
-                "high": 101.0 + index / 100,
-                "low": 99.0 + index / 100,
-                "close": 100.5 + index / 100,
-                "volume": 1_000 + index,
-                "isClosed": True,
-            }
-            for index in range(120)
-        ]
-        self.gateway.candles = lambda symbol, interval, limit: {
-            "symbol": symbol,
-            "interval": interval,
-            "simulation": True,
-            "asOf": replay_rows[-1]["timestamp"],
-            "candles": replay_rows,
-        }
-        stored_assets = {
+        snapshots = {
             "1m": {
                 "assetVersion": "geometry",
+                "algorithmVersion": "ohlcv-consensus-pattern-families-v6",
                 "symbol": "NVDA",
                 "interval": "1m",
                 "sourceInterval": "1m",
-                "asOf": "2026-07-14T20:00:00Z",
+                "asOf": "2026-07-14T14:59:00Z",
+                "generatedAt": "2026-07-19T00:00:00Z",
+                "inputDigest": "sha256:snapshot-1m",
+                "commentary": {"version": "chart-commentary.v2", "status": "ready"},
             },
             "5m": None,
             "10m": None,
@@ -781,79 +766,52 @@ class SimulatorRoutesTest(unittest.TestCase):
             "4h": None,
             "1D": {
                 "assetVersion": "geometry",
+                "algorithmVersion": "ohlcv-consensus-pattern-families-v6",
                 "symbol": "NVDA",
                 "interval": "1D",
                 "sourceInterval": "1D",
                 "asOf": "2026-07-14T04:00:00Z",
+                "generatedAt": "2026-07-19T00:00:00Z",
+                "inputDigest": "sha256:snapshot-1d",
+                "commentary": {"version": "chart-commentary.v2", "status": "ready"},
             },
             "1W": None,
         }
-        analysis_result = {
-            "drawings": [],
-            "supports": [],
-            "resistances": [],
-            "patterns": [],
-            "primaryPattern": None,
-            "tradePlan": None,
-            "primaryTriangle": None,
-            "historicalTriangle": None,
-            "evidence": [],
-            "trends": [],
-            "primaryTrend": None,
-            "drawingGroups": {"levels": [], "trend": [], "pattern": []},
-            "analysisTrace": {
-                "version": "geometry-analysis-trace-v2",
-                "completeness": {"complete": True, "detected": 0, "stored": 0},
-            },
-            "indicators": {
-                "sma60": 100.5,
-                "sma120": 100.25,
-                "cross": {"status": "none", "direction": None, "timestamp": None, "barsAgo": None},
-            },
-        }
+        live_calls = []
         storage = SimpleNamespace(
-            get=lambda _symbol, interval: stored_assets.get(interval),
-            get_symbol_assets=lambda _symbol: stored_assets,
-            get_commentary=lambda _symbol, interval: {
-                "assetVersion": "geometry",
-                "algorithmVersion": "ohlcv-consensus-pattern-families-v6",
-                "asOf": stored_assets[interval]["asOf"],
-                "generatedAt": "2026-07-14T21:00:00Z",
-                "inputDigest": f"sha256:{interval}",
+            get=lambda *_args: live_calls.append("get"),
+            get_symbol_assets=lambda *_args: live_calls.append("get_symbol_assets"),
+            get_commentary=lambda *_args: live_calls.append("get_commentary"),
+            get_snapshot=lambda _dataset, _symbol, interval, _cutoff: snapshots.get(interval),
+            get_symbol_snapshots=lambda _dataset, _symbol, _cutoff: snapshots,
+            get_snapshot_commentary=lambda _dataset, _symbol, interval, _cutoff: {
+                "assetVersion": snapshots[interval]["assetVersion"],
+                "algorithmVersion": snapshots[interval]["algorithmVersion"],
+                "asOf": snapshots[interval]["asOf"],
+                "generatedAt": snapshots[interval]["generatedAt"],
+                "inputDigest": snapshots[interval]["inputDigest"],
                 "drawingIds": [],
-                "commentary": None,
-            } if stored_assets.get(interval) else None,
+                "commentary": snapshots[interval]["commentary"],
+            } if snapshots.get(interval) else None,
         )
-        historical = {"symbol": "NVDA", "interval": "1m", "candles": []}
 
-        with (
-            patch("app.routes.chart_assets.chart_asset_storage", return_value=storage),
-            patch(
-                "app.routes.charts.get_query_service",
-                return_value=SimpleNamespace(candle_snapshot=lambda *_args, **_kwargs: historical),
-            ),
-            patch("alfaka.analytics.geometry.analyze_geometry", return_value=analysis_result),
-        ):
+        with patch("app.routes.chart_assets.chart_asset_storage", return_value=storage):
             stored_response = self.client.get("/api/charts/analysis-assets?symbol=NVDA")
             response = self.client.get("/api/charts/analysis-assets?symbol=NVDA&interval=1m")
-            future_commentary = self.client.get("/api/charts/analysis-assets/commentary?symbol=NVDA&interval=1m")
-            safe_commentary = self.client.get("/api/charts/analysis-assets/commentary?symbol=NVDA&interval=1D")
+            commentary = self.client.get("/api/charts/analysis-assets/commentary?symbol=NVDA&interval=1m")
 
         self.assertEqual(stored_response.status_code, 200)
-        self.assertIsNone(stored_response.json()["assets"]["1m"])
+        self.assertEqual(stored_response.json()["assets"]["1m"]["inputDigest"], "sha256:snapshot-1m")
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(payload["assets"]["1m"]["asOf"], "2026-07-14T16:59:00.000Z")
-        self.assertEqual(payload["assets"]["1m"]["coverage"]["actualBars"], 120)
+        self.assertEqual(payload["assets"]["1m"]["asOf"], "2026-07-14T14:59:00Z")
         self.assertEqual(list(payload["assets"]), ["1m"])
         self.assertTrue(payload["meta"]["simulation"])
         self.assertEqual(payload["meta"]["cutoff"], "2026-07-15T02:00:00+09:00")
-        self.assertEqual(payload["meta"]["dynamicInterval"], "1m")
-        self.assertEqual(future_commentary.status_code, 200)
-        self.assertIsNone(future_commentary.json()["asset"])
-        self.assertEqual(safe_commentary.status_code, 200)
-        self.assertEqual(safe_commentary.json()["asset"]["asOf"], "2026-07-14T04:00:00Z")
-        self.assertTrue(safe_commentary.json()["meta"]["simulation"])
+        self.assertEqual(payload["meta"]["snapshotStatus"], "ready")
+        self.assertEqual(commentary.status_code, 200)
+        self.assertEqual(commentary.json()["asset"]["inputDigest"], "sha256:snapshot-1m")
+        self.assertEqual(live_calls, [])
 
         delete_response = self.client.delete("/api/charts/analysis-assets?symbols=NVDA&intervals=1m")
         self.assertEqual(delete_response.status_code, 409)

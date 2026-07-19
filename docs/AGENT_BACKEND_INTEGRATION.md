@@ -163,12 +163,13 @@ simulator의 종목별 replay projection을 사용한다. projection은 원본 q
 기업정보·agent snapshot처럼 신뢰할 수 있는 point-in-time 조회가 없는 경로는
 `409 simulation_data_unavailable`을 반환한다. 추천은 검증된 fixed replay provider가
 준비되고 replay `virtualTime`이 artifact의 `evidenceAsOf`에 도달한 경우에만 기존
-recommendation route를 허용한다. 그 전에는 미래 추천으로 취급해 409를 반환한다. 자동 작도 조회는
-`GET /api/charts/analysis-assets` 정확한 경로만 허용하고, DELETE·coverage·build·status는
-계속 차단한다.
+recommendation route를 허용한다. 그 전에는 미래 추천으로 취급해 409를 반환한다. 자동 작도
+full/commentary 조회와 개발 패널의 snapshot build·status·coverage·cancel은 SIM safe route다.
+build는 현재 simulator의 dataset ID와 시작 시각을 서버가 주입하며 클라이언트 cutoff는
+받지 않는다. DELETE는 계속 차단한다.
 저장된 종합 해설은 `GET /api/charts/analysis-assets/commentary?symbol&interval`에서
 asset identity, commentary, 최종 drawing ID만 PostgreSQL JSONB projection으로 읽는다.
-이 safe-read도 `asOf <= virtualTime`인 저장 자산만 반환하며 replay 중 해설을 동적으로 생성하지 않는다.
+이 safe-read도 현재 dataset의 사전 생성 snapshot만 반환하며 replay 중 해설을 동적으로 생성하지 않는다.
 예외적으로 `GET /api/market/news/latest`는 live Redis를 건너뛰고 ClickHouse의
 `published_at <= virtualTime AND localized_at <= virtualTime`인 저장 기사만 읽는다.
 `GET /api/charts/events`는 SIM `virtualTime`을 cutoff로 전달해
@@ -892,6 +893,11 @@ GET    /api/charts/analysis-assets/build/{job_id}
 POST   /api/charts/analysis-assets/build/{job_id}/cancel
 ```
 
+build body의 optional `target=simulation`은 활성 simulator의 `datasetId/startTime`을 서버에서
+고정한다. worker는 그 cutoff 이하의 저장 원천만 사용하고 성공한 payload를
+`chart_assets.geometry_asset_snapshots`에 UPSERT한다. LIVE `geometry_assets`와 SIM snapshot은
+서로 fallback하거나 덮어쓰지 않는다.
+
 GET에 `interval`이 있으면 PostgreSQL의 `(symbol, interval)` row 하나만 읽고 응답
 `assets`에도 해당 interval만 넣는다. interval이 없는 운영·개발 호환 요청은 기존처럼
 symbol의 모든 저장 interval을 반환한다.
@@ -944,15 +950,11 @@ error type/code/param은 보존하지만 key, prompt, 뉴스 원문은 기록하
 `CHART_ASSET_STORAGE_MAINTENANCE=true` 동안 GET은 계속 열어 두고 build와 DELETE만
 503으로 막는다. 기존 숫자형 자산은 변환하거나 fallback으로 읽지 않는다.
 
-SIM의 `GET /api/charts/analysis-assets?symbol=NVDA&interval=1m`은 저장 자산 중
-요청 interval에서 `asOf <= virtualTime`인 것만 먼저 남긴다. 요청 interval은 replay 시작 전 ClickHouse
-과거 봉과 simulator가 cursor까지 반환한 replay 봉을 기존 chart merge 규칙으로 합친 뒤,
-완료 봉 120개 이상일 때 Geometry v6 분석을 동기 worker thread에서 한 번 실행해 응답의
-해당 interval만 교체한다. 이 동적 자산은 PostgreSQL에 저장하거나 build queue에 넣지
-않으며 `meta.simulation`, `cutoff`, `runId`, `dynamicInterval`, `dynamicStatus`를 함께
-반환한다. 봉이 부족하거나 분석 입력을 읽지 못하면 미래 저장 자산으로 fallback하지
-않고 각각 `data_insufficient` 또는 `unavailable` 상태와 같은 interval의 안전한 과거 자산만 반환한다.
-요청 interval이 없으면 동적 분석 없이 cursor-safe 저장 자산만 반환한다.
+SIM의 full/commentary GET은 현재 dataset의 `(dataset_id, symbol, interval)` snapshot만 읽는다.
+snapshot cutoff가 virtual time보다 미래거나 snapshot이 없으면 LIVE로 fallback하지 않으며
+`missing`, 현재 algorithm과 다르면 `regeneration_required`를 meta에 반환한다. runtime GET은
+canonical candle, Geometry kernel, OpenAI writer를 호출하지 않는다. mode 해제 시 같은 route는
+즉시 기존 LIVE row를 다시 읽는다.
 
 ## AI Company Journal Routes
 

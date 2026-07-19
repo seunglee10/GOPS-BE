@@ -4,6 +4,7 @@ import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from typing import Any
 
 from alfaka.analytics.analysis_candles import canonicalize_candle_identity
@@ -27,6 +28,16 @@ from .storage import MAX_ASSET_BYTES, build_chart_asset_storage_from_env
 
 
 ASSET_VERSION = "geometry"
+
+
+def _parse_timestamp(value: str | None) -> datetime:
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("simulation snapshot cutoff is required")
+    parsed = datetime.fromisoformat(raw[:-1] + "+00:00" if raw.endswith("Z") else raw)
+    if parsed.tzinfo is None:
+        raise ValueError("simulation snapshot cutoff must include timezone")
+    return parsed.astimezone(timezone.utc)
 
 
 class ChartAssetBuilder:
@@ -95,13 +106,28 @@ class ChartAssetBuilder:
                 item = _item(symbol, interval, "skipped", "policy", started, reason="manual_refresh_only")
                 self.progress.record_item(envelope.job_id, item)
                 return item
-            existing = self.storage.get(symbol, interval)
+            existing = (
+                self.storage.get_snapshot(envelope.dataset_id, symbol, interval, envelope.snapshot_cutoff)
+                if envelope.target == "simulation"
+                else self.storage.get(symbol, interval)
+            )
             if existing and not envelope.force:
                 item = _item(symbol, interval, "unchanged", "policy", started, reason="existing_asset_preserved")
                 self.progress.record_item(envelope.job_id, item)
                 return item
-            repair = self._repair(envelope, symbol, interval)
-            bundle = self.candle_loader.load_symbol(symbol, [interval])
+            repair = (
+                {"reason": "simulation_snapshot_no_repair"}
+                if envelope.target == "simulation"
+                else self._repair(envelope, symbol, interval)
+            )
+            if envelope.target == "simulation":
+                cutoff = _parse_timestamp(envelope.snapshot_cutoff)
+                load_at = getattr(self.candle_loader, "load_symbol_at", None)
+                if not callable(load_at):
+                    raise RuntimeError("simulation snapshot candle loader does not support cutoff reads")
+                bundle = load_at(symbol, [interval], cutoff)
+            else:
+                bundle = self.candle_loader.load_symbol(symbol, [interval])
             rows = list(bundle.rows[interval])
             coverage = dict(bundle.coverage[interval])
             confirmed_empty = int(repair.get("confirmed_empty_bars") or 0)
@@ -191,7 +217,7 @@ class ChartAssetBuilder:
                     interval=interval,
                     candles=rows,
                     as_of=str(asset["asOf"]),
-                    build_cutoff=generated_at,
+                    build_cutoff=envelope.snapshot_cutoff if envelope.target == "simulation" else generated_at,
                 )
                 fact_pack = build_chart_commentary_fact_pack(
                     symbol=symbol,
@@ -224,8 +250,16 @@ class ChartAssetBuilder:
             asset, encoded = _fit_asset_payload(asset)
             geometry = asset["geometry"]
             payload_bytes = len(encoded.encode("utf-8"))
-            saved = self.storage.save(asset)
-            persisted = self.storage.get(symbol, interval)
+            saved = (
+                self.storage.save_snapshot(envelope.dataset_id, envelope.snapshot_cutoff, asset)
+                if envelope.target == "simulation"
+                else self.storage.save(asset)
+            )
+            persisted = (
+                self.storage.get_snapshot(envelope.dataset_id, symbol, interval, envelope.snapshot_cutoff)
+                if envelope.target == "simulation"
+                else self.storage.get(symbol, interval)
+            )
             write_verified = bool(saved is not False and _saved_asset_matches(asset, persisted))
             if saved is not False and not write_verified:
                 raise RuntimeError("chart asset write verification failed")
@@ -242,6 +276,9 @@ class ChartAssetBuilder:
                 write_verified=write_verified,
                 commentary=asset.get("commentary"),
                 commentary_latency_ms=commentary_latency_ms,
+                target=envelope.target,
+                dataset_id=envelope.dataset_id,
+                snapshot_cutoff=envelope.snapshot_cutoff,
             )
             status = "saved" if saved is not False else "unchanged"
             item = _item(
@@ -287,6 +324,9 @@ class ChartAssetBuilder:
         write_verified: bool,
         commentary: Any = None,
         commentary_latency_ms: int | None = None,
+        target: str = "live",
+        dataset_id: str | None = None,
+        snapshot_cutoff: str | None = None,
     ) -> None:
         trace_payload = trace if isinstance(trace, dict) else {}
         omitted = trace_payload.get("omittedCounts")
@@ -304,6 +344,8 @@ class ChartAssetBuilder:
                 name: len(trace_payload.get(name) or [])
                 for name in ("levelCandidates", "trendCandidates", "patternCandidates")
             },
+            "target": target,
+            **({"datasetId": dataset_id, "snapshotCutoff": snapshot_cutoff} if target == "simulation" else {}),
         }
         trace_log = {
             "event": "chart_trace_summary",

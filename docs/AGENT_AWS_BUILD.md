@@ -1256,8 +1256,8 @@ PostgreSQL schema는
 `agent-orchestrator` 일반 배포의 자동 선행 gate로 적용하며 runtime은 자동 생성하지 않는다.
 PostgreSQL Secret이 없거나 Job이 실패하면 app rollout을 시작하지 않는다.
 범용 패턴 자산 배포 전에는 이 gate가
-`geometry_assets.drawing_count` check constraint와 queue priority/fingerprint index를
-갱신한다.
+`geometry_assets.drawing_count` check constraint, queue priority/fingerprint index와
+append-only `geometry_asset_snapshots` table/build-context columns를 적용한다.
 
 Financial final-answer synthesis is enabled with
 `AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER=openai`. The orchestrator still reads SEC
@@ -1368,11 +1368,11 @@ SIM Order Flow는 같은 simulator image가 `systems/market-data/shared`의 분�
 LRU이며 LIVE Redis/Kafka와 tick table에는 쓰지 않는다. shared 코드 변경은 simulator
 image도 rebuild하며, Bid/Ask/OrderFlow 소켓만 `orderFlow=true`로 이 projection을 구독한다.
 
-SIM 차트 자동 작도는 별도 Deployment, Job, migration을 추가하지 않는다. backend의
-`GET /api/charts/analysis-assets`가 프런트가 요청한 현재 interval 하나에 대해서만 기존
-ClickHouse 과거 봉과 simulator replay 완료 봉을 합쳐 비영속 Geometry 자산을 만든다.
-응답은 `virtualTime`을 넘는 저장 자산을 제거하고 PostgreSQL이나 build queue에 쓰지
-않는다. 추천은 같은 simulator 배포에서 위 fixed replay 환경변수를 그대로 사용한다.
+SIM 차트 자동 작도는 runtime 계산용 Deployment나 Job을 추가하지 않는다. chart migration
+gate가 `geometry_asset_snapshots`를 먼저 만들고, 운영자는 활성 dataset에서 개발 패널로
+필요한 symbol의 `1m/1D`를 시작 시각 기준으로 한 번 생성한다. backend full/commentary GET은
+현재 dataset snapshot만 읽고 없으면 LIVE fallback 없이 생성 필요 상태를 반환한다.
+추천은 같은 simulator 배포에서 위 fixed replay 환경변수를 그대로 사용한다.
 시장 evidence는 고정하고, 활성 `runId`와 `virtualTime` 검증을 통과한 최신 paper portfolio만
 사용자별 재추천 입력으로 허용한다. 뉴스는 기존 cutoff-safe ClickHouse 읽기 경로를 유지한다.
 

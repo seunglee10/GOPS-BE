@@ -17,6 +17,7 @@ from psycopg.types.json import Jsonb
 
 
 POSTGRES_TABLE = "chart_assets.geometry_assets"
+POSTGRES_SNAPSHOT_TABLE = "chart_assets.geometry_asset_snapshots"
 ASSET_INTERVALS = ("1m", "5m", "10m", "1h", "4h", "1D", "1W")
 MAX_ASSET_BYTES = 256 * 1024
 GEOMETRY_ASSET_SCHEMA_PATH = (
@@ -31,8 +32,12 @@ class ChartAssetStore(Protocol):
     def save(self, asset: dict[str, Any]) -> bool: ...
     def get(self, symbol: str, interval: str) -> dict[str, Any] | None: ...
     def get_commentary(self, symbol: str, interval: str) -> dict[str, Any] | None: ...
+    def save_snapshot(self, dataset_id: str, snapshot_cutoff: str, asset: dict[str, Any]) -> bool: ...
+    def get_snapshot(self, dataset_id: str, symbol: str, interval: str, cutoff: str | None = None) -> dict[str, Any] | None: ...
+    def get_snapshot_commentary(self, dataset_id: str, symbol: str, interval: str, cutoff: str | None = None) -> dict[str, Any] | None: ...
+    def get_symbol_snapshots(self, dataset_id: str, symbol: str, cutoff: str | None = None) -> dict[str, dict[str, Any] | None]: ...
     def get_symbol_assets(self, symbol: str) -> dict[str, dict[str, Any] | None]: ...
-    def coverage(self, symbols: list[str] | None = None) -> list[dict[str, Any]]: ...
+    def coverage(self, symbols: list[str] | None = None, dataset_id: str | None = None) -> list[dict[str, Any]]: ...
     def delete(self, symbols: list[str], intervals: list[str]) -> int: ...
 
 
@@ -114,6 +119,110 @@ class PostgresChartAssetStorage:
             ).fetchone()
         return _commentary_projection(row) if row else None
 
+    def save_snapshot(self, dataset_id: str, snapshot_cutoff: str, asset: dict[str, Any]) -> bool:
+        normalized_dataset_id = str(dataset_id or "").strip()
+        if not normalized_dataset_id:
+            raise ValueError("Simulation chart asset snapshot requires datasetId")
+        if asset.get("assetVersion") != "geometry":
+            raise ValueError("PostgreSQL simulation snapshot store accepts only assetVersion=geometry")
+        _validate_asset_identity(asset)
+        _validate_asset_schema(asset)
+        cutoff = _timestamp(snapshot_cutoff)
+        if _timestamp(asset["asOf"]) > cutoff:
+            raise ValueError("Simulation chart asset asOf exceeds its snapshot cutoff")
+        payload = _canonical_payload(asset)
+        payload_bytes = len(payload.encode("utf-8"))
+        if payload_bytes > MAX_ASSET_BYTES:
+            raise ValueError(f"Geometry asset payload exceeds {MAX_ASSET_BYTES} bytes")
+        projection = _asset_projection(asset, payload)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"""
+                INSERT INTO {POSTGRES_SNAPSHOT_TABLE} (
+                    dataset_id, snapshot_cutoff, symbol, "interval", as_of, generated_at,
+                    asset_version, algorithm_version, status, coverage_state, drawing_count,
+                    payload_bytes, input_digest, payload_digest, payload, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                ON CONFLICT (dataset_id, symbol, "interval") DO UPDATE SET
+                    snapshot_cutoff = EXCLUDED.snapshot_cutoff,
+                    as_of = EXCLUDED.as_of,
+                    generated_at = EXCLUDED.generated_at,
+                    asset_version = EXCLUDED.asset_version,
+                    algorithm_version = EXCLUDED.algorithm_version,
+                    status = EXCLUDED.status,
+                    coverage_state = EXCLUDED.coverage_state,
+                    drawing_count = EXCLUDED.drawing_count,
+                    payload_bytes = EXCLUDED.payload_bytes,
+                    input_digest = EXCLUDED.input_digest,
+                    payload_digest = EXCLUDED.payload_digest,
+                    payload = EXCLUDED.payload,
+                    updated_at = now()
+                WHERE EXCLUDED.generated_at > {POSTGRES_SNAPSHOT_TABLE}.generated_at
+                   OR (
+                       EXCLUDED.generated_at = {POSTGRES_SNAPSHOT_TABLE}.generated_at
+                       AND EXCLUDED.payload_digest IS DISTINCT FROM {POSTGRES_SNAPSHOT_TABLE}.payload_digest
+                   )
+                """,
+                (
+                    normalized_dataset_id, cutoff, projection["symbol"], projection["interval"],
+                    projection["as_of"], projection["generated_at"], projection["asset_version"],
+                    projection["algorithm_version"], projection["status"], projection["coverage_state"],
+                    projection["drawing_count"], projection["payload_bytes"], projection["input_digest"],
+                    projection["payload_digest"], Jsonb(asset),
+                ),
+            )
+            conn.commit()
+            return int(cursor.rowcount) > 0
+
+    def get_snapshot(
+        self, dataset_id: str, symbol: str, interval: str, cutoff: str | None = None,
+    ) -> dict[str, Any] | None:
+        where_cutoff = " AND snapshot_cutoff <= %s" if cutoff else ""
+        parameters: tuple[Any, ...] = (dataset_id, symbol.upper(), interval, *([_timestamp(cutoff)] if cutoff else []))
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT payload FROM {POSTGRES_SNAPSHOT_TABLE} "
+                f"WHERE dataset_id = %s AND symbol = %s AND \"interval\" = %s{where_cutoff}",
+                parameters,
+            ).fetchone()
+        return _decode_asset(row.get("payload")) if row else None
+
+    def get_snapshot_commentary(
+        self, dataset_id: str, symbol: str, interval: str, cutoff: str | None = None,
+    ) -> dict[str, Any] | None:
+        where_cutoff = " AND snapshot_cutoff <= %s" if cutoff else ""
+        parameters: tuple[Any, ...] = (dataset_id, symbol.upper(), interval, *([_timestamp(cutoff)] if cutoff else []))
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT asset_version, algorithm_version, as_of, generated_at, input_digest,
+                       payload -> 'commentary' AS commentary,
+                       jsonb_path_query_array(payload, '$.geometry.drawings[*].id') AS drawing_ids
+                FROM {POSTGRES_SNAPSHOT_TABLE}
+                WHERE dataset_id = %s AND symbol = %s AND "interval" = %s{where_cutoff}
+                """,
+                parameters,
+            ).fetchone()
+        return _commentary_projection(row) if row else None
+
+    def get_symbol_snapshots(
+        self, dataset_id: str, symbol: str, cutoff: str | None = None,
+    ) -> dict[str, dict[str, Any] | None]:
+        where_cutoff = " AND snapshot_cutoff <= %s" if cutoff else ""
+        parameters: tuple[Any, ...] = (dataset_id, symbol.upper(), *([_timestamp(cutoff)] if cutoff else []))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT \"interval\", payload FROM {POSTGRES_SNAPSHOT_TABLE} "
+                f"WHERE dataset_id = %s AND symbol = %s{where_cutoff} ORDER BY \"interval\"",
+                parameters,
+            ).fetchall()
+        result = {interval: None for interval in ASSET_INTERVALS}
+        for row in rows:
+            interval = str(row.get("interval") or "")
+            if interval in result:
+                result[interval] = _decode_asset(row.get("payload"))
+        return result
+
     def get_symbol_assets(self, symbol: str) -> dict[str, dict[str, Any] | None]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -127,12 +236,18 @@ class PostgresChartAssetStorage:
                 result[interval] = _decode_asset(row.get("payload"))
         return result
 
-    def coverage(self, symbols: list[str] | None = None) -> list[dict[str, Any]]:
+    def coverage(self, symbols: list[str] | None = None, dataset_id: str | None = None) -> list[dict[str, Any]]:
         where = ""
-        parameters: tuple[Any, ...] = ()
+        parameters: list[Any] = []
+        clauses: list[str] = []
         if symbols:
-            where = "WHERE symbol = ANY(%s)"
-            parameters = ([symbol.upper() for symbol in symbols],)
+            clauses.append("symbol = ANY(%s)")
+            parameters.append([symbol.upper() for symbol in symbols])
+        if dataset_id:
+            clauses.append("dataset_id = %s")
+            parameters.append(dataset_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        table = POSTGRES_SNAPSHOT_TABLE if dataset_id else POSTGRES_TABLE
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
@@ -146,9 +261,9 @@ class PostgresChartAssetStorage:
                            NULLIF(payload #> '{{geometry,primaryPattern}}', 'null'::jsonb),
                            NULLIF(payload #> '{{geometry,primaryTriangle}}', 'null'::jsonb)
                        ) AS primary_pattern
-                FROM {POSTGRES_TABLE} {where}
+                FROM {table} {where}
                 ORDER BY symbol, "interval"
-                """, parameters,
+                """, tuple(parameters),
             ).fetchall()
         return [{
             "symbol": row["symbol"], "interval": row["interval"], "generatedAt": _iso(row["generated_at"]),
@@ -163,6 +278,7 @@ class PostgresChartAssetStorage:
                 "patterns": int(row.get("pattern_candidates") or 0),
             },
             "primaryPattern": _pattern_summary(row.get("primary_pattern")),
+            **({"datasetId": dataset_id} if dataset_id else {}),
         } for row in rows]
 
     def delete(self, symbols: list[str], intervals: list[str]) -> int:
@@ -188,8 +304,12 @@ class MaintenanceChartAssetStorage:
     def save(self, _asset): raise RuntimeError("chart asset storage is read-only during migration maintenance")
     def get(self, symbol, interval): return self.delegate.get(symbol, interval)
     def get_commentary(self, symbol, interval): return self.delegate.get_commentary(symbol, interval)
+    def save_snapshot(self, _dataset_id, _snapshot_cutoff, _asset): raise RuntimeError("chart asset storage is read-only during migration maintenance")
+    def get_snapshot(self, dataset_id, symbol, interval, cutoff=None): return self.delegate.get_snapshot(dataset_id, symbol, interval, cutoff)
+    def get_snapshot_commentary(self, dataset_id, symbol, interval, cutoff=None): return self.delegate.get_snapshot_commentary(dataset_id, symbol, interval, cutoff)
+    def get_symbol_snapshots(self, dataset_id, symbol, cutoff=None): return self.delegate.get_symbol_snapshots(dataset_id, symbol, cutoff)
     def get_symbol_assets(self, symbol): return self.delegate.get_symbol_assets(symbol)
-    def coverage(self, symbols=None): return self.delegate.coverage(symbols)
+    def coverage(self, symbols=None, dataset_id=None): return self.delegate.coverage(symbols, dataset_id)
     def delete(self, _symbols, _intervals): raise RuntimeError("chart asset storage is read-only during migration maintenance")
 
 
