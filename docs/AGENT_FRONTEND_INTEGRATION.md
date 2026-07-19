@@ -204,6 +204,11 @@ backoff를 초기화한다. `simulation_quote_not_ready`, `simulation_quote_time
 `returnPercent` 기반 포트폴리오·S&P 500 퍼센트 차트를 유지해 배포 전 snapshot을 빈 화면으로
 바꾸지 않는다. 시작 원금은 보유종목 매입원가와 다르며 과거 generation이나 SIM 가상시각에
 현재 값을 소급하지 않는다.
+SIM의 S&P 500 비교선은 simulator에 고정한 replay 시작 전 FRED 실제 일봉과 실제 5분
+지수 관측값으로 만든 point-in-time-safe benchmark만 사용한다. benchmark point가 부족하면 응답 warning을
+성과 toolbar에 표시하고 임의 선을 만들지 않는다. 성과 최초 조회는 다른 포트폴리오 패널과
+같은 compact state row를 사용한다. 기간 변경·새로고침 중에는 마지막 정상 차트를 유지하고
+toolbar의 작은 진행 상태만 갱신하며 전체 차트를 큰 placeholder로 교체하지 않는다.
 현재 차트 종목의 양수
 보유수량과 평균 매입가가 존재하면 가격 pane에 금색 점선을 그리고 오른쪽 가격축의
 동일한 y 좌표에는 가격만 표시한다. 가격 라벨의 hover와 keyboard focus에서 종목,

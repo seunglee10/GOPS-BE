@@ -124,6 +124,7 @@ class SimulatorServerResponsivenessTests(unittest.TestCase):
         self.assertNotIn("/api/control/orders", paths)
         self.assertNotIn("/api/control/conditions", paths)
         self.assertIn("/api/control/order-flow", paths)
+        self.assertIn("/api/control/indices/performance", paths)
 
     def test_indices_expose_the_fixed_july_15_snapshot_without_future_data(self) -> None:
         controller = _BlockingReplayController()
@@ -141,6 +142,26 @@ class SimulatorServerResponsivenessTests(unittest.TestCase):
         self.assertEqual(payload["virtualTime"], "2026-07-15T00:00:00+09:00")
         self.assertEqual(payload["coverage"]["priced"], payload["coverage"]["total"])
         self.assertIn("^GSPC", {item["symbol"] for item in payload["items"]})
+
+    def test_index_performance_uses_only_timestamped_fixed_observations(self) -> None:
+        controller = _BlockingReplayController()
+        app = create_app(replay_controller=controller)
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/api/control/indices/performance?range=1M&startAt=2026-06-14T15:00:00Z"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["symbol"], "^GSPC")
+        self.assertEqual(payload["source"], "fred-sp500+simulation_replay")
+        self.assertEqual(payload["range"], "1M")
+        self.assertEqual(payload["points"][0]["time"], "2026-06-15T20:00:00Z")
+        self.assertEqual(payload["points"][0]["returnPercent"], 0)
+        self.assertEqual(payload["points"][-1]["time"], "2026-07-14T14:55:00Z")
+        self.assertGreater(len(payload["points"]), 20)
+        self.assertTrue(all(point["time"] <= "2026-07-14T15:00:00Z" for point in payload["points"]))
 
 
 if __name__ == "__main__":

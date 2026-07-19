@@ -5,6 +5,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 from typing import Any
 
 
@@ -93,6 +94,13 @@ class SimulatorGateway:
 
     def indices(self) -> dict[str, Any]:
         return self._request("GET", "/api/control/indices")
+
+    def index_performance(self, range_value: str, start_at: datetime | None) -> dict[str, Any]:
+        parameters = {"range": range_value}
+        if start_at is not None:
+            parameters["startAt"] = start_at.isoformat()
+        query = urllib.parse.urlencode(parameters)
+        return self._request("GET", f"/api/control/indices/performance?{query}")
 
     def _request(
         self,

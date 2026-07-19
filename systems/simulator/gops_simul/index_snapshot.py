@@ -3,11 +3,68 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from typing import Any, Final
 
 
 SNAPSHOT_AS_OF: Final = "2026-07-15T00:00:00+09:00"
 SNAPSHOT_PERIOD: Final = "2026-07-15-kst"
+PERFORMANCE_BENCHMARK_SYMBOL: Final = "^GSPC"
+SPARKLINE_INTERVAL: Final = timedelta(minutes=5)
+PERFORMANCE_HISTORY_SOURCE: Final = "fred-sp500"
+PERFORMANCE_HISTORY_SOURCE_URL: Final = "https://fred.stlouisfed.org/series/SP500"
+
+# Fixed S&P 500 closes observed before the replay begins. Values are sampled
+# from the FRED SP500 daily series so 1W/1M/3M/1Y charts span their full range;
+# the July 14 close is intentionally excluded because it occurs after replay start.
+REPLAY_SP500_DAILY_CLOSES: Final[tuple[tuple[str, float], ...]] = (
+    ("2025-07-14T20:00:00Z", 6268.56),
+    ("2025-07-31T20:00:00Z", 6339.39),
+    ("2025-08-29T20:00:00Z", 6460.26),
+    ("2025-09-30T20:00:00Z", 6688.46),
+    ("2025-10-31T20:00:00Z", 6840.20),
+    ("2025-11-28T21:00:00Z", 6849.09),
+    ("2025-12-31T21:00:00Z", 6845.50),
+    ("2026-01-30T21:00:00Z", 6939.03),
+    ("2026-02-27T21:00:00Z", 6878.88),
+    ("2026-03-31T20:00:00Z", 6528.52),
+    ("2026-04-01T20:00:00Z", 6575.32),
+    ("2026-04-08T20:00:00Z", 6782.81),
+    ("2026-04-15T20:00:00Z", 7022.95),
+    ("2026-04-22T20:00:00Z", 7137.90),
+    ("2026-04-29T20:00:00Z", 7135.95),
+    ("2026-05-01T20:00:00Z", 7230.12),
+    ("2026-05-08T20:00:00Z", 7398.93),
+    ("2026-05-15T20:00:00Z", 7408.50),
+    ("2026-05-22T20:00:00Z", 7473.47),
+    ("2026-05-29T20:00:00Z", 7580.06),
+    ("2026-06-01T20:00:00Z", 7599.96),
+    ("2026-06-05T20:00:00Z", 7383.74),
+    ("2026-06-08T20:00:00Z", 7405.73),
+    ("2026-06-09T20:00:00Z", 7386.65),
+    ("2026-06-10T20:00:00Z", 7266.99),
+    ("2026-06-11T20:00:00Z", 7394.30),
+    ("2026-06-12T20:00:00Z", 7431.46),
+    ("2026-06-15T20:00:00Z", 7554.29),
+    ("2026-06-16T20:00:00Z", 7511.35),
+    ("2026-06-17T20:00:00Z", 7420.10),
+    ("2026-06-18T20:00:00Z", 7500.58),
+    ("2026-06-22T20:00:00Z", 7472.79),
+    ("2026-06-23T20:00:00Z", 7365.46),
+    ("2026-06-24T20:00:00Z", 7358.22),
+    ("2026-06-25T20:00:00Z", 7357.49),
+    ("2026-06-26T20:00:00Z", 7354.02),
+    ("2026-06-29T20:00:00Z", 7440.43),
+    ("2026-06-30T20:00:00Z", 7499.36),
+    ("2026-07-01T20:00:00Z", 7483.23),
+    ("2026-07-02T20:00:00Z", 7483.24),
+    ("2026-07-06T20:00:00Z", 7537.43),
+    ("2026-07-07T20:00:00Z", 7503.85),
+    ("2026-07-08T20:00:00Z", 7482.71),
+    ("2026-07-09T20:00:00Z", 7543.64),
+    ("2026-07-10T20:00:00Z", 7575.39),
+    ("2026-07-13T20:00:00Z", 7515.34),
+)
 
 # Yahoo Finance 5-minute rows observed strictly before the replay starts at
 # 2026-07-14 15:00:00 UTC. Keeping the values in the simulator makes every run
@@ -373,3 +430,74 @@ def replay_index_snapshot(
         "runId": run_id,
         "virtualTime": virtual_time,
     }
+
+
+def replay_index_performance(
+    *,
+    range_value: str,
+    start_at: str | None,
+    virtual_time: str | None,
+) -> dict[str, Any]:
+    """Build a point-in-time-safe S&P 500 return series from the fixed observations."""
+
+    benchmark = next(
+        item for item in REPLAY_INDEX_ITEMS
+        if item.get("symbol") == PERFORMANCE_BENCHMARK_SYMBOL
+    )
+    prices = [float(value) for value in benchmark.get("sparkline") or []]
+    updated_at = _parse_datetime(benchmark.get("updatedAt"))
+    start = _parse_datetime(start_at)
+    cutoff = _parse_datetime(virtual_time)
+    observations = [
+        (observed_at, price)
+        for timestamp, price in REPLAY_SP500_DAILY_CLOSES
+        if (observed_at := _parse_datetime(timestamp)) is not None
+    ]
+    if updated_at is not None:
+        first_observed_at = updated_at - SPARKLINE_INTERVAL * max(len(prices) - 1, 0)
+        for index, price in enumerate(prices):
+            observed_at = first_observed_at + SPARKLINE_INTERVAL * index
+            observations.append((observed_at, price))
+    observations = sorted(
+        (observed_at, price)
+        for observed_at, price in observations
+        if (start is None or observed_at >= start)
+        and (cutoff is None or observed_at <= cutoff)
+    )
+    base_price = observations[0][1] if observations else None
+    points = [
+        {
+            "time": _isoformat_z(observed_at),
+            "returnPercent": round((price / base_price - 1) * 100, 6),
+        }
+        for observed_at, price in observations
+        if base_price not in (None, 0)
+    ]
+    return {
+        "symbol": PERFORMANCE_BENCHMARK_SYMBOL,
+        "name": str(benchmark.get("name") or "S&P 500"),
+        "method": "price_return",
+        "source": f"{PERFORMANCE_HISTORY_SOURCE}+simulation_replay",
+        "sourceUrl": PERFORMANCE_HISTORY_SOURCE_URL,
+        "range": range_value,
+        "asOf": points[-1]["time"] if points else None,
+        "points": points,
+        "simulation": True,
+        "virtualTime": virtual_time,
+    }
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _isoformat_z(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")

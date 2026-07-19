@@ -131,7 +131,7 @@ def account_performance(
         snapshots = _snapshots_available_at(snapshots, simulation_time)
 
     benchmark = None
-    if snapshots and simulation_time is None:
+    if snapshots:
         first_snapshot = snapshots[0]
         first_payload = first_snapshot.get("payload") if isinstance(first_snapshot, dict) else None
         benchmark_start = parse_datetime(
@@ -141,13 +141,16 @@ def account_performance(
         )
         if benchmark_start is None and isinstance(first_payload, dict):
             benchmark_start = parse_datetime(first_payload.get("asOf") or first_payload.get("sourceAsOf"))
-        benchmark_provider = getattr(request.app.state, "portfolio_benchmark_provider", None)
         try:
-            benchmark = (
-                benchmark_provider(range_value, benchmark_start)
-                if callable(benchmark_provider)
-                else get_indices_service().performance_history(range_value, benchmark_start)
-            )
+            if simulation_time is not None:
+                benchmark = simulator_gateway_from_app(request.app).index_performance(range_value, benchmark_start)
+            else:
+                benchmark_provider = getattr(request.app.state, "portfolio_benchmark_provider", None)
+                benchmark = (
+                    benchmark_provider(range_value, benchmark_start)
+                    if callable(benchmark_provider)
+                    else get_indices_service().performance_history(range_value, benchmark_start)
+                )
         except Exception:
             benchmark = None
     result = build_portfolio_performance(
