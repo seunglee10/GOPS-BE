@@ -183,8 +183,13 @@ failure and prints structured requested/succeeded/row/error counts.
 The analyst projection combines only Yahoo Finance fields actually returned by
 yfinance: the latest firm/rating action, optional prior/current target pair, mean
 target, and recommendation counts. Missing targets or reasons are never inferred.
-The API reads this current sentence directly; reports do not copy it, and it is not
-available as historical evidence after its 24-hour retention window.
+The API reads this current sentence directly in both LIVE and SIM. SIM also reads
+the current Yahoo earnings projection as an explicitly labeled overlay while price
+and SEC eligibility remain cutoff-safe. Reported EVENT `actual_value` supplies the
+split-adjusted actual EPS for its matching SEC quarter. Reports do not copy the
+sentence, and it is not available as historical evidence after its 24-hour retention
+window. The ClickHouse 24.12-compatible TTL converts `collected_at` to `DateTime`
+before adding the one-day interval.
 
 ## 10-K Profile Backfill
 

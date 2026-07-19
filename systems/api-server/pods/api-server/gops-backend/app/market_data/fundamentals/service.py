@@ -311,12 +311,13 @@ class StoreFundamentalsAdapter(FundamentalsAdapter):
                   period_end AS periodEndDate,
                   event_at AS eventAt,
                   event_status AS eventStatus,
+                  actual_value AS actualValue,
                   collected_at AS collectedAt,
                   raw
                 FROM {estimates_table}
                 WHERE symbol IN {{symbols:Array(String)}}
                   AND metric IN {{metrics:Array(String)}}
-                  AND average IS NOT NULL
+                  AND (average IS NOT NULL OR actual_value IS NOT NULL)
                   AND (
                     fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
                     OR (fiscal_period = 'EVENT' AND metric = 'eps' AND event_status = 'reported')
@@ -964,7 +965,8 @@ def earnings_series_from_rows(actual_rows: list[Any], estimate_rows: list[Any]) 
         symbol = read_string(row.get("symbol"))
         metric = read_string(row.get("metric"))
         value = read_float(first_present(row, "value", "average", "avg"))
-        if not symbol or metric not in EARNINGS_SERIES_METRICS or value is None:
+        actual_value = read_float(first_present(row, "actualValue", "actual_value"))
+        if not symbol or metric not in EARNINGS_SERIES_METRICS or (value is None and actual_value is None):
             continue
         normalized = normalize_market_symbol(symbol)
         symbol_points = grouped.setdefault(normalized, {})
@@ -974,6 +976,8 @@ def earnings_series_from_rows(actual_rows: list[Any], estimate_rows: list[Any]) 
             if period_key is None:
                 continue
             point = symbol_points[period_key]
+            if metric == "eps" and actual_value is not None:
+                point["actualEps"] = actual_value
         else:
             period_key = period_key_from_row(row)
             point = symbol_points.setdefault(period_key, {
@@ -982,12 +986,16 @@ def earnings_series_from_rows(actual_rows: list[Any], estimate_rows: list[Any]) 
             })
         point.setdefault("period", period_label_from_row(row))
         point.setdefault("periodEndDate", read_string(row.get("periodEndDate")))
-        point["estimateSource"] = "yahoo"
-        point["collectedAt"] = read_string(row.get("collectedAt"))
-        if metric == "eps" and "estimatedEps" not in point:
-            point["estimatedEps"] = value
-        elif metric == "revenue" and "estimatedRevenue" not in point:
-            point["estimatedRevenue"] = value
+        if value is not None:
+            point["estimateSource"] = "yahoo"
+            point["collectedAt"] = read_string(row.get("collectedAt"))
+            if metric == "eps" and "estimatedEps" not in point:
+                point["estimatedEps"] = value
+            elif metric == "revenue" and "estimatedRevenue" not in point:
+                point["estimatedRevenue"] = value
+
+    for points in grouped.values():
+        normalize_cumulative_quarterly_revenue(points)
 
     return {
         symbol: [
@@ -1004,9 +1012,8 @@ def earnings_series_from_rows(actual_rows: list[Any], estimate_rows: list[Any]) 
 def matching_sec_period_key(event_row: dict[str, Any], sec_points: dict[str, dict[str, Any]]) -> str | None:
     """Match a reported Yahoo earnings event to the nearest preceding SEC quarter.
 
-    Yahoo event rows provide historical consensus EPS, but the displayed actual
-    remains the value already loaded from SEC. Future/unreported events are not
-    attached to a completed SEC quarter.
+    Yahoo event rows provide reported split-adjusted EPS and historical consensus.
+    Future/unreported events are not attached to a completed SEC quarter.
     """
     if (read_string(first_present(event_row, "eventStatus", "event_status")) or "").lower() != "reported":
         return None
@@ -1024,6 +1031,42 @@ def matching_sec_period_key(event_row: dict[str, Any], sec_points: dict[str, dic
         if gap_days <= 180:
             candidates.append((gap_days, period_key))
     return min(candidates)[1] if candidates else None
+
+
+def normalize_cumulative_quarterly_revenue(points: dict[str, dict[str, Any]]) -> None:
+    """Repair the known SEC YTD-plus-synthetic-Q4 pattern conservatively.
+
+    Some companyfacts filings expose Q2/Q3 revenue as year-to-date values. The
+    ingest compatibility row then derives Q4 as annual minus every stored row,
+    producing a negative Q4. Only that unmistakable pattern is converted to
+    standalone quarters; ordinary quarterly values are left untouched.
+    """
+    by_year: dict[str, dict[str, dict[str, Any]]] = {}
+    for point in points.values():
+        period = read_string(point.get("period")) or ""
+        if len(period) < 6 or period[-2:] not in {"Q1", "Q2", "Q3", "Q4"}:
+            continue
+        by_year.setdefault(period[:-2], {})[period[-2:]] = point
+
+    for quarters in by_year.values():
+        if set(quarters) != {"Q1", "Q2", "Q3", "Q4"}:
+            continue
+        q1 = read_float(quarters["Q1"].get("actualRevenue"))
+        q2 = read_float(quarters["Q2"].get("actualRevenue"))
+        q3 = read_float(quarters["Q3"].get("actualRevenue"))
+        q4 = read_float(quarters["Q4"].get("actualRevenue"))
+        if None in {q1, q2, q3, q4}:
+            continue
+        assert q1 is not None and q2 is not None and q3 is not None and q4 is not None
+        if not (q4 < 0 <= q1 <= q2 <= q3):
+            continue
+        annual_total = q1 + q2 + q3 + q4
+        standalone = (q2 - q1, q3 - q2, annual_total - q3)
+        if any(value < 0 for value in standalone):
+            continue
+        quarters["Q2"]["actualRevenue"] = standalone[0]
+        quarters["Q3"]["actualRevenue"] = standalone[1]
+        quarters["Q4"]["actualRevenue"] = standalone[2]
 
 
 def iso_date(value: Any) -> date | None:
@@ -1141,10 +1184,10 @@ def earnings_series_point_from_row(row: dict[str, Any]) -> EarningsSeriesPoint |
     return EarningsSeriesPoint(
         period=period,
         periodEndDate=read_string(row.get("periodEndDate") or row.get("period_end_date")),
-        actualEps=read_float(row.get("actualEps") or row.get("actual_eps")),
-        estimatedEps=read_float(row.get("estimatedEps") or row.get("estimated_eps")),
-        actualRevenue=read_float(row.get("actualRevenue") or row.get("actual_revenue")),
-        estimatedRevenue=read_float(row.get("estimatedRevenue") or row.get("estimated_revenue")),
+        actualEps=read_float(first_present(row, "actualEps", "actual_eps")),
+        estimatedEps=read_float(first_present(row, "estimatedEps", "estimated_eps")),
+        actualRevenue=read_float(first_present(row, "actualRevenue", "actual_revenue")),
+        estimatedRevenue=read_float(first_present(row, "estimatedRevenue", "estimated_revenue")),
         source=read_string(row.get("source")),
         estimateSource=read_string(row.get("estimateSource") or row.get("estimate_source")),
         filedAt=read_string(row.get("filedAt") or row.get("filed_at")),

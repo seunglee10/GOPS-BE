@@ -1205,17 +1205,25 @@ projection이 없거나 24시간이 지나면 기존 empty state를 표시한다
 않지만 뉴스는 저장형 문장을 만드는 입력 근거로 계속 사용할 수 있다. 오른쪽 설명의 hover/focus는
 관련 차트 계열을 강조하며 선택된 재무 용어는 공통 사전 tooltip으로 설명한다. 안정성 탭의
 기간별 수치표는 차트의 실제 높이 바로 다음에 배치하고 고정 카드 높이로 빈 공간을 만들지 않는다.
+실적·가치·매출·수익·안정성 탭의 제목, 차트, 표는 evidence 영역의 같은 왼쪽 기준선을 사용하며
+중첩된 fundamental section이나 chart card가 별도 수평 패딩을 더하지 않는다.
+기업저널 안정성 grid 안의 chart page는 normal flow에 두어 절대 배치 자식 때문에 부모 높이가 0으로
+접히거나 SVG가 잘리지 않게 한다.
 replay simulation에서도 report와 evidence route를 모두 다시 조회한다. 서버 응답의
 `sourceMode=historical_reconstruction`과 `cutoff`가 시점 계약의 source of truth이며, 프런트는
 가상시각을 query parameter로 보내거나 LIVE 응답과 합치지 않는다. mode·runId·KST 날짜가 바뀌면
 이전 report와 evidence를 먼저 지우고 다시 요청하되 실행 중 매 tick마다 재요청하지 않는다.
 SIM에서는 `CompanySummaryPanel`과 상대수익률 chart의 별도 fundamentals/candle fetch를 끄고,
-`/evidence`가 반환한 시점 재무·실적·완료 일봉만 렌더링한다. 기존 universe item은 회사명·sector·
+`/evidence`가 반환한 시점 재무·완료 일봉과 명시된 현재 Yahoo 실적 projection만 렌더링한다.
+기존 universe item은 회사명·sector·
 industry 같은 식별 정보만 남기고 현재 가격·시가총액·재무·등락률은 제거한 뒤 시점 evidence로
 다시 채운다. 적격 자료가 없으면 최신값이나 preview fixture로 대체하지 않고 자료 부족 상태를 표시한다.
 투자사 의견은 LIVE와 SIM 모두 evidence의 `analystSummary`만 사용한다. 이 projection은
-`collectedAt` 기준 24시간 안이면서 simulator cutoff 이하일 때만 반환되므로 과거 SIM을 위해
-이력을 쌓거나 현재 문장을 과거 사실로 대체하지 않는다. SIM의 결정론적 report에도 복제하지 않는다.
+`collectedAt` 기준 24시간 안이면 simulator cutoff와 무관하게 현재 overlay로 반환한다. 실적
+projection도 동일하게 `currentProjectionSources`로 구분하며, 과거 SIM을 위해 이력을 쌓거나
+현재 문장을 과거 사실로 가장하지 않는다. 같은 분기가 SEC chart series와 evidence에 모두 있으면
+evidence의 Yahoo 보정 실제 EPS와 정규화 매출을 먼저 채우고 SEC 중복값으로 덮어쓰지 않는다.
+SIM의 결정론적 report에도 복제하지 않는다.
 
 어려운 재무 용어는 공통 `GlossaryText`를 사용하므로 hover, focus, Enter/Space에서 같은
 설명을 제공한다. `companyJournalPreview=1` fixture는 `import.meta.env.DEV`일 때만 활성화된다.

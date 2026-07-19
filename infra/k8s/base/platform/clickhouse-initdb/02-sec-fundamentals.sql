@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS market_data.yahoo_analyst_summaries
 )
 ENGINE = ReplacingMergeTree(collected_at)
 ORDER BY symbol
-TTL collected_at + INTERVAL 1 DAY DELETE;
+TTL toDateTime(collected_at) + INTERVAL 1 DAY DELETE;
 
 -- Existing environments keep this file idempotent and receive the additive event fields.
 ALTER TABLE market_data.yahoo_earnings_estimates ADD COLUMN IF NOT EXISTS event_at Nullable(DateTime64(3, 'UTC')) AFTER analyst_count;

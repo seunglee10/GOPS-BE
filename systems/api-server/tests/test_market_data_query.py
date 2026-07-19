@@ -3865,7 +3865,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         )
         self.assertIn("fiscal_period = 'EVENT'", estimate_query)
         self.assertIn("event_status = 'reported'", estimate_query)
-        self.assertNotIn("actual_value AS actualValue", estimate_query)
+        self.assertIn("actual_value AS actualValue", estimate_query)
 
     def test_store_fundamentals_series_apply_company_journal_cutoff_to_every_source(self):
         provider = FakeHeatmapProvider()
@@ -3908,6 +3908,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
                 "symbol": "INTC",
                 "metric": "eps",
                 "value": 0.10,
+                "actualValue": 0.13,
                 "fiscalYear": 2025,
                 "fiscalPeriod": "EVENT",
                 "periodEndDate": "2025-10-23",
@@ -3920,10 +3921,32 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(len(series), 1)
         self.assertEqual(series[0].period, "2025Q3")
         self.assertEqual(series[0].periodEndDate, "2025-09-27")
-        self.assertEqual(series[0].actualEps, 0.12)
+        self.assertEqual(series[0].actualEps, 0.13)
         self.assertEqual(series[0].estimatedEps, 0.10)
         self.assertEqual(series[0].source, "sec")
         self.assertEqual(series[0].estimateSource, "yahoo")
+
+    def test_sec_cumulative_revenue_pattern_is_converted_to_standalone_quarters(self):
+        rows = [
+            {
+                "symbol": "AMZN", "metric": "revenue", "value": value,
+                "fiscalYear": 2021, "fiscalPeriod": period,
+                "periodEndDate": period_end, "filedAt": "2022-02-04",
+            }
+            for period, period_end, value in (
+                ("Q1", "2021-03-31", 108_518_000_000),
+                ("Q2", "2021-06-30", 221_598_000_000),
+                ("Q3", "2021-09-30", 332_410_000_000),
+                ("Q4", "2021-12-31", -192_704_000_000),
+            )
+        ]
+
+        series = earnings_series_from_rows(rows, [])["AMZN"]
+
+        self.assertEqual(
+            [point.actualRevenue for point in series],
+            [108_518_000_000, 113_080_000_000, 110_812_000_000, 137_412_000_000],
+        )
 
     def test_query_service_returns_sec_financial_series_payload(self):
         payload = MarketDataQueryService(provider=FakeHeatmapProvider()).financial_series("MSFT", years=3, period="quarterly")

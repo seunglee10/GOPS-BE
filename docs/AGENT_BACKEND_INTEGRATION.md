@@ -976,16 +976,17 @@ route 자체를 실패시키지 않고 missing data로 남기며, 검증된 문�
 한 번에 반환한다. replay simulation에서는 두 GET route가 simulator status의 `virtualTime`을
 서버 내부 cutoff로 사용한다. report route는 최신 LIVE 보고서를 읽거나 생성 queue에 넣지 않고,
 cutoff 이전 완료 일봉·이전 날짜에 공개된 SEC 실적·cutoff까지 실제 수집된 Yahoo snapshot만으로
-결정론적 `sourceMode=historical_reconstruction` 보고서를 즉시 만든다. 같은 cutoff가 `/evidence`의
-재무·실적·상대수익률에도 적용되며 응답은 `simulation`, `cutoff`, `sourceMode` provenance를 포함한다.
-SEC는 시간 정밀도가 날짜뿐이므로 replay 당일 filing은 제외하고, Yahoo는 `collected_at`, analyst
-action은 `action_at`과 `collected_at`, 저장 요약과 graph는 `generated_at`이 cutoff 이하일 때만
-사용한다. 완료 일봉은 New York 기준 현재 replay 날짜보다 이전 session만 선택한다. 적격 row가
+결정론적 `sourceMode=historical_reconstruction` 보고서를 즉시 만든다. `/evidence`의 가격·SEC
+재무와 실제 실적에는 같은 cutoff를 적용하고 응답은 `simulation`, `cutoff`, `sourceMode`
+provenance를 포함한다. SEC는 시간 정밀도가 날짜뿐이므로 replay 당일 filing을 제외한다. 완료
+일봉은 New York 기준 현재 replay 날짜보다 이전 session만 선택한다. 적격 row가
 없으면 결측으로 남기며 최신 report, live fundamentals adapter, 현재 candle로 fallback하지 않는다.
-`/evidence`는 여기에 현재 Yahoo `analystSummary` 한 건을 추가한다. summary query는
-`collected_at >= now() - 24h`와 simulation cutoff를 모두 강제하므로 오래된 SIM을 위해 analyst
-이력을 보존하거나 현재 문장을 과거 사실로 대체하지 않는다. 현재 summary가 없으면
-`yahoo_analyst_summary`를 `missingData`에 명시하며, report·receipt·OpenAI 입력에는 복제하지 않는다.
+`/evidence`는 SIM 중에도 현재 Yahoo 실적 projection과 `analystSummary` 한 건을 명시적 overlay로
+추가한다. `currentProjectionSources=["yahoo_earnings","yahoo_analyst_summary"]`는 이 값들이
+cutoff 당시의 과거 사실이 아니라 현재 단기 정보임을 표시한다. 보고 완료된 Yahoo EVENT의
+`actual_value`는 대응 SEC 분기의 누적·분할 미조정 EPS보다 우선한다. summary query는
+`collected_at >= now() - 24h`만 강제하며 이력을 보존하지 않는다. 현재 summary가 없으면
+`yahoo_analyst_summary`를 `missingData`에 명시하고 report·receipt·OpenAI 입력에는 복제하지 않는다.
 
 ## Failure Policy
 

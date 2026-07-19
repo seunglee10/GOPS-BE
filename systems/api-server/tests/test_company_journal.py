@@ -107,6 +107,9 @@ def test_analyst_summary_projection_is_compact_and_passes_through_without_recomp
         "source": "yahoo-finance",
     }
     assert compact_analyst_summary({"statement": ""}) is None
+    assert compact_analyst_summary({
+        "statement": "2026-07-16 Keybanc은 Overweight 의견을 유지했습니다."
+    })["statement"] == "Keybanc은 Overweight 의견을 유지했습니다."
 
 
 def test_source_receipt_contains_ids_not_duplicated_source_documents():
@@ -432,7 +435,7 @@ def test_live_company_journal_evidence_requests_history_from_2021(monkeypatch):
     assert result["cutoff"] is None
 
 
-def test_company_journal_analyst_evidence_is_cutoff_safe_and_compact(monkeypatch):
+def test_company_journal_analyst_evidence_is_current_and_compact(monkeypatch):
     class Adapter:
         def financial_series(self, symbol, years, period, cutoff=None):
             return []
@@ -478,7 +481,7 @@ def test_company_journal_analyst_evidence_is_cutoff_safe_and_compact(monkeypatch
     assert "yahoo_analyst_summary" not in result["missingData"]
 
 
-def test_analyst_repository_filters_event_and_collection_times_by_cutoff():
+def test_analyst_repository_reads_only_the_current_24_hour_projection_during_simulation():
     class ClickHouseClient:
         database = "market_data"
 
@@ -502,9 +505,35 @@ def test_analyst_repository_filters_event_and_collection_times_by_cutoff():
     query, parameters = client.calls[0]
     assert "yahoo_analyst_summaries FINAL" in query
     assert "collected_at >= now64(3) - INTERVAL 1 DAY" in query
-    assert "collected_at <= parseDateTime64BestEffort({cutoff:String})" in query
+    assert "collected_at <=" not in query
     assert "LIMIT 1" in query
-    assert parameters["cutoff"] == "2026-07-15T14:00:00+00:00"
+    assert parameters == {"symbol": "NVDA"}
+
+
+def test_simulation_earnings_repository_keeps_sec_cutoff_and_uses_current_yahoo_overlay():
+    class ClickHouseClient:
+        database = "market_data"
+
+        def __init__(self):
+            self.calls = []
+
+        def query_json_each_row(self, query, parameters=None):
+            self.calls.append((query, parameters))
+            return []
+
+    client = ClickHouseClient()
+    cutoff = datetime.fromisoformat("2026-07-15T23:00:00+09:00")
+    CompanyJournalRepository(client=client).load_earnings_series_rows("NVDA", cutoff, 2021)
+
+    sec_query, sec_parameters = next(call for call in client.calls if "sec_financial_facts" in call[0])
+    yahoo_query, yahoo_parameters = next(call for call in client.calls if "yahoo_earnings_estimates" in call[0])
+    assert "filed_at <" in sec_query
+    assert "version_filed_at <" in sec_query
+    assert sec_parameters["cutoff"] == "2026-07-15T14:00:00+00:00"
+    assert "actual_value AS actualValue" in yahoo_query
+    assert "fiscal_period = 'EVENT'" in yahoo_query
+    assert "collected_at <=" not in yahoo_query
+    assert yahoo_parameters["symbol"] == "NVDA"
 
 
 def test_point_in_time_evidence_uses_cutoff_repository_instead_of_live_fundamentals_adapter(monkeypatch):
@@ -532,7 +561,7 @@ def test_point_in_time_evidence_uses_cutoff_repository_instead_of_live_fundament
 
         def load_analyst_summary(self, symbol, cutoff=None):
             assert symbol == "NVDA"
-            assert cutoff == replay_cutoff
+            assert cutoff is None
             return None
 
     monkeypatch.setattr(
@@ -548,6 +577,7 @@ def test_point_in_time_evidence_uses_cutoff_repository_instead_of_live_fundament
     assert result["simulation"] is True
     assert result["sourceMode"] == "historical_reconstruction"
     assert result["cutoff"] == replay_cutoff.isoformat()
+    assert result["currentProjectionSources"] == ["yahoo_earnings", "yahoo_analyst_summary"]
     assert result["financialSeries"][0]["filedAt"] == "2026-05-01"
     assert result["earningsSeries"][0]["actualEps"] == 2.3
     assert result["performanceSeries"][0]["candles"][0]["timestamp"] == "2026-07-13T04:00:00Z"

@@ -204,7 +204,7 @@ class CompanyJournalService:
             else self.repository.load_performance_series([symbol, *benchmark_symbols], cutoff=cutoff)
         )
         analyst_summary = compact_analyst_summary(
-            self.repository.load_analyst_summary(symbol, cutoff=cutoff) or {}
+            self.repository.load_analyst_summary(symbol) or {}
         )
         missing: list[str] = []
         if not financial:
@@ -251,6 +251,7 @@ class CompanyJournalService:
                 "simulation": True,
                 "sourceMode": "historical_reconstruction",
                 "cutoff": cutoff.astimezone(timezone.utc).isoformat(),
+                "currentProjectionSources": ["yahoo_earnings", "yahoo_analyst_summary"],
             })
         return result
 
@@ -456,6 +457,14 @@ def calculate_server_metrics(bundle: dict[str, Any]) -> tuple[dict[str, Any], li
 
 def compact_analyst_summary(row: dict[str, Any]) -> dict[str, Any] | None:
     statement = str(row.get("statement") or "").strip()
+    date_prefix, separator, remainder = statement.partition(" ")
+    if separator and len(date_prefix) == 10:
+        try:
+            date.fromisoformat(date_prefix)
+        except ValueError:
+            pass
+        else:
+            statement = remainder.strip()
     if not statement:
         return None
     raw_tone = str(row.get("tone") or "neutral").strip().lower()

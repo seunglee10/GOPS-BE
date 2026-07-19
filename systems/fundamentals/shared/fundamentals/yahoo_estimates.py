@@ -273,7 +273,6 @@ def build_analyst_summary_row(
         to_grade = str(latest_action.get("to_grade") or "").strip()
         prior_target = parse_float(latest_action.get("prior_price_target"))
         current_target = parse_float(latest_action.get("price_target"))
-        action_date = str(latest_action.get("action_at") or "")[:10]
         if action == "upgrade":
             tone = "positive"
         elif action == "downgrade":
@@ -282,8 +281,7 @@ def build_analyst_summary_row(
         target_phrase = analyst_target_phrase(prior_target, current_target)
         detail = "하고 ".join(value for value in (rating_phrase, target_phrase) if value)
         if firm and detail:
-            prefix = f"{action_date} " if action_date else ""
-            sentences.append(f"{prefix}{firm}은 {normalized_symbol}의 {detail}했습니다.")
+            sentences.append(f"{firm}은 {normalized_symbol}의 {detail}했습니다.")
 
     target_mean = parse_float(consensus.get("target_mean"))
     if target_mean is not None:

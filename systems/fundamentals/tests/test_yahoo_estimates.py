@@ -53,7 +53,7 @@ class YahooEstimatesTests(unittest.TestCase):
         ddl = CLICKHOUSE_TABLES["yahoo_analyst_summaries"]
 
         self.assertIn("ORDER BY symbol", ddl)
-        self.assertIn("TTL collected_at + INTERVAL 1 DAY DELETE", ddl)
+        self.assertIn("TTL toDateTime(collected_at) + INTERVAL 1 DAY DELETE", ddl)
         self.assertNotIn("raw String", ddl)
 
     def test_estimate_fetcher_uses_yahoo_class_share_alias_and_preserves_canonical_symbol(self):
@@ -207,6 +207,7 @@ class YahooEstimatesTests(unittest.TestCase):
         self.assertIn("Morgan Stanley", summary["statement"])
         self.assertIn("$180에서 $200로 상향", summary["statement"])
         self.assertIn("시장 평균 목표주가는 $210", summary["statement"])
+        self.assertFalse(summary["statement"].startswith("2026-"))
         self.assertNotIn("raw", summary)
 
     def test_run_sync_inserts_one_analyst_summary_and_removes_legacy_tables(self):

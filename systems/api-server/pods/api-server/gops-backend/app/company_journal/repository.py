@@ -297,18 +297,21 @@ class CompanyJournalRepository:
         )
         estimates = self._safe_rows(
             f"""
-            SELECT symbol, metric, average AS value, low, high, analyst_count AS analystCount,
+            SELECT symbol, metric, average AS value, actual_value AS actualValue,
+                   low, high, analyst_count AS analystCount,
                    fiscal_year AS fiscalYear, fiscal_period AS fiscalPeriod, period_end AS periodEndDate,
                    event_at AS eventAt, event_status AS eventStatus, collected_at AS collectedAt
             FROM {self.database}.yahoo_earnings_estimates
             WHERE symbol = {{symbol:String}}
               AND metric IN ('eps', 'revenue')
-              AND average IS NOT NULL
-              AND fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
+              AND (average IS NOT NULL OR actual_value IS NOT NULL)
+              AND (
+                fiscal_period IN ('Q1', 'Q2', 'Q3', 'Q4')
+                OR (fiscal_period = 'EVENT' AND metric = 'eps' AND event_status = 'reported')
+              )
               AND period_end >= toDate('{start_year}-01-01')
-              AND collected_at <= parseDateTime64BestEffort({{cutoff:String}})
             ORDER BY metric ASC, period_end DESC, collected_at DESC
-            LIMIT 1 BY metric, fiscal_year, fiscal_period
+            LIMIT 1 BY metric, fiscal_year, fiscal_period, period_end
             FORMAT JSONEachRow
             """,
             parameters,
@@ -320,22 +323,19 @@ class CompanyJournalRepository:
         symbol: str,
         cutoff: datetime | None = None,
     ) -> dict[str, Any] | None:
-        """Read the one-row, 24-hour Yahoo analyst sentence projection."""
+        """Read the current one-row Yahoo sentence, including during replay."""
 
-        cutoff_parameters = {"cutoff": cutoff.astimezone(timezone.utc).isoformat()} if cutoff else {}
-        cutoff_clause = "AND collected_at <= parseDateTime64BestEffort({cutoff:String})" if cutoff else ""
         return self._safe_one(
             f"""
             SELECT statement, tone, source_as_of, source, collected_at
             FROM {self.database}.yahoo_analyst_summaries FINAL
             WHERE symbol = {{symbol:String}}
               AND collected_at >= now64(3) - INTERVAL 1 DAY
-              {cutoff_clause}
             ORDER BY collected_at DESC
             LIMIT 1
             FORMAT JSONEachRow
             """,
-            {"symbol": symbol, **cutoff_parameters},
+            {"symbol": symbol},
         )
 
     def load_performance_series(

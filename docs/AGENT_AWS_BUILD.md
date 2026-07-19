@@ -1406,6 +1406,9 @@ SEC 실제치, ClickHouse에 실제 적재된 Yahoo 예상치를 읽으며 원�
 `yahoo_analyst_summaries`에 문장만 저장한다. 테이블 TTL과 API freshness 조건은 모두 24시간이며,
 provider 원본 row/JSON은 저장하지 않는다. 새 projection 적재가 성공하면 기존
 `yahoo_analyst_actions`와 `yahoo_analyst_consensus` 테이블을 삭제한다.
+ClickHouse 24.12 호환을 위해 DateTime64 수집시각의 TTL은
+`toDateTime(collected_at) + INTERVAL 1 DAY`로 선언한다. 첫 성공 실행이 projection 테이블을 만들며,
+SIM evidence도 이 현재 24시간 문장과 Yahoo 실적 projection을 cutoff와 구분된 overlay로 읽는다.
 Yahoo 요청에서는 class-share 표기의 점을 대시로 바꾸되(`BRK.B` -> `BRK-B`), ClickHouse에는
 GOPS canonical symbol인 `BRK.B`를 유지한다.
 기업저널 report worker는 이 단기 문장을 입력·report·receipt에 복제하지 않는다. panel evidence
