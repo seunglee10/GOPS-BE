@@ -11,8 +11,9 @@ from app.market_data.query.service import get_query_service
 from app.routes import charts as chart_routes
 from app.routes.simulator import simulator_gateway_from_app
 from app.services.simulator_gateway import SimulatorUnavailable
+from alfaka.analytics.analysis_candles import canonicalize_candle_identity
 from alfaka.orderflow import ORDER_FLOW_CLASSIFICATION_VERSION, ORDER_FLOW_SIDE_CLASSIFICATION, price_bin_size_from_env
-from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT, resolve_candle_limit
+from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT, normalize_chart_interval, resolve_candle_limit
 from alfaka.serving.indicators import indicator_required_lookback_bars, indicator_specs_from_csv
 from alfaka.serving.time_utils import parse_utc_time
 
@@ -270,7 +271,7 @@ def replay_derived_input(
             to_time=historical_end.isoformat().replace("+00:00", "Z"),
         )
 
-    if requested_end is not None and requested_end < replay_start:
+    if not request_range_includes_replay(interval, requested_end):
         replay = {
             "symbol": symbol.upper(),
             "interval": interval,
@@ -295,6 +296,22 @@ def replay_derived_input(
         "candle_payload": merged,
         "cache_scope": f"simulation:{dataset_id}:{run_id}",
     }
+
+
+def request_range_includes_replay(interval: str, requested_end: datetime | None) -> bool:
+    if requested_end is None:
+        return True
+    normalized_interval = normalize_chart_interval(interval)
+    if normalized_interval != "1D":
+        return requested_end >= chart_routes.SIMULATION_REPLAY_START
+    identity = canonicalize_candle_identity(
+        {"timestamp": requested_end.isoformat()},
+        normalized_interval,
+    )
+    return bool(
+        identity
+        and str(identity["candleKey"]) >= chart_routes.SIMULATION_REPLAY_MARKET_DATE
+    )
 
 
 @router.get("/api/charts/events")
