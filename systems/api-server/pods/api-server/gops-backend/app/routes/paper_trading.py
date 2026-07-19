@@ -717,17 +717,22 @@ async def _accept_paper_socket(websocket: WebSocket) -> AuthenticatedUser | None
     try:
         user = await asyncio.to_thread(require_websocket_user, websocket)
     except WebSocketAuthRequired as exc:
-        await websocket.accept()
-        await websocket.send_json({"type": "error", "detail": str(exc)})
-        await websocket.close(code=1008)
+        await _reject_paper_socket(websocket, str(exc), code=1008)
         return None
     except WebSocketAuthUnavailable as exc:
-        await websocket.accept()
-        await websocket.send_json({"type": "error", "detail": str(exc)})
-        await websocket.close(code=1011)
+        await _reject_paper_socket(websocket, str(exc), code=1011)
         return None
     await websocket.accept()
     return user
+
+
+async def _reject_paper_socket(websocket: WebSocket, detail: str, *, code: int) -> None:
+    try:
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "detail": detail})
+        await websocket.close(code=code)
+    except (RuntimeError, WebSocketDisconnect):
+        return
 
 
 async def _close_socket_with_error(websocket: WebSocket, exc: Exception) -> None:
