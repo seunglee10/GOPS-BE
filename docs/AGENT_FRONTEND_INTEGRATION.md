@@ -203,7 +203,9 @@ backoff를 초기화한다. `simulation_quote_not_ready`, `simulation_quote_time
 비교 평가금을 동일한 금액 축으로 표시한다. 금액 이력이 없는 기존 응답은
 `returnPercent` 기반 포트폴리오·S&P 500 퍼센트 차트를 유지해 배포 전 snapshot을 빈 화면으로
 바꾸지 않는다. 시작 원금은 보유종목 매입원가와 다르며 과거 generation이나 SIM 가상시각에
-현재 값을 소급하지 않는다.
+현재 값을 소급하지 않는다. 평가금과 투자 원금 사이의 간극은 밴드로 표시한다. 투자 원금이
+평가금보다 높은 손실 간극은 파랑, 투자 원금이 평가금보다 낮은 수익 간극은 빨강이며 두 선이
+교차하는 시점에서 밴드 색도 나뉜다.
 SIM의 S&P 500 비교선은 simulator에 고정한 replay 시작 전 FRED 실제 일봉과 실제 5분
 지수 관측값으로 만든 point-in-time-safe benchmark만 사용한다. benchmark point가 부족하면 응답 warning을
 성과 toolbar에 표시하고 임의 선을 만들지 않는다. 성과 최초 조회는 다른 포트폴리오 패널과
@@ -1237,12 +1239,20 @@ SIM에서는 `CompanySummaryPanel`과 상대수익률 chart의 별도 fundamenta
 기존 universe item은 회사명·sector·
 industry 같은 식별 정보만 남기고 현재 가격·시가총액·재무·등락률은 제거한 뒤 시점 evidence로
 다시 채운다. 적격 자료가 없으면 최신값이나 preview fixture로 대체하지 않고 자료 부족 상태를 표시한다.
-투자사 의견은 LIVE와 SIM 모두 evidence의 `analystSummary`만 사용한다. 이 projection은
-`collectedAt` 기준 24시간 안이면 simulator cutoff와 무관하게 현재 overlay로 반환한다. 실적
-projection도 동일하게 `currentProjectionSources`로 구분하며, 과거 SIM을 위해 이력을 쌓거나
-현재 문장을 과거 사실로 가장하지 않는다. 같은 분기가 SEC chart series와 evidence에 모두 있으면
-evidence의 Yahoo 보정 실제 EPS와 정규화 매출을 먼저 채우고 SEC 중복값으로 덮어쓰지 않는다.
-SIM의 결정론적 report에도 복제하지 않는다.
+투자사 의견은 LIVE와 SIM 모두 evidence의 `analystSummary`만 사용한다. LIVE는 24시간 현재 문장,
+SIM은 서버가 `replay_cutoff/sourceAsOf <= virtualTime`을 검증한 고정 replay 직전 문장을 받는다.
+프런트는 두 문장을 합치거나 가상시각을 query로 보내지 않는다. 실적도 서버가 cutoff를 통과시킨
+분기 예상치·보고 EVENT·SEC 실제치만 렌더링하며, 실적 탭은 기본·재진입 모두 최근 12개 분기로
+표시한다. 같은 분기가 SEC chart series와 evidence에 모두 있으면 evidence의 Yahoo 보정 실제 EPS와
+정규화 매출을 먼저 채우고 SEC 중복값으로 덮어쓰지 않는다. SIM의 결정론적 report에도 복제하지 않는다.
+SIM 종료 시 mode 기반 request key가 `live`로 바뀌면서 report/evidence를 비우고 현재 데이터로 다시
+조회한다.
+
+기업저널 상단 네 탭의 중립 상태 신호는 회색이며 파란색을 긍정 의미로 사용하지 않는다. 넓은 화면의
+근거 영역과 오른쪽 AI 해석 영역은 `2:1` 비율을 사용하고, 960px 이하에서는 기존처럼 한 열로 쌓는다.
+상단 기업 요약은 넓은 화면에서 최대 두 줄에 들어오도록 충분한 본문 폭을 사용한다. 투자사 의견은
+실적 근거 영역 가운데에 큰 본문으로 배치하고, 오른쪽 `비교해서 볼 항목` 버튼은 다른 지표 chip보다
+큰 글자와 클릭 높이를 사용한다.
 
 어려운 재무 용어는 공통 `GlossaryText`를 사용하므로 hover, focus, Enter/Space에서 같은
 설명을 제공한다. `companyJournalPreview=1` fixture는 `import.meta.env.DEV`일 때만 활성화된다.

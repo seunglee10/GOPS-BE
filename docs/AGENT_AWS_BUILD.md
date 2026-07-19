@@ -1415,7 +1415,10 @@ provider 원본 row/JSON은 저장하지 않는다. 새 projection 적재가 성
 `yahoo_analyst_actions`와 `yahoo_analyst_consensus` 테이블을 삭제한다.
 ClickHouse 24.12 호환을 위해 DateTime64 수집시각의 TTL은
 `toDateTime(collected_at) + INTERVAL 1 DAY`로 선언한다. 첫 성공 실행이 projection 테이블을 만들며,
-SIM evidence도 이 현재 24시간 문장과 Yahoo 실적 projection을 cutoff와 구분된 overlay로 읽는다.
+같은 24시간 행에는 현재 문장과 `YAHOO_ANALYST_REPLAY_CUTOFF=2026-07-14T15:00:00Z`
+이전 action만으로 만든 고정 replay 문장을 함께 저장한다. 원본 action/consensus는 저장하지 않고
+두 문장 행도 매일 덮어쓴다. SIM evidence는 replay cutoff/source 시각을 검증한 replay 문장과
+cutoff 이전 Yahoo 분기 예상·보고 EVENT만 읽으며 현재 projection을 overlay하지 않는다.
 Yahoo 요청에서는 class-share 표기의 점을 대시로 바꾸되(`BRK.B` -> `BRK-B`), ClickHouse에는
 GOPS canonical symbol인 `BRK.B`를 유지한다.
 기업저널 report worker는 이 단기 문장을 입력·report·receipt에 복제하지 않는다. panel evidence
@@ -1437,6 +1440,7 @@ pending 존재 시 활성 processor가 없으면 다음 Dispatcher 실행에서 
 GET /api/company-journal/NVDA가 ready 또는 pending 계약 반환
 GET /api/company-journal/NVDA/evidence가 SEC/Yahoo/일봉 근거 또는 명시적 missingData 반환
 SIM에서 GET /api/company-journal/NVDA/evidence의 cutoff가 simulator virtualTime과 일치하고 미래 SEC/Yahoo/일봉 행이 없음
+SIM 투자사 의견의 sourceAsOf가 cutoff 이하이고 실적 내역이 최근 12개 분기로 표시됨
 SIM에서 GET /api/company-journal/NVDA는 409를 유지하며 다른 market/agent guard도 그대로 차단
 worker 완료 후 verified report가 ClickHouse에 append
 기존 report row와 원천 테이블 row count가 감소하지 않음

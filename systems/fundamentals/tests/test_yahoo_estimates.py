@@ -54,6 +54,8 @@ class YahooEstimatesTests(unittest.TestCase):
 
         self.assertIn("ORDER BY symbol", ddl)
         self.assertIn("TTL toDateTime(collected_at) + INTERVAL 1 DAY DELETE", ddl)
+        self.assertIn("replay_statement String DEFAULT ''", ddl)
+        self.assertIn("replay_cutoff Nullable(DateTime64(3, 'UTC'))", ddl)
         self.assertNotIn("raw String", ddl)
 
     def test_estimate_fetcher_uses_yahoo_class_share_alias_and_preserves_canonical_symbol(self):
@@ -89,10 +91,16 @@ class YahooEstimatesTests(unittest.TestCase):
                 requested_symbols.append(symbol)
 
             def get_upgrades_downgrades(self):
-                return FakeFrame([(
-                    datetime(2026, 7, 17, tzinfo=timezone.utc),
-                    {"Firm": "JPMorgan", "Action": "main", "ToGrade": "Overweight"},
-                )])
+                return FakeFrame([
+                    (
+                        datetime(2026, 7, 14, 14, tzinfo=timezone.utc),
+                        {"Firm": "Morgan Stanley", "Action": "main", "ToGrade": "Overweight"},
+                    ),
+                    (
+                        datetime(2026, 7, 17, tzinfo=timezone.utc),
+                        {"Firm": "JPMorgan", "Action": "main", "ToGrade": "Overweight"},
+                    ),
+                ])
 
             def get_analyst_price_targets(self):
                 return {"current": 190, "mean": 210}
@@ -109,6 +117,10 @@ class YahooEstimatesTests(unittest.TestCase):
         self.assertEqual(class_share_summary["symbol"], "BF.B")
         self.assertIn("JPMorgan", class_share_summary["statement"])
         self.assertIn("$210", class_share_summary["statement"])
+        self.assertIn("Morgan Stanley", class_share_summary["replay_statement"])
+        self.assertNotIn("JPMorgan", class_share_summary["replay_statement"])
+        self.assertEqual(class_share_summary["replay_source_as_of"], "2026-07-14 14:00:00.000")
+        self.assertEqual(class_share_summary["replay_cutoff"], "2026-07-14 15:00:00.000")
         self.assertEqual(ordinary_summary["symbol"], "AAPL")
         self.assertEqual(yahoo_provider_symbol(" brk.b "), "BRK-B")
 
@@ -209,6 +221,10 @@ class YahooEstimatesTests(unittest.TestCase):
         self.assertIn("시장 평균 목표주가는 $210", summary["statement"])
         self.assertFalse(summary["statement"].startswith("2026-"))
         self.assertNotIn("raw", summary)
+
+        replay_summary = build_analyst_summary_row("NVDA", actions, [], collected_at=collected_at)
+        self.assertEqual(replay_summary["source_as_of"], "2026-07-17 00:00:00.000")
+        self.assertNotIn("시장 평균 목표주가", replay_summary["statement"])
 
     def test_run_sync_inserts_one_analyst_summary_and_removes_legacy_tables(self):
         client = FakeClickHouseClient()

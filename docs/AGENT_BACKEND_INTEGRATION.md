@@ -212,7 +212,10 @@ checkpoint와 heartbeat를 갱신해 probe가 긴 페이지 전체 완료를 기
 `netInvestedPrincipal`을 추가할 수 있다. 이 값은 현재 paper generation의
 `starting_cash`이며 `holdingsCostBasis`와 구분한다. 현재 generation 시작 전 snapshot이
 선택 범위에 포함되거나 SIM 과거시각을 조회할 때는 현재 시작 원금을 fallback으로 소급하지
-않고, snapshot 자체에 저장된 point-in-time 값만 사용한다.
+않고, snapshot 자체에 저장된 point-in-time 값만 사용한다. 새 Postgres account-history
+snapshot은 `netInvestedPrincipal`, `paperGeneration`, `paperStartedAt`을 함께 저장한다.
+`seeded-demo` 이력은 현재 시드 계좌를 재현하는 불변 fixture이므로 SIM에서도 동일한 시드
+시작 원금을 안전하게 보강할 수 있다.
 `POST /api/paper/orders`는 `Idempotency-Key`를 필수로 받고 Postgres의 가상 현금과
 보유수량만 예약한다. KIS 주문 테이블, Outbox, broker adapter는 호출하지 않는다.
 
@@ -989,11 +992,12 @@ cutoff 이전 완료 일봉·이전 날짜에 공개된 SEC 실적·cutoff까지
 provenance를 포함한다. SEC는 시간 정밀도가 날짜뿐이므로 replay 당일 filing을 제외한다. 완료
 일봉은 New York 기준 현재 replay 날짜보다 이전 session만 선택한다. 적격 row가
 없으면 결측으로 남기며 최신 report, live fundamentals adapter, 현재 candle로 fallback하지 않는다.
-`/evidence`는 SIM 중에도 현재 Yahoo 실적 projection과 `analystSummary` 한 건을 명시적 overlay로
-추가한다. `currentProjectionSources=["yahoo_earnings","yahoo_analyst_summary"]`는 이 값들이
-cutoff 당시의 과거 사실이 아니라 현재 단기 정보임을 표시한다. 보고 완료된 Yahoo EVENT의
-`actual_value`는 대응 SEC 분기의 누적·분할 미조정 EPS보다 우선한다. summary query는
-`collected_at >= now() - 24h`만 강제하며 이력을 보존하지 않는다. 현재 summary가 없으면
+`/evidence`는 SIM에서 Yahoo 분기 예상치의 `collected_at <= cutoff`와 보고 EVENT의
+`event_at <= cutoff`를 강제한다. 보고 완료된 EVENT `actual_value`는 대응 SEC 분기의
+누적·분할 미조정 EPS보다 우선한다. `analystSummary`는 매일 현재 Yahoo action에서 다시 만든
+24시간 행의 replay 문장을 읽는다. replay 문장은 고정 replay 시작 직전 action만 조합하며 현재
+목표가 평균·추천 분포를 포함하지 않는다. query는 `replay_cutoff <= cutoff`,
+`replay_source_as_of <= cutoff`, `collected_at >= now() - 24h`를 모두 강제한다. 적격 문장이 없으면
 `yahoo_analyst_summary`를 `missingData`에 명시하고 report·receipt·OpenAI 입력에는 복제하지 않는다.
 
 ## Failure Policy
