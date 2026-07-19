@@ -936,6 +936,17 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertTrue(payload["meta"]["demoOverride"])
         self.assertEqual(payload["meta"]["demoOverrideAsOf"], "2026-07-14T04:00:00.000Z")
 
+        self.gateway.virtual_time = "2026-07-17T00:00:00+09:00"
+        with (
+            patch("app.routes.chart_assets.chart_asset_storage", return_value=storage),
+            patch("app.routes.chart_assets._build_simulation_analysis_asset", return_value=dynamic_asset),
+        ):
+            after_confirmation = self.client.get("/api/charts/analysis-assets?symbol=NVDA&interval=1D")
+
+        self.assertEqual(after_confirmation.status_code, 200)
+        self.assertEqual(after_confirmation.json()["assets"]["1D"]["asOf"], dynamic_asset["asOf"])
+        self.assertFalse(after_confirmation.json()["meta"]["demoOverride"])
+
     def test_other_point_in_time_unsafe_market_data_stays_blocked(self):
         self.gateway.mode = "simulation"
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import os
 import re
@@ -26,6 +27,10 @@ from gops_agents.chart_assets.storage import build_chart_asset_storage_from_env
 
 router = APIRouter()
 JOB_ID_PATTERN = r"^cab-[A-Za-z0-9-]{8,64}$"
+# Requested demo-only exception. It is projected in the SIM response and is never persisted.
+NVDA_SIMULATION_DEMO_AS_OF = "2026-07-14T04:00:00.000Z"
+NVDA_SIMULATION_DEMO_SYMBOL = "NVDA"
+NVDA_SIMULATION_DEMO_INTERVAL = "1D"
 
 
 class ChartAssetBuildRequest(BaseModel):
@@ -60,10 +65,12 @@ def chart_analysis_assets(
     except SimulatorUnavailable:
         simulator_status = {"mode": "live"}
     if simulator_status.get("mode") == "simulation":
+        persisted_interval_asset = assets.get(interval) if interval is not None else None
         cutoff_value = str(simulator_status.get("virtualTime") or "")
         cutoff = _parse_timestamp(cutoff_value)
         assets = _assets_at_or_before(assets, cutoff, [interval] if interval else ALLOWED_INTERVALS)
         dynamic_status = "not_requested"
+        demo_override = False
         if interval is not None:
             try:
                 dynamic_asset = _build_simulation_analysis_asset(request, normalized, interval, cutoff)
@@ -73,12 +80,23 @@ def chart_analysis_assets(
                 dynamic_status = "unavailable"
             if dynamic_asset is not None:
                 assets[interval] = dynamic_asset
+            demo_asset = _build_nvda_simulation_demo_asset(
+                symbol=normalized,
+                interval=interval,
+                persisted_asset=persisted_interval_asset,
+                cutoff=cutoff,
+            )
+            if demo_asset is not None:
+                assets[interval] = demo_asset
+                demo_override = True
         meta.update({
             "simulation": True,
             "cutoff": cutoff_value,
             "runId": simulator_status.get("runId"),
             "dynamicInterval": interval,
             "dynamicStatus": dynamic_status,
+            "demoOverride": demo_override,
+            "demoOverrideAsOf": NVDA_SIMULATION_DEMO_AS_OF if demo_override else None,
         })
     return {"symbol": normalized, "assets": assets, "meta": meta}
 
@@ -243,6 +261,64 @@ def _assets_at_or_before(
         if as_of is not None and as_of <= cutoff:
             filtered[interval] = asset
     return filtered
+
+
+def _build_nvda_simulation_demo_asset(
+    *,
+    symbol: str,
+    interval: str,
+    persisted_asset: dict[str, Any] | None,
+    cutoff: datetime | None,
+) -> dict[str, Any] | None:
+    demo_as_of = _parse_timestamp(NVDA_SIMULATION_DEMO_AS_OF)
+    persisted_as_of = (
+        _parse_timestamp(persisted_asset.get("asOf"))
+        if isinstance(persisted_asset, dict)
+        else None
+    )
+    if (
+        symbol != NVDA_SIMULATION_DEMO_SYMBOL
+        or interval != NVDA_SIMULATION_DEMO_INTERVAL
+        or cutoff is None
+        or demo_as_of is None
+        or cutoff < demo_as_of
+        or persisted_as_of is None
+        or cutoff >= persisted_as_of
+        or not isinstance(persisted_asset, dict)
+    ):
+        return None
+
+    persisted_geometry = persisted_asset.get("geometry")
+    if not isinstance(persisted_geometry, dict):
+        return None
+
+    falling_wedge = next(
+        (
+            pattern
+            for pattern in persisted_geometry.get("patterns") or []
+            if isinstance(pattern, dict) and pattern.get("kind") == "falling_wedge"
+        ),
+        None,
+    )
+    if falling_wedge is None:
+        return None
+
+    demo_asset = _clamp_demo_dates(persisted_asset, demo_as_of)
+    demo_asset["generatedAt"] = utc_now_iso()
+    demo_asset.pop("commentary", None)
+    return demo_asset
+
+
+def _clamp_demo_dates(value: Any, cutoff: datetime) -> Any:
+    if isinstance(value, dict):
+        return {key: _clamp_demo_dates(item, cutoff) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_clamp_demo_dates(item, cutoff) for item in value]
+    if isinstance(value, str):
+        parsed = _parse_timestamp(value)
+        if parsed is not None and parsed > cutoff:
+            return NVDA_SIMULATION_DEMO_AS_OF
+    return deepcopy(value)
 
 
 def _build_simulation_analysis_asset(
