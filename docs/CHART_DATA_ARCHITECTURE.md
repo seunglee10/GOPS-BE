@@ -192,6 +192,20 @@ finish with `derived.state=ready|failed` and
 `derived.source=api-compute|redis`; there is no derived queue, worker, or
 ClickHouse artifact contract.
 
+In SIM mode `GET /api/charts/indicators` and
+`GET /api/charts/volume-profile-bins` remain available without falling through
+to LIVE candles. The API merges canonical historical candles strictly before
+the replay boundary with completed replay candles through the active cursor,
+then performs the same indicator or exact Volume Profile calculation used by
+LIVE. Redis request identity includes `datasetId + runId`; the requested closed
+candle range supplies the changing cursor boundary, so a previous run or a
+future LIVE result cannot satisfy a SIM request. The candle snapshot also
+recomputes requested MA fields after the historical/replay merge so MA5/20/60
+continue across the boundary. Intraday replay boundaries use UTC event time,
+while `1D` boundaries use the New York market date so the replay day's daily
+candle is not discarded as pre-replay data. An unavailable active simulator
+returns an error instead of falling back to LIVE data.
+
 Frontend viewport scale is independent of candle availability. The user may
 zoom out into unloaded slots even when historical fill is pending, failed, or
 unavailable; pagination and background fill only populate those slots and must

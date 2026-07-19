@@ -351,6 +351,14 @@ Bid/Ask도 order-flow row 가격과 axis tick을 분리해 같은 높이 기반 
 500ms와 1500ms 뒤 두 번 재시도한다. 계속 partial이면 다음 scene, range, candle
 변경까지 숨긴다. 0-volume bucket은 응답에 유지하지만 Canvas는 막대를 그리지 않아
 그 가격 슬롯의 빈 공간을 보존한다.
+
+SIM에서도 같은 지표·Volume Profile UI를 유지한다. 프런트는 별도 계산이나
+`virtualTime` query를 만들지 않고 기존 `GET /api/charts/indicators`와
+`GET /api/charts/volume-profile-bins`를 호출한다. 서버는 현재 `datasetId/runId`의 완료
+replay 봉과 replay 시작 전 실제 봉만 합쳐 계산하며 진행 중인 봉과 cursor 이후 데이터는
+제외한다. mode/run 전환 때 기존 derived client cache를 비우는 계약을 유지하고, 요청 실패를
+LIVE 지표나 이전 run의 마지막 정상값으로 대체하지 않는다. MA5/20/60은 서버가 과거/replay
+병합 뒤 다시 계산한 candle 필드를 사용해 경계에서 선이 끊기지 않게 한다.
 ## AI 투자 코치
 
 AI 투자 코치 패널은 가로 2칸을 최소 너비로 사용하며 세로 길이는 레이아웃에 맞춰
