@@ -204,7 +204,7 @@ class CompanyJournalService:
             else self.repository.load_performance_series([symbol, *benchmark_symbols], cutoff=cutoff)
         )
         analyst_summary = compact_analyst_summary(
-            self.repository.load_analyst_summary(symbol) or {}
+            self.repository.load_analyst_summary(symbol, cutoff=cutoff) or {}
         )
         missing: list[str] = []
         if not financial:
@@ -251,7 +251,6 @@ class CompanyJournalService:
                 "simulation": True,
                 "sourceMode": "historical_reconstruction",
                 "cutoff": cutoff.astimezone(timezone.utc).isoformat(),
-                "currentProjectionSources": ["yahoo_earnings", "yahoo_analyst_summary"],
             })
         return result
 

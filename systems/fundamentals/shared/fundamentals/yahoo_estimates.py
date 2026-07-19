@@ -12,6 +12,7 @@ from .backfill import build_clickhouse_client, clickhouse_datetime, ensure_sec_c
 
 
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
+DEFAULT_ANALYST_REPLAY_CUTOFF = datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc)
 
 
 def yahoo_provider_symbol(symbol: str) -> str:
@@ -166,12 +167,62 @@ def fetch_yfinance_analyst_summary(
         safe_call(ticker, "get_recommendations_summary"),
         collected_at=collected_at,
     )
-    return build_analyst_summary_row(
+    current_summary = build_analyst_summary_row(
         symbol,
         dedupe_analyst_actions(actions),
         consensus,
         collected_at=collected_at,
     )
+    replay_cutoff = analyst_replay_cutoff()
+    replay_summary = build_analyst_summary_row(
+        symbol,
+        analyst_actions_at_or_before(actions, replay_cutoff),
+        [],
+        collected_at=collected_at,
+    )
+    if current_summary is None and replay_summary is None:
+        return None
+    result = current_summary or {
+        "symbol": symbol.strip().upper(),
+        "statement": "",
+        "tone": "neutral",
+        "source_as_of": None,
+        "source": "yahoo-finance",
+        "collected_at": clickhouse_datetime(collected_at),
+    }
+    result.update({
+        "replay_statement": str((replay_summary or {}).get("statement") or ""),
+        "replay_tone": str((replay_summary or {}).get("tone") or "neutral"),
+        "replay_source_as_of": (replay_summary or {}).get("source_as_of"),
+        "replay_cutoff": clickhouse_datetime(replay_cutoff),
+    })
+    return result
+
+
+def analyst_replay_cutoff(environ: dict[str, str] | None = None) -> datetime:
+    environ = environ or os.environ
+    raw = str(environ.get("YAHOO_ANALYST_REPLAY_CUTOFF") or "").strip()
+    if not raw:
+        return DEFAULT_ANALYST_REPLAY_CUTOFF
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def analyst_actions_at_or_before(
+    actions: list[dict[str, Any]],
+    cutoff: datetime,
+) -> list[dict[str, Any]]:
+    eligible: list[dict[str, Any]] = []
+    for row in actions:
+        action_at = datetime_from_any(
+            row.get("action_at"),
+            fallback=datetime.max.replace(tzinfo=timezone.utc),
+        )
+        if action_at <= cutoff:
+            eligible.append(row)
+    return dedupe_analyst_actions(eligible)
 
 
 def rows_from_upgrades_downgrades(symbol: str, frame: Any, *, collected_at: datetime) -> list[dict[str, Any]]:
@@ -297,11 +348,14 @@ def build_analyst_summary_row(
         )
     if not sentences:
         return None
+    source_as_of = clickhouse_datetime(collected_at)
+    if latest_action and not consensus_rows:
+        source_as_of = str(latest_action.get("action_at") or source_as_of)
     return {
         "symbol": normalized_symbol,
         "statement": " ".join(sentences),
         "tone": tone,
-        "source_as_of": clickhouse_datetime(collected_at),
+        "source_as_of": source_as_of,
         "source": "yahoo-finance",
         "collected_at": clickhouse_datetime(collected_at),
     }

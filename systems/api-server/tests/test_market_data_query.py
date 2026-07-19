@@ -1231,6 +1231,49 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["dataStatus"], "ready")
         self.assertGreater(payload["bins"][-1]["volume"], 0)
 
+    def test_volume_profile_can_compute_from_replay_candles_without_live_provider_reads(self):
+        provider = FakeVolumeProfileProvider()
+        service = MarketDataQueryService(
+            provider,
+            backfill_service=FakeBackfillService(),
+            fill_service=FakeFillService(),
+        )
+        candles = [{
+            "timestamp": f"2026-07-14T15:0{index}:00.000Z",
+            "open": 100.0 + index,
+            "high": 101.0 + index,
+            "low": 99.0 + index,
+            "close": 100.5 + index,
+            "volume": 100 + index,
+            "isClosed": True,
+            "source": "simulation_replay",
+        } for index in range(5)]
+
+        payload = service.volume_profile_bins(
+            "nvda",
+            candles[0]["timestamp"],
+            candles[-1]["timestamp"],
+            "auto",
+            target_bins=10,
+            price_min=99,
+            price_max=105,
+            interval="1m",
+            candle_count=len(candles),
+            candle_payload={
+                "source": "simulation_replay",
+                "feed": "sip+boats",
+                "dataStatus": "ready",
+                "candles": candles,
+            },
+            cache_scope="simulation:dataset-1:run-1",
+        )
+
+        self.assertEqual(payload["dataStatus"], "ready")
+        self.assertEqual(payload["sourceCandleCount"], 5)
+        self.assertEqual(payload["requestedCandleCount"], 5)
+        self.assertEqual(payload["source"], "simulation_replay")
+        self.assertEqual(provider.calls, [])
+
     def test_indicator_series_uses_filled_candle_snapshot_lookback_inline(self):
         provider = FakeIndicatorProvider()
         service = MarketDataQueryService(provider, backfill_service=FakeBackfillService(), fill_service=FakeFillService())
@@ -1318,6 +1361,72 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(len(payload["series"]["sma:5"]), 8)
         self.assertIsNotNone(payload["series"]["sma:5"][0]["value"])
 
+    def test_indicator_series_can_compute_from_replay_candles_with_run_scoped_cache(self):
+        provider = FakeIndicatorProvider()
+        redis_client = FakeIndicatorRedis()
+        service = MarketDataQueryService(
+            provider,
+            backfill_service=FakeBackfillService(),
+            fill_service=FakeFillService(),
+            redis_client=redis_client,
+        )
+        candles = [{
+            "timestamp": f"2026-07-14T15:{index:02d}:00.000Z",
+            "open": 100.0 + index,
+            "high": 101.0 + index,
+            "low": 99.0 + index,
+            "close": 100.5 + index,
+            "volume": 100 + index,
+            "isClosed": True,
+            "source": "simulation_replay",
+        } for index in range(30)]
+        replay_payload = {
+            "source": "simulation_replay",
+            "feed": "sip+boats",
+            "dataStatus": "ready",
+            "candles": candles,
+        }
+
+        first = service.indicator_series(
+            "nvda",
+            "1m",
+            candles[10]["timestamp"],
+            candles[-1]["timestamp"],
+            "bollinger:20:2,rsi:14",
+            20,
+            candle_payload=replay_payload,
+            cache_scope="simulation:dataset-1:run-1",
+        )
+        second_run = service.indicator_series(
+            "nvda",
+            "1m",
+            candles[10]["timestamp"],
+            candles[-1]["timestamp"],
+            "bollinger:20:2,rsi:14",
+            20,
+            candle_payload=replay_payload,
+            cache_scope="simulation:dataset-1:run-2",
+        )
+        warm_second_run = service.indicator_series(
+            "nvda",
+            "1m",
+            candles[10]["timestamp"],
+            candles[-1]["timestamp"],
+            "bollinger:20:2,rsi:14",
+            20,
+            candle_payload=replay_payload,
+            cache_scope="simulation:dataset-1:run-2",
+        )
+
+        self.assertEqual(first["source"], "simulation_replay")
+        self.assertEqual(first["derived"]["source"], "api-compute")
+        self.assertEqual(second_run["derived"]["source"], "api-compute")
+        self.assertNotEqual(first["derived"]["requestHash"], second_run["derived"]["requestHash"])
+        self.assertEqual(warm_second_run["derived"]["source"], "redis")
+        self.assertGreater(len(first["series"]["bollinger:20:2"]), 0)
+        self.assertGreater(len(first["series"]["rsi:14"]), 0)
+        self.assertEqual(provider.calls, [])
+
     def test_indicator_series_reuses_inline_redis_cache(self):
         provider = FakeIndicatorProvider()
         redis_client = FakeIndicatorRedis()
@@ -1359,7 +1468,17 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         previous = query_routes.get_query_service
         query_routes.get_query_service = lambda: FakeQueryService(FakeIndicatorProvider())
         try:
-            payload = query_routes.chart_indicators("aapl", "1m", None, None, "sma:5", 10)
+            payload = query_routes.chart_indicators(
+                request=types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(
+                    simulator_gateway=types.SimpleNamespace(status=lambda: {"mode": "live"}),
+                ))),
+                symbol="aapl",
+                interval="1m",
+                from_time=None,
+                to_time=None,
+                layers="sma:5",
+                limit=10,
+            )
         finally:
             query_routes.get_query_service = previous
 

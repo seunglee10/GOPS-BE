@@ -106,7 +106,11 @@ must never be used as substitutes.
 When no previous regular-session close is available, both `previousClose` and
 `changePercent` are null. The frontend renders an em dash, excludes that item
 from sector and industry percentage averages, and keeps its tile visually
-neutral. SIM mode keeps its separate scenario-seed percentage contract.
+neutral. SIM status applies the same percentage formula to replay trades, using
+the fixed dataset's previous completed regular session (`2026-07-13`) as its
+baseline. The simulator loads all 502 canonical `v2/split/regular` closes once
+at process start and fails closed when the baseline is incomplete; it never
+falls back to the first replay trade or a scenario-seed percentage.
 
 ## Query Contract
 
@@ -191,6 +195,20 @@ WebSocket candle events remain `LIVE_CANDLE_UPDATE`, `CANDLE_CLOSED`, and
 finish with `derived.state=ready|failed` and
 `derived.source=api-compute|redis`; there is no derived queue, worker, or
 ClickHouse artifact contract.
+
+In SIM mode `GET /api/charts/indicators` and
+`GET /api/charts/volume-profile-bins` remain available without falling through
+to LIVE candles. The API merges canonical historical candles strictly before
+the replay boundary with completed replay candles through the active cursor,
+then performs the same indicator or exact Volume Profile calculation used by
+LIVE. Redis request identity includes `datasetId + runId`; the requested closed
+candle range supplies the changing cursor boundary, so a previous run or a
+future LIVE result cannot satisfy a SIM request. The candle snapshot also
+recomputes requested MA fields after the historical/replay merge so MA5/20/60
+continue across the boundary. Intraday replay boundaries use UTC event time,
+while `1D` boundaries use the New York market date so the replay day's daily
+candle is not discarded as pre-replay data. An unavailable active simulator
+returns an error instead of falling back to LIVE data.
 
 Frontend viewport scale is independent of candle availability. The user may
 zoom out into unloaded slots even when historical fill is pending, failed, or

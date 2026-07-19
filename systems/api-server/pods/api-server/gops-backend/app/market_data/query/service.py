@@ -29,6 +29,7 @@ from alfaka.serving.indicators import (
     indicator_specs_from_csv,
 )
 from alfaka.serving.intervals import normalize_chart_interval, resolve_candle_limit
+from alfaka.serving.time_utils import parse_utc_time
 from alfaka.orderflow import (
     ORDER_FLOW_CLASSIFICATION_VERSION,
     ORDER_FLOW_SIDE_CLASSIFICATION,
@@ -368,6 +369,9 @@ class MarketDataQueryService:
         price_max: float | None = None,
         interval: str = "1m",
         candle_count: int | None = None,
+        *,
+        candle_payload: dict[str, Any] | None = None,
+        cache_scope: str | None = None,
     ) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
         interval = normalize_chart_interval(interval)
@@ -384,20 +388,30 @@ class MarketDataQueryService:
             price_min=price_min,
             price_max=price_max,
             candle_count=candle_count,
+            cache_scope=cache_scope,
         )
         params = request.get("parameters") or {}
 
         def calculate():
-            candle_payload = self.derived_service.query_candles(
-                symbol,
-                interval,
-                resolve_candle_limit(interval, candle_count),
-                from_time=from_time,
-                to_time=to_time,
-                ma_windows=(),
+            source_payload = (
+                bounded_candle_payload(
+                    candle_payload,
+                    from_time=from_time,
+                    to_time=to_time,
+                    limit=resolve_candle_limit(interval, candle_count),
+                )
+                if candle_payload is not None
+                else self.derived_service.query_candles(
+                    symbol,
+                    interval,
+                    resolve_candle_limit(interval, candle_count),
+                    from_time=from_time,
+                    to_time=to_time,
+                    ma_windows=(),
+                )
             )
             return compute_volume_profile_payload(
-                candle_payload,
+                source_payload,
                 symbol=symbol,
                 interval=interval,
                 from_time=from_time,
@@ -419,6 +433,9 @@ class MarketDataQueryService:
         to_time: str | None = None,
         layers: str | None = None,
         limit: int | None = None,
+        *,
+        candle_payload: dict[str, Any] | None = None,
+        cache_scope: str | None = None,
     ) -> dict[str, Any]:
         symbol = normalize_market_symbol(symbol)
         interval = normalize_chart_interval(interval)
@@ -434,12 +451,19 @@ class MarketDataQueryService:
             to_time=to_time,
             specs=specs,
             limit=requested_limit,
+            cache_scope=cache_scope,
         )
         lookback = indicator_required_lookback_bars(specs)
         fetch_limit = requested_limit + lookback
 
         def calculate():
-            if from_time and lookback > 0:
+            if candle_payload is not None:
+                source_payload = bounded_candle_payload(
+                    candle_payload,
+                    to_time=to_time,
+                    limit=fetch_limit,
+                )
+            elif from_time and lookback > 0:
                 warmup_payload = self.derived_service.query_candles(
                     symbol,
                     interval,
@@ -455,10 +479,10 @@ class MarketDataQueryService:
                     to_time=to_time,
                     ma_windows=(),
                 )
-                candle_payload = merge_candle_payloads(warmup_payload, range_payload)
+                source_payload = merge_candle_payloads(warmup_payload, range_payload)
             else:
                 fetch_from_time = indicator_fetch_from_time(interval, from_time, lookback)
-                candle_payload = self.derived_service.query_candles(
+                source_payload = self.derived_service.query_candles(
                     symbol,
                     interval,
                     fetch_limit,
@@ -468,7 +492,7 @@ class MarketDataQueryService:
                 )
             return inline_indicator_payload(
                 request,
-                candle_payload,
+                source_payload,
                 specs,
                 from_time=from_time,
                 to_time=to_time,
@@ -1268,6 +1292,38 @@ def merge_candle_payloads(*payloads: dict[str, Any]) -> dict[str, Any]:
                 by_timestamp[timestamp] = candle
     merged["candles"] = [by_timestamp[key] for key in sorted(by_timestamp)]
     return merged
+
+
+def bounded_candle_payload(
+    payload: dict[str, Any],
+    *,
+    from_time: str | None = None,
+    to_time: str | None = None,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Return completed candles inside a replay-safe request window."""
+
+    start = parse_utc_time(from_time)
+    end = parse_utc_time(to_time)
+    candles: list[dict[str, Any]] = []
+    for candle in payload.get("candles") or []:
+        if not isinstance(candle, dict) or candle.get("isClosed") is False:
+            continue
+        timestamp = parse_utc_time(candle.get("timestamp"))
+        if timestamp is None:
+            continue
+        if start is not None and timestamp < start:
+            continue
+        if end is not None and timestamp > end:
+            continue
+        candles.append(candle)
+    candles.sort(key=lambda candle: parse_utc_time(candle.get("timestamp")) or datetime.min.replace(tzinfo=timezone.utc))
+    if limit is not None:
+        candles = candles[-max(1, int(limit)):]
+    next_payload = dict(payload)
+    next_payload["candles"] = candles
+    next_payload["dataStatus"] = "ready" if candles else "empty"
+    return next_payload
 
 
 def previous_close_from_query(canonical_query: CanonicalCandleQuery, symbol: str) -> float | None:

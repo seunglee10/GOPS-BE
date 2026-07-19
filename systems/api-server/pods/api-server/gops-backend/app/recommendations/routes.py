@@ -34,6 +34,7 @@ from .score_profiles import (
 from .fixed_replay import FixedReplayProviderError, decision_v1_enabled, fixed_replay_provider
 from .profile_suggestions import suggest_score_profile
 from .service import RecommendationDataSource, RecommendationService, active_score_profile
+from .suggestion_cache import cache_score_profile_suggestion, cached_score_profile_suggestion
 
 
 router = APIRouter(tags=["recommendations"])
@@ -163,14 +164,19 @@ def suggest_recommendation_score_profile(
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     repository = _repository_from_app(request.app)
+    query = body.query.strip()
+    cached = cached_score_profile_suggestion(request.app, user.sub, query)
+    if cached is not None:
+        return {"status": "ready", "suggestion": cached}
     try:
         suggestion = _call_recommendation_storage(
-            lambda: suggest_score_profile(request.app, repository, user.sub, body.query.strip())
+            lambda: suggest_score_profile(request.app, repository, user.sub, query)
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail="추천 로직 AI 제안을 생성하지 못했습니다.") from exc
+    cache_score_profile_suggestion(request.app, user.sub, query, suggestion)
     return {"status": "ready", "suggestion": suggestion}
 
 

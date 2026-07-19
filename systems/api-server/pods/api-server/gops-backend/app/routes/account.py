@@ -349,9 +349,13 @@ def _performance_principal_for_snapshots(
     simulation_time: datetime | None,
 ) -> float | None:
     """Use a live paper principal only when every visible point belongs to the current account run."""
-    if current_principal is None or simulation_time is not None:
+    if current_principal is None:
         return None
-    if current_principal_started_at is None or _is_current_seeded_demo_history(snapshots):
+    if _is_current_seeded_demo_history(snapshots):
+        return current_principal
+    if simulation_time is not None:
+        return None
+    if current_principal_started_at is None:
         return current_principal
     observed_times: list[datetime] = []
     for row in snapshots:

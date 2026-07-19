@@ -19,7 +19,7 @@
 독립적으로 유지한다. 추천 API 실패 시에도 급등주와
 거래대금 목록 및 시장 검색은 유지한다.
 
-패널 상단의 `추천 로직 설정`은 목록과 같은 레벨의 패널 내부 탭이다. 설정 제목부터 가중치 편집기까지 페이지 전체가 하나의 세로 스크롤 영역을 사용한다. overlay, dialog,
+패널 상단의 `추천 수식 설정`은 목록과 같은 레벨의 패널 내부 탭이다. 설정 제목부터 가중치 편집기까지 페이지 전체가 하나의 세로 스크롤 영역을 사용한다. overlay, dialog,
 side rail 또는 장전/본장 selector를 만들지 않는다. 로직 탭은 활성 점수 프로필과 여섯
 근거 블록, 실제 세부 지표 및 포트폴리오 적합도 가중치는 캔버스가 아닌 직접 조작형
 비중 믹서로 표시한다. 상단 누적 바는 전체 100% 배분을 즉시 보여주고, 아래의 모든
@@ -91,7 +91,7 @@ action, decision, sizing, key evidence, 점수와 설명을 읽는다. 별도 re
 SIM에서는 status의 `virtualTime`과 `effectiveSpeed`를 사용하며 일시정지 중에는 함께
 멈춘다. SIM 전환은 사용자가 보고 있는 화면을 강제로 바꾸지 않는다. 증시지도를 보고
 있다면 전체 LIVE universe 대신 replay manifest의 502종목만 표시하고, status의 replay
-가격과 dataset 첫 체결가 기준 등락률을 해당 타일에 반영한다. 새 run에서는 이전 run의
+가격과 `2026-07-13` 정규장 종가 기준 등락률을 해당 타일에 반영한다. 새 run에서는 이전 run의
 가격·등락률을 재사용하지 않는다. phase, 합성 news, basket UI는 없다.
 
 상태는 실행 중 1초, LIVE·ready·paused·completed·연결 불가에서는 30초 간격으로
@@ -203,12 +203,18 @@ backoff를 초기화한다. `simulation_quote_not_ready`, `simulation_quote_time
 비교 평가금을 동일한 금액 축으로 표시한다. 금액 이력이 없는 기존 응답은
 `returnPercent` 기반 포트폴리오·S&P 500 퍼센트 차트를 유지해 배포 전 snapshot을 빈 화면으로
 바꾸지 않는다. 시작 원금은 보유종목 매입원가와 다르며 과거 generation이나 SIM 가상시각에
-현재 값을 소급하지 않는다.
+현재 값을 소급하지 않는다. 평가금과 투자 원금 사이의 간극은 밴드로 표시한다. 투자 원금이
+평가금보다 높은 손실 간극은 파랑, 투자 원금이 평가금보다 낮은 수익 간극은 빨강이며 두 선이
+교차하는 시점에서 밴드 색도 나뉜다.
 SIM의 S&P 500 비교선은 simulator에 고정한 replay 시작 전 FRED 실제 일봉과 실제 5분
 지수 관측값으로 만든 point-in-time-safe benchmark만 사용한다. benchmark point가 부족하면 응답 warning을
 성과 toolbar에 표시하고 임의 선을 만들지 않는다. 성과 최초 조회는 다른 포트폴리오 패널과
 같은 compact state row를 사용한다. 기간 변경·새로고침 중에는 마지막 정상 차트를 유지하고
 toolbar의 작은 진행 상태만 갱신하며 전체 차트를 큰 placeholder로 교체하지 않는다.
+포트폴리오와 S&P 500 선은 실제 point를 변경하지 않는 monotone-X 보간으로 연결해
+급격한 구간에서도 꺾인 벽처럼 보이지 않게 한다. 이 보간은 시각적 path에만 적용하며
+tooltip·기간 수익률·축 계산에는 원본 point를 그대로 사용한다. 투자 원금은 입출금 시점을
+나타내므로 부드럽게 보간하지 않고 계단선을 유지한다.
 현재 차트 종목의 양수
 보유수량과 평균 매입가가 존재하면 가격 pane에 금색 점선을 그리고 오른쪽 가격축의
 동일한 y 좌표에는 가격만 표시한다. 가격 라벨의 hover와 keyboard focus에서 종목,
@@ -351,6 +357,14 @@ Bid/Ask도 order-flow row 가격과 axis tick을 분리해 같은 높이 기반 
 500ms와 1500ms 뒤 두 번 재시도한다. 계속 partial이면 다음 scene, range, candle
 변경까지 숨긴다. 0-volume bucket은 응답에 유지하지만 Canvas는 막대를 그리지 않아
 그 가격 슬롯의 빈 공간을 보존한다.
+
+SIM에서도 같은 지표·Volume Profile UI를 유지한다. 프런트는 별도 계산이나
+`virtualTime` query를 만들지 않고 기존 `GET /api/charts/indicators`와
+`GET /api/charts/volume-profile-bins`를 호출한다. 서버는 현재 `datasetId/runId`의 완료
+replay 봉과 replay 시작 전 실제 봉만 합쳐 계산하며 진행 중인 봉과 cursor 이후 데이터는
+제외한다. mode/run 전환 때 기존 derived client cache를 비우는 계약을 유지하고, 요청 실패를
+LIVE 지표나 이전 run의 마지막 정상값으로 대체하지 않는다. MA5/20/60은 서버가 과거/replay
+병합 뒤 다시 계산한 candle 필드를 사용해 경계에서 선이 끊기지 않게 한다.
 ## AI 투자 코치
 
 AI 투자 코치 패널은 가로 2칸을 최소 너비로 사용하며 세로 길이는 레이아웃에 맞춰
@@ -918,13 +932,15 @@ seed 응답도 즉시 렌더링하고 `quoteAsOf`를 최신 시세처럼 다시 
 표시는 같은 `sectorLabelKo` 한글 라벨을 사용한다. LIVE 등락률은 API가 제공하는
 `previousClose`(전일 정규장 종가)를 기준으로 계산된 값만 사용한다. 기준 종가가
 없으면 seed 값이나 `0%`로 대체하지 않고 `—`로 표시하며, 섹터·산업 평균에서도
-제외한다. SIM 모드의 등락률은 replay 원본 trade 기준이며 이 LIVE 계약과 분리한다.
+제외한다. SIM 모드도 status의 `previousClose`와 replay 원본 trade를 사용하며, 고정
+데이터셋의 직전 정규장인 `2026-07-13` 종가를 기준으로 계산한다. 기준 종가가 누락되면
+첫 replay 체결가나 seed 비율로 대체하지 않는다.
 
 stock recommendations panel은 `panelType="stockRecommendations"`/`kind="recommendations"`로
 표현한다. 패널은 `GET /api/recommendations/stocks/latest`로 마지막 장중 추천을
 읽고, 새로고침 버튼은 `POST /api/recommendations/stocks/refresh`에 현재 active
 symbol을 보낸다. 공개 API와 UI는 `sessionMode`를 받지 않으며 서버가 현재 시장 시각에
-맞는 활성 세션을 내부 선택한다. `추천 로직 설정` 탭은 score-profile API로 사용자
+맞는 활성 세션을 내부 선택한다. `추천 수식 설정` 탭은 score-profile API로 사용자
 가중치를 저장·활성화하고 성공 시 종목 목록 탭으로 돌아가 추천을 다시 조회한다.
 추천 행 클릭은 화면 전환 없이 `recommendation.stock` Agent reference를 선택/해제한다.
 시장 목록 행은 같은 흰색 로컬 선택 상태를 사용한다. 어느 경로도 주문을 실행하지 않는다.
@@ -1225,12 +1241,20 @@ SIM에서는 `CompanySummaryPanel`과 상대수익률 chart의 별도 fundamenta
 기존 universe item은 회사명·sector·
 industry 같은 식별 정보만 남기고 현재 가격·시가총액·재무·등락률은 제거한 뒤 시점 evidence로
 다시 채운다. 적격 자료가 없으면 최신값이나 preview fixture로 대체하지 않고 자료 부족 상태를 표시한다.
-투자사 의견은 LIVE와 SIM 모두 evidence의 `analystSummary`만 사용한다. 이 projection은
-`collectedAt` 기준 24시간 안이면 simulator cutoff와 무관하게 현재 overlay로 반환한다. 실적
-projection도 동일하게 `currentProjectionSources`로 구분하며, 과거 SIM을 위해 이력을 쌓거나
-현재 문장을 과거 사실로 가장하지 않는다. 같은 분기가 SEC chart series와 evidence에 모두 있으면
-evidence의 Yahoo 보정 실제 EPS와 정규화 매출을 먼저 채우고 SEC 중복값으로 덮어쓰지 않는다.
-SIM의 결정론적 report에도 복제하지 않는다.
+투자사 의견은 LIVE와 SIM 모두 evidence의 `analystSummary`만 사용한다. LIVE는 24시간 현재 문장,
+SIM은 서버가 `replay_cutoff/sourceAsOf <= virtualTime`을 검증한 고정 replay 직전 문장을 받는다.
+프런트는 두 문장을 합치거나 가상시각을 query로 보내지 않는다. 실적도 서버가 cutoff를 통과시킨
+분기 예상치·보고 EVENT·SEC 실제치만 렌더링하며, 실적 탭은 기본·재진입 모두 최근 12개 분기로
+표시한다. 같은 분기가 SEC chart series와 evidence에 모두 있으면 evidence의 Yahoo 보정 실제 EPS와
+정규화 매출을 먼저 채우고 SEC 중복값으로 덮어쓰지 않는다. SIM의 결정론적 report에도 복제하지 않는다.
+SIM 종료 시 mode 기반 request key가 `live`로 바뀌면서 report/evidence를 비우고 현재 데이터로 다시
+조회한다.
+
+기업저널 상단 네 탭의 중립 상태 신호는 회색이며 파란색을 긍정 의미로 사용하지 않는다. 넓은 화면의
+근거 영역과 오른쪽 AI 해석 영역은 `2:1` 비율을 사용하고, 960px 이하에서는 기존처럼 한 열로 쌓는다.
+상단 기업 요약은 넓은 화면에서 최대 두 줄에 들어오도록 충분한 본문 폭을 사용한다. 투자사 의견은
+실적 근거 영역 가운데에 큰 본문으로 배치하고, 오른쪽 `비교해서 볼 항목` 버튼은 다른 지표 chip보다
+큰 글자와 클릭 높이를 사용한다.
 
 어려운 재무 용어는 공통 `GlossaryText`를 사용하므로 hover, focus, Enter/Space에서 같은
 설명을 제공한다. `companyJournalPreview=1` fixture는 `import.meta.env.DEV`일 때만 활성화된다.

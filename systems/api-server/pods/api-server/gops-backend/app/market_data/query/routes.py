@@ -8,13 +8,18 @@ from app.auth.models import AuthenticatedUser
 from app.market_data.calendar.service import next_market_open_payload
 from app.market_data.indices.related import build_related_indices_payload
 from app.market_data.query.service import get_query_service
+from app.routes import charts as chart_routes
 from app.routes.simulator import simulator_gateway_from_app
 from app.services.simulator_gateway import SimulatorUnavailable
+from alfaka.analytics.analysis_candles import canonicalize_candle_identity
 from alfaka.orderflow import ORDER_FLOW_CLASSIFICATION_VERSION, ORDER_FLOW_SIDE_CLASSIFICATION, price_bin_size_from_env
-from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT, resolve_candle_limit
+from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT, normalize_chart_interval, resolve_candle_limit
+from alfaka.serving.indicators import indicator_required_lookback_bars, indicator_specs_from_csv
+from alfaka.serving.time_utils import parse_utc_time
 
 router = APIRouter()
 CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1h|4h|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
+SIMULATION_DERIVED_REPLAY_LIMIT = 5_000
 
 
 @router.get("/api/market/symbols")
@@ -139,6 +144,7 @@ def market_symbol_detail(symbol: str) -> dict[str, Any]:
 
 @router.get("/api/charts/volume-profile-bins")
 def chart_volume_profile_bins(
+    request: Request,
     symbol: str = Query(min_length=1, max_length=12),
     interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     from_time: str = Query(alias="from"),
@@ -154,7 +160,18 @@ def chart_volume_profile_bins(
         alias="candleCount",
     ),
 ) -> dict[str, Any]:
-    return get_query_service().volume_profile_bins(
+    service = get_query_service()
+    simulation_input = replay_derived_input(
+        request,
+        service,
+        symbol=symbol,
+        interval=interval,
+        from_time=from_time,
+        to_time=to_time,
+        historical_from_time=from_time,
+        historical_limit=resolve_candle_limit(interval, candle_count),
+    )
+    return service.volume_profile_bins(
         symbol,
         from_time,
         to_time,
@@ -164,11 +181,13 @@ def chart_volume_profile_bins(
         price_max,
         interval=interval,
         candle_count=candle_count,
+        **simulation_input,
     )
 
 
 @router.get("/api/charts/indicators")
 def chart_indicators(
+    request: Request,
     symbol: str = Query(min_length=1, max_length=12),
     interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     from_time: str | None = Query(default=None, alias="from"),
@@ -176,13 +195,122 @@ def chart_indicators(
     layers: str = Query(default="sma:5,sma:20,sma:60", max_length=256),
     limit: int = Query(default=300, ge=1, le=MAX_CHART_CANDLE_LIMIT),
 ) -> dict[str, Any]:
-    return get_query_service().indicator_series(
+    requested_limit = resolve_candle_limit(interval, limit)
+    try:
+        lookback = indicator_required_lookback_bars(indicator_specs_from_csv(layers))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    service = get_query_service()
+    simulation_input = replay_derived_input(
+        request,
+        service,
+        symbol=symbol,
+        interval=interval,
+        from_time=from_time,
+        to_time=to_time,
+        historical_from_time=None,
+        historical_limit=min(SIMULATION_DERIVED_REPLAY_LIMIT, requested_limit + lookback),
+    )
+    return service.indicator_series(
         symbol,
         interval,
         from_time,
         to_time,
         layers,
-        resolve_candle_limit(interval, limit),
+        requested_limit,
+        **simulation_input,
+    )
+
+
+def replay_derived_input(
+    request: Request,
+    service: Any,
+    *,
+    symbol: str,
+    interval: str,
+    from_time: str | None,
+    to_time: str | None,
+    historical_from_time: str | None,
+    historical_limit: int,
+) -> dict[str, Any]:
+    gateway = simulator_gateway_from_app(request.app)
+    try:
+        status_payload = gateway.status()
+    except SimulatorUnavailable as exc:
+        last_status = getattr(gateway, "last_status", None) or {}
+        if last_status.get("mode") == "simulation":
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {}
+    if status_payload.get("mode") != "simulation":
+        return {}
+
+    dataset_id = str(status_payload.get("datasetId") or "").strip()
+    run_id = str(status_payload.get("runId") or "").strip()
+    if not dataset_id or not run_id:
+        raise HTTPException(status_code=409, detail="simulation_data_unavailable")
+
+    replay_start = chart_routes.SIMULATION_REPLAY_START
+    requested_start = parse_utc_time(historical_from_time)
+    requested_end = parse_utc_time(to_time)
+    historical_end = min(requested_end, replay_start) if requested_end is not None else replay_start
+    historical = {
+        "symbol": symbol.upper(),
+        "interval": interval,
+        "source": "clickhouse",
+        "feed": "sip",
+        "indicators": {"ma": [], "volume": True},
+        "candles": [],
+    }
+    if requested_start is None or requested_start < historical_end:
+        historical = service.candle_snapshot(
+            symbol,
+            interval,
+            "",
+            max(1, int(historical_limit)),
+            from_time=historical_from_time,
+            to_time=historical_end.isoformat().replace("+00:00", "Z"),
+        )
+
+    if not request_range_includes_replay(interval, requested_end):
+        replay = {
+            "symbol": symbol.upper(),
+            "interval": interval,
+            "source": "simulation_replay",
+            "feed": "sip+boats",
+            "simulation": True,
+            "asOf": status_payload.get("virtualTime"),
+            "candles": [],
+        }
+    else:
+        replay = gateway.candles(
+            symbol.strip().upper(),
+            interval,
+            SIMULATION_DERIVED_REPLAY_LIMIT,
+        )
+    merged = chart_routes._merge_simulation_candles(
+        historical,
+        replay,
+        SIMULATION_DERIVED_REPLAY_LIMIT,
+    )
+    return {
+        "candle_payload": merged,
+        "cache_scope": f"simulation:{dataset_id}:{run_id}",
+    }
+
+
+def request_range_includes_replay(interval: str, requested_end: datetime | None) -> bool:
+    if requested_end is None:
+        return True
+    normalized_interval = normalize_chart_interval(interval)
+    if normalized_interval != "1D":
+        return requested_end >= chart_routes.SIMULATION_REPLAY_START
+    identity = canonicalize_candle_identity(
+        {"timestamp": requested_end.isoformat()},
+        normalized_interval,
+    )
+    return bool(
+        identity
+        and str(identity["candleKey"]) >= chart_routes.SIMULATION_REPLAY_MARKET_DATE
     )
 
 

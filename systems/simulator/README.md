@@ -9,6 +9,7 @@
 - 시간: KST `[2026-07-15 00:00, 2026-07-16 00:00)`
 - UTC: `[2026-07-14 15:00, 2026-07-15 15:00)`
 - 시총 기준일: `2026-06-30`
+- 히트맵 등락률 기준일: `2026-07-13` 미국 정규장 종가
 - 유니버스: `systems/market-data/config/sp500-universe.json`의 S&P 500 전체 502개 티커
 - 유니버스 고정값: 기준일 `2026-06-30`, symbol SHA-256 `c1e72d49557182d11cd64d33bba16778f7b4184e5dfd58b921f2b46fe0d10cef`
 - feed: `SIP 15:00–00:00 UTC`, `BOATS 00:00–08:00 UTC`, `SIP 08:00–15:00 UTC`
@@ -65,6 +66,12 @@ status와 health는 마지막 완료 스냅샷을 즉시 반환한다. 따라서
 Kubernetes probe와 웹의 SIM 상태 폴링이 차단되지 않는다.
 502개 종목 상태는 체결 변경이 있을 때 최대 250ms마다 한 번만 다시 계산하며, 10ms replay
 pump는 전체 status 응답을 복사하지 않는다.
+시뮬레이터는 시작할 때 ClickHouse canonical `1D` 봉에서 `2026-07-13` 정규장 종가를
+502개 모두 읽어 메모리에 고정한다. 중복 수집 행은 `inserted_at`, `event_time`,
+`source_event_id` 순서로 최신 값을 선택한다. `v2`, `split`, `regular`, `is_closed=1`
+조건을 만족하는 기준 종가가 하나라도 없으면 첫 replay 체결가로 대체하지 않고 시작에
+실패한다. status의 `previousClose`와 현재 replay trade로 계산한 `changePercent`가
+히트맵에 전달되며 재시작·배속 변경 중에도 같은 기준을 유지한다.
 재생 pump는 ClickHouse 정렬키 `(dataset_id, sequence)`로 다음 청크를 미리 읽고 가상시각을
 넘는 첫 이벤트부터 메모리에 보류한다. 같은 가상시각을 기다리는 동안 `event_time` 조건으로
 전체 파티션을 반복 스캔하지 않는다. 현재 호가는 처리 완료 뒤 불변 snapshot으로 발행하므로

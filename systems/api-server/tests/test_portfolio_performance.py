@@ -178,6 +178,12 @@ def test_current_seeded_demo_principal_backfills_immutable_fixture_history() -> 
         current_principal_started_at=datetime(2026, 7, 18, tzinfo=timezone.utc),
         simulation_time=None,
     ) == 100_000
+    assert _performance_principal_for_snapshots(
+        seeded_history,
+        current_principal=100_000,
+        current_principal_started_at=datetime(2026, 7, 18, tzinfo=timezone.utc),
+        simulation_time=datetime(2026, 7, 14, 15, tzinfo=timezone.utc),
+    ) == 100_000
 
 
 def test_account_performance_route_uses_user_daily_snapshots_and_benchmark() -> None:

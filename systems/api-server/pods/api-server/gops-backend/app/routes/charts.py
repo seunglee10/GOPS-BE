@@ -37,6 +37,7 @@ from app.services.alfaka_market_data import (
 from alfaka.analytics.analysis_candles import canonicalize_candle_identity
 from alfaka.serving.intervals import MAX_CHART_CANDLE_LIMIT
 from alfaka.serving.intervals import normalize_chart_interval
+from alfaka.serving.moving_average import attach_moving_averages
 
 CHART_INTERVAL_PATTERN = "^(1m|5m|10m|1h|4h|1D|1W|1M|1d|1w|1mo|1MO|1month)$"
 CHART_COMPARE_RANGE_PATTERN = "^(1D|1M|6M|1Y|5Y|1d|1m|6m|1y|5y)$"
@@ -296,10 +297,19 @@ def _merge_simulation_candles(
             if key is not None:
                 merged[key] = normalized
     candles = sorted(merged.values(), key=lambda item: _candle_timestamp(item) or datetime.min.replace(tzinfo=UTC))[-limit:]
+    historical_indicators = historical.get("indicators") if isinstance(historical.get("indicators"), dict) else {}
+    requested_ma = [
+        int(window)
+        for window in historical_indicators.get("ma") or []
+        if str(window).isdigit() and int(window) > 0
+    ]
+    if requested_ma:
+        candles = attach_moving_averages(candles, windows=tuple(requested_ma), overwrite=True)
     return {
         **historical,
         **replay,
         "simulation": True,
+        "indicators": {"ma": requested_ma, "volume": True},
         "candles": candles,
         "futureDataCutoff": replay.get("asOf"),
     }

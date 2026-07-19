@@ -155,6 +155,10 @@ CREATE TABLE IF NOT EXISTS market_data.yahoo_analyst_summaries
     statement String,
     tone LowCardinality(String),
     source_as_of Nullable(DateTime64(3, 'UTC')),
+    replay_statement String DEFAULT '',
+    replay_tone LowCardinality(String) DEFAULT 'neutral',
+    replay_source_as_of Nullable(DateTime64(3, 'UTC')),
+    replay_cutoff Nullable(DateTime64(3, 'UTC')),
     source LowCardinality(String),
     collected_at DateTime64(3, 'UTC'),
     inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
@@ -169,3 +173,7 @@ ALTER TABLE market_data.yahoo_earnings_estimates ADD COLUMN IF NOT EXISTS actual
 ALTER TABLE market_data.yahoo_earnings_estimates ADD COLUMN IF NOT EXISTS surprise_percent Nullable(Float64) AFTER actual_value;
 ALTER TABLE market_data.yahoo_earnings_estimates ADD COLUMN IF NOT EXISTS event_session LowCardinality(String) DEFAULT 'unknown' AFTER surprise_percent;
 ALTER TABLE market_data.yahoo_earnings_estimates ADD COLUMN IF NOT EXISTS event_status LowCardinality(String) DEFAULT 'scheduled' AFTER event_session;
+ALTER TABLE market_data.yahoo_analyst_summaries ADD COLUMN IF NOT EXISTS replay_statement String DEFAULT '' AFTER source_as_of;
+ALTER TABLE market_data.yahoo_analyst_summaries ADD COLUMN IF NOT EXISTS replay_tone LowCardinality(String) DEFAULT 'neutral' AFTER replay_statement;
+ALTER TABLE market_data.yahoo_analyst_summaries ADD COLUMN IF NOT EXISTS replay_source_as_of Nullable(DateTime64(3, 'UTC')) AFTER replay_tone;
+ALTER TABLE market_data.yahoo_analyst_summaries ADD COLUMN IF NOT EXISTS replay_cutoff Nullable(DateTime64(3, 'UTC')) AFTER replay_source_as_of;

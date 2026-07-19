@@ -64,6 +64,7 @@ class ReplayEvent:
 class ReplayEventSource(Protocol):
     dataset_id: str
     total_events: int
+    def previous_close_snapshot(self) -> dict[str, float]: ...
     def events_after_sequence(self, sequence: int, limit: int) -> list[ReplayEvent]: ...
     def events_after(self, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]: ...
     def events_between(self, after_sequence: int, through_sequence: int, limit: int) -> list[ReplayEvent]: ...
@@ -74,12 +75,26 @@ class ReplayEventSource(Protocol):
 class InMemoryReplayEventSource:
     dataset_id = DATASET_ID
 
-    def __init__(self, events: Iterable[ReplayEvent]) -> None:
+    def __init__(
+        self,
+        events: Iterable[ReplayEvent],
+        *,
+        previous_closes: dict[str, float] | None = None,
+    ) -> None:
         self._events = sorted(events, key=lambda event: event.sequence)
         sequences = [event.sequence for event in self._events]
         if len(sequences) != len(set(sequences)):
             raise ValueError("replay event sequences must be unique")
         self.total_events = len(self._events)
+        self._previous_closes = {
+            symbol: float(value)
+            for raw_symbol, value in (previous_closes or {}).items()
+            if (symbol := str(raw_symbol).strip().upper()) in REPLAY_SYMBOL_SET
+            and float(value) > 0
+        }
+
+    def previous_close_snapshot(self) -> dict[str, float]:
+        return dict(self._previous_closes)
 
     def events_after_sequence(self, sequence: int, limit: int) -> list[ReplayEvent]:
         return [event for event in self._events if event.sequence > sequence][:limit]
@@ -161,6 +176,7 @@ class ReplayController:
         self._latest_quotes: dict[str, dict[str, object]] = {}
         self._quote_snapshot: dict[str, dict[str, object]] = {}
         self._latest_trades: dict[str, float] = {}
+        self._previous_closes = source.previous_close_snapshot()
         self._opening_trades: dict[str, float] = {}
         self._daily_candles: dict[str, dict[str, dict[str, object]]] = {}
         self._symbol_status_snapshot: list[dict[str, object]] = []
@@ -521,11 +537,12 @@ class ReplayController:
 
     def _symbol_status(self, symbol: str) -> dict[str, object]:
         price = self._latest_trades.get(symbol)
-        opening_price = self._opening_trades.get(symbol)
+        previous_close = self._previous_closes.get(symbol)
         return {
             "symbol": symbol,
             "price": price,
-            "changePercent": replay_change_percent(opening_price, price),
+            "previousClose": previous_close,
+            "changePercent": replay_change_percent(previous_close, price),
         }
 
     def _capture_status(self) -> dict[str, object]:
@@ -579,10 +596,10 @@ def normalize_restored_opening_trades(
     return restored
 
 
-def replay_change_percent(opening_price: float | None, current_price: float | None) -> float | None:
-    if opening_price is None or current_price is None or opening_price <= 0:
+def replay_change_percent(previous_close: float | None, current_price: float | None) -> float | None:
+    if previous_close is None or current_price is None or previous_close <= 0:
         return None
-    return round((current_price / opening_price - 1.0) * 100.0, 6)
+    return round((current_price / previous_close - 1.0) * 100.0, 6)
 
 
 def _positive_float(value: object, field: str) -> float:

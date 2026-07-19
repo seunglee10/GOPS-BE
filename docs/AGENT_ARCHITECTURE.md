@@ -25,6 +25,9 @@ query normalizer가 입력을 형태소 유사 fragment로 정규화하고, 고�
 LLM에 전달한다. LLM은 허용된 블록·세부 key의 가중치와 근거만 구조화해 반환하며 서버가
 각 그룹 합계 100과 값 범위를 다시 검증한다. 제안은 저장되지 않은 초안이고 hard gate,
 Evidence Reliability, soft penalty와 직접 매수 조건을 변경할 수 없다.
+빠른 예시 `거래대금이 강하고 추세가 이어지는 종목`은 같은 사용자의 완성된 제안을 Redis에
+30일간 저장해 재요청 시 retrieval·LLM 경로를 건너뛴다. 다른 자연어 요청은 캐시하지 않으며,
+Redis 장애나 미설정 상태에서는 기존 생성 경로로 fail-open한다.
 
 ## 목적
 
@@ -554,14 +557,16 @@ post-market·migration·backfill만 동적 `batch` NodePool을 사용한다. 같
 replay simulation에서 일반 시장/agent의 point-in-time 차단은 유지한다. 기업저널 panel만
 `GET /api/company-journal/{symbol}/evidence`로 저장된 SEC/Yahoo/일봉 근거를 읽는다. middleware가
 simulator `virtualTime`을 cutoff로 전달하고 SEC facts/derived는 `filed_at`과
-`version_filed_at`, 일봉은 `event_time`이 cutoff 이하인 행만 선택한다. 현재 Yahoo 실적 projection은
-사용자가 SIM 중에도 볼 수 있도록 `currentProjectionSources`로 명시한 별도 overlay이며, 보고된
-EVENT 실제 EPS는 대응하는 cutoff-safe SEC 분기의 표시값만 보정한다.
-Yahoo 기관 event·목표가·추천 분포는 수집기 메모리에서 기업별 한 문장으로 조합한 뒤 원본을
-폐기한다. `yahoo_analyst_summaries`에는 현재 문장만 24시간 보관하며 report에는 복제하지 않는다.
-SIM은 이 문장이 24시간 안이면 현재 overlay로 표시하되 과거 이력을 재구성하거나 당시 사실로
-가장하지 않는다. 저장된 자연어 report route는 SIM에서 계속 차단하며, cutoff evidence는 결정론적 화면
-설명에만 사용하고 주문·추천·agent snapshot 입력으로 전달하지 않는다.
+`version_filed_at`, 일봉은 `event_time`이 cutoff 이하인 행만 선택한다. Yahoo 분기 예상치는
+`collected_at <= cutoff`, 보고된 EVENT 실제 EPS는 `event_at <= cutoff`인 행만 사용하며 대응하는
+cutoff-safe SEC 분기의 표시값만 보정한다.
+Yahoo 기관 event·목표가·추천 분포는 수집기 메모리에서 기업별 현재 문장과 고정 replay 시작
+직전 문장으로 조합한 뒤 원본을 폐기한다. replay 문장은 cutoff 이전 기관 action만 사용하고 현재
+목표가 평균·추천 분포를 섞지 않는다. `yahoo_analyst_summaries`의 한 행은 두 문장만 24시간 보관하고
+매일 덮어쓰며 report에는 복제하지 않는다. SIM은 `replay_cutoff/source_as_of <= virtualTime`인 replay
+문장만 표시하고, 문장이 만료되거나 수집되지 않았으면 결측으로 남긴다. 저장된 자연어 report route는
+SIM에서 계속 차단하며, cutoff evidence는 결정론적 화면 설명에만 사용하고 주문·추천·agent snapshot
+입력으로 전달하지 않는다.
 
 Snapshot bundle additions:
 

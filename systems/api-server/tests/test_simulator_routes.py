@@ -242,6 +242,131 @@ class FakeSimulatorMarketStateManager:
         self.trace.append(("market-state", "restore"))
 
 
+class RecordingReplayDerivedService:
+    def __init__(self):
+        self.candle_calls = []
+        self.indicator_calls = []
+        self.volume_profile_calls = []
+
+    def candle_snapshot(
+        self,
+        symbol,
+        interval,
+        ma,
+        limit,
+        before=None,
+        from_time=None,
+        to_time=None,
+        include_previous_close=False,
+    ):
+        self.candle_calls.append({
+            "symbol": symbol,
+            "interval": interval,
+            "ma": ma,
+            "limit": limit,
+            "before": before,
+            "fromTime": from_time,
+            "toTime": to_time,
+            "includePreviousClose": include_previous_close,
+        })
+        return {
+            "symbol": symbol.upper(),
+            "interval": interval,
+            "source": "clickhouse",
+            "feed": "sip",
+            "indicators": {"ma": [5] if ma == "5" else [], "volume": True},
+            "candles": [
+                {
+                    "timestamp": f"2026-07-14T14:5{index}:00Z",
+                    "open": float(index + 1),
+                    "high": float(index + 1),
+                    "low": float(index + 1),
+                    "close": float(index + 1),
+                    "volume": 100.0,
+                    "isClosed": True,
+                }
+                for index in range(4)
+            ],
+        }
+
+    def indicator_series(
+        self,
+        symbol,
+        interval,
+        from_time=None,
+        to_time=None,
+        layers=None,
+        limit=None,
+        *,
+        candle_payload=None,
+        cache_scope=None,
+    ):
+        self.indicator_calls.append({
+            "symbol": symbol,
+            "interval": interval,
+            "fromTime": from_time,
+            "toTime": to_time,
+            "layers": layers,
+            "limit": limit,
+            "candlePayload": candle_payload,
+            "cacheScope": cache_scope,
+        })
+        replay_timestamp = candle_payload["candles"][-1]["timestamp"]
+        return {
+            "symbol": symbol.upper(),
+            "interval": interval,
+            "series": {
+                "bollinger:20:2": [{
+                    "timestamp": replay_timestamp,
+                    "middle": 100.0,
+                    "upper": 102.0,
+                    "lower": 98.0,
+                }],
+            },
+            "derived": {"state": "ready", "source": "api-compute"},
+        }
+
+    def volume_profile_bins(
+        self,
+        symbol,
+        from_time,
+        to_time,
+        price_bin_size,
+        target_bins=10,
+        price_min=None,
+        price_max=None,
+        interval="1m",
+        candle_count=None,
+        *,
+        candle_payload=None,
+        cache_scope=None,
+    ):
+        self.volume_profile_calls.append({
+            "symbol": symbol,
+            "interval": interval,
+            "fromTime": from_time,
+            "toTime": to_time,
+            "candleCount": candle_count,
+            "candlePayload": candle_payload,
+            "cacheScope": cache_scope,
+        })
+        return {
+            "symbol": symbol.upper(),
+            "interval": interval,
+            "from": from_time,
+            "to": to_time,
+            "targetBins": target_bins,
+            "bucketCount": target_bins,
+            "priceBinSize": 1.0,
+            "sourceCandleCount": candle_count,
+            "requestedCandleCount": candle_count,
+            "totalVolume": 500.0,
+            "dataStatus": "ready",
+            "bins": [{"index": index, "volume": 50.0} for index in range(target_bins)],
+            "derived": {"state": "ready", "source": "api-compute"},
+        }
+
+
 class SimulatorRoutesTest(unittest.TestCase):
     def setUp(self):
         os.environ["AUTH_ENABLED"] = "false"
@@ -335,6 +460,112 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertIn(("order-flow", "NVDA"), self.gateway.calls)
         self.assertEqual(daily.status_code, 409)
         self.assertEqual(daily.json()["detail"], "simulation_data_unavailable")
+
+    def test_simulation_indicators_use_replay_safe_candles(self):
+        self.gateway.mode = "simulation"
+        service = RecordingReplayDerivedService()
+
+        with patch("app.market_data.query.routes.get_query_service", return_value=service):
+            response = self.client.get(
+                "/api/charts/indicators",
+                params={
+                    "symbol": "NVDA",
+                    "interval": "1m",
+                    "from": "2026-07-14T14:50:00Z",
+                    "to": "2026-07-14T15:00:00Z",
+                    "layers": "bollinger:20:2",
+                    "limit": 30,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("bollinger:20:2", response.json()["series"])
+        self.assertEqual(len(service.indicator_calls), 1)
+        indicator_call = service.indicator_calls[0]
+        self.assertTrue(indicator_call["candlePayload"]["simulation"])
+        self.assertEqual(indicator_call["candlePayload"]["candles"][-1]["timestamp"], "2026-07-14T15:00:00Z")
+        self.assertEqual(indicator_call["cacheScope"], "simulation:sp500-full-20260715-kst-v3:run-1")
+        self.assertLessEqual(service.candle_calls[0]["toTime"], "2026-07-14T15:00:00Z")
+
+    def test_simulation_volume_profile_uses_replay_safe_candles(self):
+        self.gateway.mode = "simulation"
+        service = RecordingReplayDerivedService()
+
+        with patch("app.market_data.query.routes.get_query_service", return_value=service):
+            response = self.client.get(
+                "/api/charts/volume-profile-bins",
+                params={
+                    "symbol": "NVDA",
+                    "interval": "1m",
+                    "from": "2026-07-14T14:50:00Z",
+                    "to": "2026-07-14T15:00:00Z",
+                    "targetBins": 10,
+                    "candleCount": 5,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["bucketCount"], 10)
+        self.assertEqual(len(service.volume_profile_calls), 1)
+        profile_call = service.volume_profile_calls[0]
+        self.assertTrue(profile_call["candlePayload"]["simulation"])
+        self.assertEqual(profile_call["candlePayload"]["candles"][-1]["timestamp"], "2026-07-14T15:00:00Z")
+        self.assertEqual(profile_call["cacheScope"], "simulation:sp500-full-20260715-kst-v3:run-1")
+
+    def test_simulation_daily_indicators_include_the_completed_replay_market_day(self):
+        self.gateway.mode = "simulation"
+        self.gateway.virtual_time = "2026-07-15T13:00:00+09:00"
+        self.gateway.candles = Mock(return_value={
+            "symbol": "NVDA",
+            "interval": "1D",
+            "source": "simulation_replay",
+            "feed": "sip+boats",
+            "simulation": True,
+            "asOf": "2026-07-15T04:00:00Z",
+            "candles": [{
+                "timestamp": "2026-07-14T04:00:00.000Z",
+                "open": 100.0,
+                "high": 110.0,
+                "low": 99.0,
+                "close": 108.0,
+                "volume": 1_000.0,
+                "isClosed": True,
+            }],
+        })
+        service = RecordingReplayDerivedService()
+
+        with patch("app.market_data.query.routes.get_query_service", return_value=service):
+            response = self.client.get(
+                "/api/charts/indicators",
+                params={
+                    "symbol": "NVDA",
+                    "interval": "1D",
+                    "from": "2026-07-01T04:00:00Z",
+                    "to": "2026-07-14T04:00:00Z",
+                    "layers": "bollinger:20:2",
+                    "limit": 30,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.gateway.candles.assert_called_once_with("NVDA", "1D", 5_000)
+        self.assertEqual(
+            service.indicator_calls[0]["candlePayload"]["candles"][-1]["timestamp"],
+            "2026-07-14T04:00:00.000Z",
+        )
+
+    def test_simulation_candles_recompute_requested_moving_averages_across_replay_boundary(self):
+        self.gateway.mode = "simulation"
+        service = RecordingReplayDerivedService()
+
+        with patch("app.routes.charts.get_query_service", return_value=service):
+            response = self.client.get("/api/charts/candles?symbol=NVDA&interval=1m&limit=10&ma=5")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["indicators"], {"ma": [5], "volume": True})
+        self.assertEqual(payload["candles"][-1]["timestamp"], "2026-07-14T15:00:00Z")
+        self.assertEqual(payload["candles"][-1]["ma5"], 22.0)
 
     def test_simulation_market_indices_use_the_fixed_replay_snapshot(self):
         self.gateway.mode = "simulation"
