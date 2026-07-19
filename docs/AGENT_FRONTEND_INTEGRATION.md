@@ -19,7 +19,7 @@
 독립적으로 유지한다. 추천 API 실패 시에도 급등주와
 거래대금 목록 및 시장 검색은 유지한다.
 
-패널 상단의 `추천 로직 설정`은 목록과 같은 레벨의 패널 내부 탭이다. 설정 제목부터 가중치 편집기까지 페이지 전체가 하나의 세로 스크롤 영역을 사용한다. overlay, dialog,
+패널 상단의 `추천 수식 설정`은 목록과 같은 레벨의 패널 내부 탭이다. 설정 제목부터 가중치 편집기까지 페이지 전체가 하나의 세로 스크롤 영역을 사용한다. overlay, dialog,
 side rail 또는 장전/본장 selector를 만들지 않는다. 로직 탭은 활성 점수 프로필과 여섯
 근거 블록, 실제 세부 지표 및 포트폴리오 적합도 가중치는 캔버스가 아닌 직접 조작형
 비중 믹서로 표시한다. 상단 누적 바는 전체 100% 배분을 즉시 보여주고, 아래의 모든
@@ -209,6 +209,10 @@ SIM의 S&P 500 비교선은 simulator에 고정한 replay 시작 전 FRED 실제
 성과 toolbar에 표시하고 임의 선을 만들지 않는다. 성과 최초 조회는 다른 포트폴리오 패널과
 같은 compact state row를 사용한다. 기간 변경·새로고침 중에는 마지막 정상 차트를 유지하고
 toolbar의 작은 진행 상태만 갱신하며 전체 차트를 큰 placeholder로 교체하지 않는다.
+포트폴리오와 S&P 500 선은 실제 point를 변경하지 않는 monotone-X 보간으로 연결해
+급격한 구간에서도 꺾인 벽처럼 보이지 않게 한다. 이 보간은 시각적 path에만 적용하며
+tooltip·기간 수익률·축 계산에는 원본 point를 그대로 사용한다. 투자 원금은 입출금 시점을
+나타내므로 부드럽게 보간하지 않고 계단선을 유지한다.
 현재 차트 종목의 양수
 보유수량과 평균 매입가가 존재하면 가격 pane에 금색 점선을 그리고 오른쪽 가격축의
 동일한 y 좌표에는 가격만 표시한다. 가격 라벨의 hover와 keyboard focus에서 종목,
@@ -934,7 +938,7 @@ stock recommendations panel은 `panelType="stockRecommendations"`/`kind="recomme
 표현한다. 패널은 `GET /api/recommendations/stocks/latest`로 마지막 장중 추천을
 읽고, 새로고침 버튼은 `POST /api/recommendations/stocks/refresh`에 현재 active
 symbol을 보낸다. 공개 API와 UI는 `sessionMode`를 받지 않으며 서버가 현재 시장 시각에
-맞는 활성 세션을 내부 선택한다. `추천 로직 설정` 탭은 score-profile API로 사용자
+맞는 활성 세션을 내부 선택한다. `추천 수식 설정` 탭은 score-profile API로 사용자
 가중치를 저장·활성화하고 성공 시 종목 목록 탭으로 돌아가 추천을 다시 조회한다.
 추천 행 클릭은 화면 전환 없이 `recommendation.stock` Agent reference를 선택/해제한다.
 시장 목록 행은 같은 흰색 로컬 선택 상태를 사용한다. 어느 경로도 주문을 실행하지 않는다.
