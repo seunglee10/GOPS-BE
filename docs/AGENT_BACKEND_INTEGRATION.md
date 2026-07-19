@@ -169,6 +169,10 @@ recommendation route를 허용한다. 그 전에는 미래 추천으로 취급�
 저장된 종합 해설은 `GET /api/charts/analysis-assets/commentary?symbol&interval`에서
 asset identity, commentary, 최종 drawing ID만 PostgreSQL JSONB projection으로 읽는다.
 이 safe-read도 `asOf <= virtualTime`인 저장 자산만 반환하며 replay 중 해설을 동적으로 생성하지 않는다.
+시연 데이터셋에 한해 `NVDA/1D` 전체 자산 GET은 저장된 하락 쐐기 자산의 시각을
+`2026-07-14T04:00:00Z`로 제한한 응답 복사본을 동적 자산보다 우선한다. 이 데모
+projection은 PostgreSQL이나 candle 원본을 변경하지 않고, 저장 자산의 실제
+`asOf`에 도달하면 자동으로 비활성화하며 미래 해설은 포함하지 않는다.
 예외적으로 `GET /api/market/news/latest`는 live Redis를 건너뛰고 ClickHouse의
 `published_at <= virtualTime AND localized_at <= virtualTime`인 저장 기사만 읽는다.
 `GET /api/charts/events`는 SIM `virtualTime`을 cutoff로 전달해

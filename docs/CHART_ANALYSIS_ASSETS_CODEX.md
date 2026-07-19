@@ -24,6 +24,11 @@
   일괄 backfill, Geometry v6용 migration Job은 실행하지 않는다.
 - `tradePlan`, 해설, spotlight, trace overlay는 주문·알림 신뢰 원본이 아니다.
 
+시연용 SIM 응답에는 한 가지 명시적 비영속 예외가 있다. `NVDA/1D`는 저장된
+`falling_wedge` 자산 복사본의 시각을 2026-07-14로 제한해 동적 자산보다 우선한다.
+PostgreSQL 자산과 candle 원본은 수정하지 않고, 실제 저장 자산 `asOf` 이후에는 예외를
+적용하지 않으며 commentary도 복사하지 않는다.
+
 ## 계산과 자산 계약
 
 `analyze_geometry()`는 `compute_pivots()`를 한 번 실행해 levels, trends, patterns에
