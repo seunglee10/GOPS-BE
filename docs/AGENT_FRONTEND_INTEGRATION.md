@@ -90,7 +90,7 @@ action, decision, sizing, key evidence, 점수와 설명을 읽는다. 별도 re
 정규화한다. 진행 중인 차트 봉의 남은 시간도 LIVE에서는 실제 시각,
 SIM에서는 status의 `virtualTime`과 `effectiveSpeed`를 사용하며 일시정지 중에는 함께
 멈춘다. SIM 전환은 사용자가 보고 있는 화면을 강제로 바꾸지 않는다. 증시지도를 보고
-있다면 전체 LIVE universe 대신 replay manifest의 23종목만 표시하고, status의 replay
+있다면 전체 LIVE universe 대신 replay manifest의 502종목만 표시하고, status의 replay
 가격과 dataset 첫 체결가 기준 등락률을 해당 타일에 반영한다. 새 run에서는 이전 run의
 가격·등락률을 재사용하지 않는다. phase, 합성 news, basket UI는 없다.
 
@@ -100,7 +100,7 @@ SIM에서는 status의 `virtualTime`과 `effectiveSpeed`를 사용하며 일시�
 WebSocket 컴포넌트, 포트폴리오 snapshot을 초기화한다. 이 규칙은 LIVE 전환뿐 아니라
 SIM 재시작에도 적용되어 이전 실행의 미래 봉이 남지 않게 한다.
 
-SIM 검색·주문 후보는 manifest의 23개 티커만 사용한다. 주문 ticket은 SIM에서
+SIM 검색·주문 후보는 manifest의 502개 티커만 사용한다. 주문 ticket은 SIM에서
 `market|limit`을 제공하고 market은 price를 보내지 않는다. LIVE KIS 화면은 기존
 limit-only 계약을 유지한다. 주문 상태는 `/ws/orders/{order_id}`의 SIM 원장을 읽고,
 가격조건 UI는 기존 `/api/trade-conditions`를 그대로 사용한다.

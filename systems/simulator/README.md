@@ -5,15 +5,16 @@
 
 ## 고정 데이터셋
 
-- ID: `sp500-top20-plus-amd-mu-20260715-kst-v2`
+- ID: `sp500-full-20260715-kst-v3`
 - 시간: KST `[2026-07-15 00:00, 2026-07-16 00:00)`
 - UTC: `[2026-07-14 15:00, 2026-07-15 15:00)`
 - 시총 기준일: `2026-06-30`
-- 기존 20개 기업에 AMD·Micron을 더한 22개 기업·23개 티커: `NVDA, MSFT, AAPL, AMZN, META, AVGO, GOOGL, GOOG, BRK.B, TSLA, LLY, JPM, WMT, V, ORCL, MA, NFLX, XOM, COST, HD, JNJ, AMD, MU`
+- 유니버스: `systems/market-data/config/sp500-universe.json`의 S&P 500 전체 502개 티커
+- 유니버스 고정값: 기준일 `2026-06-30`, symbol SHA-256 `c1e72d49557182d11cd64d33bba16778f7b4184e5dfd58b921f2b46fe0d10cef`
 - feed: `SIP 15:00–00:00 UTC`, `BOATS 00:00–08:00 UTC`, `SIP 08:00–15:00 UTC`
 
 원본 gzip JSONL은
-`s3://$S3_BUCKET/simulator/replay/v2/dataset=sp500-top20-plus-amd-mu-20260715-kst/`에 두고,
+`s3://$S3_BUCKET/simulator/replay/v3/dataset=sp500-full-20260715-kst/`에 두고,
 ClickHouse의 TTL 없는 `simulation_replay_events`와
 `simulation_replay_candles_1m`에 별도로 적재한다. 실시간 `trade_ticks`와
 `quote_ticks`에는 넣지 않는다.
@@ -24,9 +25,19 @@ PYTHONPATH=systems/simulator .venv/bin/python -m gops_simul.tools.import_alpaca 
   --clickhouse-url "$CLICKHOUSE_URL"
 ```
 
-importer는 모든 페이지를 끝까지 수집하고 반개구간 필터, 파일 SHA-256·크기,
-종목별 trade/quote 수, S3 metadata, ClickHouse 건수를 검증한다. 하나라도 맞지 않으면
+importer는 HTTP 429와 일시적인 Alpaca 5xx·네트워크 오류를 지수 백오프로 재시도한다.
+모든 페이지를 끝까지 수집하고 반개구간 필터, 파일 SHA-256·크기, 502개 종목별
+trade/quote 수, S3 metadata, ClickHouse 건수를 검증한다. 요청·성공 종목 수, 저장 행 수,
+오류 종목도 manifest의 `importResult`에 남긴다. 하나라도 맞지 않으면
 manifest와 ClickHouse 상태를 `FAILED`로 남기며 시뮬레이터는 실행되지 않는다.
+ClickHouse staging insert는 종목 파일마다 만들지 않고 작업자 전체에서 25만 행 단위로
+합쳐 작은 MergeTree part가 수천 개 생기는 것을 방지한다. S3 client도 작업 전체에서
+재사용하고 업로드 재시도를 적용한다.
+
+전체 데이터는 약 5,700만~8,500만 이벤트, S3 gzip 0.55~0.82GiB, ClickHouse
+2~3GiB를 예상한다. 수집부터 검증까지 약 1시간 30분~2시간 30분을 계획한다.
+적재 중 staging·최종 파트·병합 파트가 겹치므로 ClickHouse PVC는 80GiB로 확장하고
+실제 여유 공간이 최소 15GiB인지 확인한 뒤 Job을 시작한다.
 
 ## 재생과 공통 paper 원장
 
@@ -40,6 +51,8 @@ Postgres의 영구 paper 원장을 계속 사용한다. 기본 배속은 `1×`�
 ClickHouse 청크 조회와 이벤트 처리는 HTTP 이벤트 루프 밖의 작업 스레드에서 수행하고,
 status와 health는 마지막 완료 스냅샷을 즉시 반환한다. 따라서 큰 청크를 처리하는 동안에도
 Kubernetes probe와 웹의 SIM 상태 폴링이 차단되지 않는다.
+502개 종목 상태는 체결 변경이 있을 때 최대 250ms마다 한 번만 다시 계산하며, 10ms replay
+pump는 전체 status 응답을 복사하지 않는다.
 재생 pump는 ClickHouse 정렬키 `(dataset_id, sequence)`로 다음 청크를 미리 읽고 가상시각을
 넘는 첫 이벤트부터 메모리에 보류한다. 같은 가상시각을 기다리는 동안 `event_time` 조건으로
 전체 파티션을 반복 스캔하지 않는다. 현재 호가는 처리 완료 뒤 불변 snapshot으로 발행하므로
@@ -125,6 +138,7 @@ backend의 `GOPS_SIMULATOR_URL`과 simulator rollout을 함께 적용·검증하
 실시간 Redis/Kafka는 변경하지 않는다.
 
 ```sh
+AWS_PROFILE=gops-dev scripts/aws/expand-clickhouse-pvc.sh
 AWS_PROFILE=gops-dev scripts/aws/deploy-dev-local.sh
 AWS_PROFILE=gops-dev scripts/aws/run-simulator-replay-import.sh  # 최초 1회
 ```

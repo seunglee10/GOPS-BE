@@ -6,7 +6,8 @@ AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-<aws-account-id>}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-gops-eks-cluster}"
 K8S_NAMESPACE="${K8S_NAMESPACE:-alfaka-market-data}"
-DATASET_ID="${SIM_REPLAY_DATASET_ID:-sp500-top20-plus-amd-mu-20260715-kst-v2}"
+DATASET_ID="${SIM_REPLAY_DATASET_ID:-sp500-full-20260715-kst-v3}"
+EXPECTED_SYMBOL_COUNT="${SIM_REPLAY_EXPECTED_SYMBOL_COUNT:-502}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLICKHOUSE_SCHEMA="${REPO_ROOT}/infra/k8s/base/platform/clickhouse-initdb/01-market-data.sql"
 
@@ -35,18 +36,21 @@ apply_replay_schema() {
 }
 
 require_ready_dataset() {
-  local result status total_events
+  local result status total_events symbol_count
   result="$(kubectl exec statefulset/clickhouse -n "${K8S_NAMESPACE}" -- \
     sh -c 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "$1"' -- \
     "SELECT concat(status, ':', toString(total_events)) FROM market_data.simulation_replay_datasets FINAL WHERE dataset_id = '${DATASET_ID}' LIMIT 1 FORMAT TSVRaw")"
   status="${result%%:*}"
   total_events="${result##*:}"
-  if [[ "${status}" != "READY" || ! "${total_events}" =~ ^[1-9][0-9]*$ ]]; then
+  symbol_count="$(kubectl exec statefulset/clickhouse -n "${K8S_NAMESPACE}" -- \
+    sh -c 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "$1"' -- \
+    "SELECT uniqExact(symbol) FROM market_data.simulation_replay_events WHERE dataset_id = '${DATASET_ID}' FORMAT TSVRaw")"
+  if [[ "${status}" != "READY" || ! "${total_events}" =~ ^[1-9][0-9]*$ || "${symbol_count}" != "${EXPECTED_SYMBOL_COUNT}" ]]; then
     printf 'Replay dataset is not READY: dataset=%s status=%s events=%s\n' \
       "${DATASET_ID}" "${status:-missing}" "${total_events:-0}" >&2
     exit 1
   fi
-  printf 'READY dataset verified: %s (%s events)\n' "${DATASET_ID}" "${total_events}"
+  printf 'READY dataset verified: %s (%s events, %s symbols)\n' "${DATASET_ID}" "${total_events}" "${symbol_count}"
 }
 
 set_simulator_mode() {

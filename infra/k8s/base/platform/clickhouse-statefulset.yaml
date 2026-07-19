@@ -89,4 +89,4 @@ spec:
         storageClassName: eks-auto-ebs
         resources:
           requests:
-            storage: 50Gi
+            storage: 80Gi

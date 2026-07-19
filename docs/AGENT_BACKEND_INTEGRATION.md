@@ -123,7 +123,7 @@ market correlation/relative-strength context로만 계산한다. context가 없�
 
 ## Tick Replay Simulator Boundary
 
-`GOPS_SIMULATOR_URL`은 고정 데이터셋 `sp500-top20-plus-amd-mu-20260715-kst-v2`를 읽는 별도
+`GOPS_SIMULATOR_URL`은 고정 데이터셋 `sp500-full-20260715-kst-v3`를 읽는 별도
 서비스를 가리킨다. 백엔드는 `/api/simulator/status|mode|action|speed`만 공개하며
 기존 phase, 합성 news, basket 경로는 제공하지 않는다. 가상시각은 KST
 `2026-07-15 00:00`에서 시작하고 모든 사용자에게 동일하다. Simulator는 시계·캔들·
@@ -135,14 +135,14 @@ simulator 복원 경계에서 `10×`로 낮춘 뒤 다시 저장한다.
 시작 스크립트 완료 상태는 `LIVE/idle`이다. 프런트 플레이 버튼의
 `POST /api/simulator/action {"action":"start"}`가 새 `runId` 준비와 `running` 전환을
 한 번에 수행한다. 스크립트나 backend 연결만으로 simulation run을 만들거나 틱을 진행하지 않는다.
-Simulator status의 `symbols[]`는 replay manifest의 23종목을 반환한다. 각 항목의
+Simulator status의 `symbols[]`는 고정한 S&P 500 전체 502종목을 반환한다. 각 항목의
 `price`는 cursor까지 관측된 마지막 원본 체결가이고, `changePercent`는 같은 run에서
 처음 관측된 원본 체결가 대비 변화율이다. 아직 체결을 관측하지 못한 종목은 둘 다 null이며,
 재시작 시 이전 run의 값은 제거한다.
 
 `GET /api/charts/candles`는 replay 시작 전 정상 과거 봉과 현재 가상시각까지의 replay
 봉만 합친다. `/ws/charts`도 simulator candle snapshot을 묶어서 보내며 실시간 Redis
-WebSocket 경로를 사용하지 않는다. SIM 심볼 검색은 manifest의 23개 티커로 제한한다.
+WebSocket 경로를 사용하지 않는다. SIM 심볼 검색은 manifest의 502개 티커로 제한한다.
 `GET /api/charts/order-flow/symbols|intraday`는 SIM safe-read이며 LIVE Redis 대신
 simulator의 종목별 replay projection을 사용한다. projection은 원본 quote/trade를
 `virtualTime`까지만 sequence 순서로 읽고 정규장 체결만 `orderflow-estimated-v2`로

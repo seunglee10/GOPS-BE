@@ -68,7 +68,8 @@ def create_app(
 
     async def pump_replay() -> None:
         while True:
-            await asyncio.to_thread(controller.status)
+            pump = getattr(controller, "pump", None)
+            await asyncio.to_thread(pump if callable(pump) else controller.status)
             await asyncio.sleep(0.01 if controller.state == "running" else 0.25)
 
     @app.on_event("startup")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 import urllib.parse
+import urllib.error
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -23,8 +24,12 @@ from gops_simul.dataset import (
     DATASET_S3_PREFIX,
     DATASET_START,
     COMPANY_BY_SYMBOL,
+    EXPECTED_SYMBOL_COUNT,
     FEED_SEGMENTS,
+    REPLAY_SYMBOL_SET,
     REPLAY_SYMBOLS,
+    UNIVERSE_SYMBOLS_SHA256,
+    dataset_manifest_template,
     in_half_open_window,
 )
 from gops_simul import env as simulator_env
@@ -80,7 +85,28 @@ def trade(sequence: int, seconds: float, symbol: str, price: float) -> ReplayEve
 
 class DatasetContractTests(unittest.TestCase):
     def test_clickhouse_import_batches_are_large_enough_for_full_tick_volume(self):
-        self.assertGreaterEqual(import_alpaca.CLICKHOUSE_INSERT_BATCH_SIZE, 50_000)
+        self.assertGreaterEqual(import_alpaca.CLICKHOUSE_INSERT_BATCH_SIZE, 250_000)
+
+    def test_clickhouse_staging_writer_combines_rows_across_symbol_files(self):
+        class FakeClickHouseClient:
+            def __init__(self):
+                self.batches = []
+
+            def insert_json_each_row(self, table, rows):
+                self.batches.append((table, list(rows)))
+
+        client = FakeClickHouseClient()
+        writer = import_alpaca.ClickHouseStagingWriter(client, batch_size=3)
+
+        writer.add({"symbol": "AAPL"})
+        writer.add({"symbol": "AMD"})
+        self.assertEqual(client.batches, [])
+        writer.add({"symbol": "OKE"})
+        writer.add({"symbol": "WMT"})
+        writer.flush()
+
+        self.assertEqual([len(rows) for _table, rows in client.batches], [3, 1])
+        self.assertTrue(all(table == "market_data.simulation_replay_staging" for table, _rows in client.batches))
 
     def test_parallel_import_uses_deterministic_file_and_row_sequence(self):
         self.assertGreaterEqual(import_alpaca.DEFAULT_IMPORT_WORKERS, 4)
@@ -199,19 +225,77 @@ class DatasetContractTests(unittest.TestCase):
             Path("/app/.env"),
         )
 
-    def test_dataset_is_the_fixed_kst_day_with_amd_and_micron(self):
-        self.assertEqual(DATASET_ID, "sp500-top20-plus-amd-mu-20260715-kst-v2")
-        self.assertEqual(DATASET_S3_PREFIX, "simulator/replay/v2/dataset=sp500-top20-plus-amd-mu-20260715-kst")
+    def test_dataset_is_the_fixed_kst_day_with_the_pinned_sp500_universe(self):
+        canonical = json.loads(
+            (REPO_ROOT / "systems" / "market-data" / "config" / "sp500-universe.json").read_text()
+        )
+        self.assertEqual(DATASET_ID, "sp500-full-20260715-kst-v3")
+        self.assertEqual(DATASET_S3_PREFIX, "simulator/replay/v3/dataset=sp500-full-20260715-kst")
         self.assertEqual(DATASET_START, datetime(2026, 7, 14, 15, 0, tzinfo=UTC))
         self.assertEqual(DATASET_END, datetime(2026, 7, 15, 15, 0, tzinfo=UTC))
-        self.assertEqual(len(REPLAY_SYMBOLS), 23)
-        self.assertEqual(REPLAY_SYMBOLS[:4], ("NVDA", "MSFT", "AAPL", "AMZN"))
-        self.assertEqual(REPLAY_SYMBOLS[-2:], ("AMD", "MU"))
+        self.assertEqual(EXPECTED_SYMBOL_COUNT, 502)
+        self.assertEqual(REPLAY_SYMBOLS, tuple(canonical["symbols"]))
+        self.assertEqual(REPLAY_SYMBOL_SET, frozenset(REPLAY_SYMBOLS))
+        self.assertEqual(UNIVERSE_SYMBOLS_SHA256, "c1e72d49557182d11cd64d33bba16778f7b4184e5dfd58b921f2b46fe0d10cef")
+        self.assertTrue({"AMD", "MU", "OKE"}.issubset(REPLAY_SYMBOL_SET))
         self.assertEqual(COMPANY_BY_SYMBOL["AMD"], "Advanced Micro Devices")
         self.assertEqual(COMPANY_BY_SYMBOL["MU"], "Micron Technology")
-        self.assertEqual(len(set(COMPANY_BY_SYMBOL.values())), 22)
+        self.assertEqual(COMPANY_BY_SYMBOL["CAG"], "CAG")
+        self.assertEqual(len(COMPANY_BY_SYMBOL), EXPECTED_SYMBOL_COUNT)
         self.assertEqual([segment.feed for segment in FEED_SEGMENTS], ["sip", "boats", "sip"])
         self.assertEqual(ALLOWED_SPEEDS, (1, 2, 5, 10))
+
+        manifest = dataset_manifest_template()
+        self.assertEqual(manifest["universe"]["symbolCount"], EXPECTED_SYMBOL_COUNT)
+        self.assertEqual(manifest["universe"]["symbolsSha256"], UNIVERSE_SYMBOLS_SHA256)
+
+    def test_alpaca_rate_limit_is_retried_with_backoff(self):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"trades": {}}'
+
+        rate_limited = urllib.error.HTTPError(
+            "https://example.test",
+            429,
+            "rate limited",
+            {"Retry-After": "0"},
+            None,
+        )
+        with patch(
+            "gops_simul.tools.import_alpaca.urllib.request.urlopen",
+            side_effect=[rate_limited, FakeResponse()],
+        ), patch("gops_simul.tools.import_alpaca.time_module.sleep") as sleep:
+            payload = import_alpaca.fetch_json("https://example.test", {})
+
+        self.assertEqual(payload, {"trades": {}})
+        sleep.assert_called_once_with(import_alpaca.ALPACA_RETRY_BASE_SECONDS)
+
+    def test_import_result_requires_every_file_for_all_502_symbols(self):
+        manifest = {}
+        counts = {"events": 123}
+        completed = {
+            symbol: len(FEED_SEGMENTS) * 2
+            for symbol in REPLAY_SYMBOLS
+        }
+        completed[REPLAY_SYMBOLS[-1]] -= 1
+
+        import_alpaca._update_import_result(
+            manifest,
+            counts,
+            completed,
+            {REPLAY_SYMBOLS[-1]},
+        )
+
+        self.assertEqual(manifest["importResult"]["requestedSymbolCount"], 502)
+        self.assertEqual(manifest["importResult"]["successfulSymbolCount"], 501)
+        self.assertEqual(manifest["importResult"]["storedRowCount"], 123)
+        self.assertEqual(manifest["importResult"]["errorSymbols"], [REPLAY_SYMBOLS[-1]])
 
     def test_half_open_filter_rejects_the_exact_end_boundary(self):
         self.assertTrue(in_half_open_window(DATASET_START, DATASET_START, DATASET_END))
@@ -359,7 +443,7 @@ class ReplayOrderFlowProjectionTests(unittest.TestCase):
         projection = ReplayOrderFlowProjection(InMemoryReplayEventSource(events), cache_symbol_limit=8)
 
         for symbol in REPLAY_SYMBOLS:
-            payload = projection.snapshot(symbol, through=DATASET_START + timedelta(minutes=1), run_id="run-1")
+            payload = projection.snapshot(symbol, through=DATASET_START + timedelta(minutes=10), run_id="run-1")
             self.assertEqual(payload["dataStatus"], "ready")
 
         self.assertEqual(payload["supportedSymbols"], list(REPLAY_SYMBOLS))

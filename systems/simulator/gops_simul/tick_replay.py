@@ -11,7 +11,16 @@ from datetime import UTC, datetime, time as datetime_time, timedelta, timezone
 from typing import Callable, Iterable, Protocol
 from zoneinfo import ZoneInfo
 
-from gops_simul.dataset import ALLOWED_SPEEDS, DATASET_END, DATASET_ID, DATASET_START, REPLAY_SYMBOLS, in_half_open_window, parse_timestamp
+from gops_simul.dataset import (
+    ALLOWED_SPEEDS,
+    DATASET_END,
+    DATASET_ID,
+    DATASET_START,
+    REPLAY_SYMBOL_SET,
+    REPLAY_SYMBOLS,
+    in_half_open_window,
+    parse_timestamp,
+)
 from gops_simul.order_flow import ReplayOrderFlowProjection
 from gops_simul.state_store import ReplayStateStore
 
@@ -19,6 +28,7 @@ from gops_simul.state_store import ReplayStateStore
 KST = timezone(timedelta(hours=9))
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
 LEGACY_REPLAY_SPEEDS = frozenset({20, 60, 300})
+SYMBOL_STATUS_REFRESH_SECONDS = 0.25
 
 
 def normalize_configured_replay_speed(value: object, *, fallback: int | None = None) -> int:
@@ -47,7 +57,7 @@ class ReplayEvent:
             raise ValueError("sequence must be positive")
         if not in_half_open_window(self.timestamp, DATASET_START, DATASET_END):
             raise ValueError("event is outside the replay dataset window")
-        if str(self.payload.get("S") or "").upper() not in REPLAY_SYMBOLS:
+        if str(self.payload.get("S") or "").upper() not in REPLAY_SYMBOL_SET:
             raise ValueError("unsupported replay symbol")
 
 
@@ -101,7 +111,7 @@ class InMemoryReplayEventSource:
     def candle_snapshot(self, symbol: str, interval: str, through: datetime, limit: int) -> dict[str, object]:
         from gops_simul.clickhouse import INTERVAL_SECONDS, replay_candle_payload
         normalized = symbol.strip().upper()
-        if normalized not in REPLAY_SYMBOLS:
+        if normalized not in REPLAY_SYMBOL_SET:
             raise ValueError(f"symbol is not available in {DATASET_ID}")
         seconds = INTERVAL_SECONDS.get(interval)
         if seconds is None:
@@ -153,6 +163,9 @@ class ReplayController:
         self._latest_trades: dict[str, float] = {}
         self._opening_trades: dict[str, float] = {}
         self._daily_candles: dict[str, dict[str, dict[str, object]]] = {}
+        self._symbol_status_snapshot: list[dict[str, object]] = []
+        self._symbol_status_dirty = True
+        self._symbol_status_refreshed_at = float("-inf")
         self._order_flow = ReplayOrderFlowProjection(source)
         self._restore_state()
         self._status_snapshot = self._status()
@@ -224,6 +237,12 @@ class ReplayController:
         with self._lock:
             self._pump()
             return self._capture_status()
+
+    def pump(self) -> None:
+        """Advance replay state without copying the 502-symbol HTTP status payload."""
+        with self._lock:
+            self._pump()
+            self._status_snapshot = self._status()
 
     def status_snapshot(self) -> dict[str, object]:
         snapshot = self._status_snapshot
@@ -316,6 +335,7 @@ class ReplayController:
         self.mode, self.state, self.run_id = "simulation", "ready", str(uuid.uuid4())
         self.requested_speed, self.cursor, self.last_sequence = self.default_speed, DATASET_START, 0
         self._emitted.clear(); self._event_buffer.clear(); self._latest_quotes.clear(); self._latest_trades.clear(); self._opening_trades.clear(); self._daily_candles.clear()
+        self._invalidate_symbol_status(force=True)
         self._publish_quote_snapshot()
         self._order_flow.reset(self.run_id)
         self._run_started_wall = None
@@ -369,6 +389,7 @@ class ReplayController:
             price = _positive_float(payload.get("p"), "price")
             self._opening_trades.setdefault(symbol, price)
             self._latest_trades[symbol] = price
+            self._invalidate_symbol_status()
             self._update_daily_candle(symbol, event, price)
 
     def _update_daily_candle(self, symbol: str, event: ReplayEvent, price: float) -> None:
@@ -419,7 +440,7 @@ class ReplayController:
 
     def _symbol(self, value: object) -> str:
         symbol = str(value or "").strip().upper()
-        if symbol not in REPLAY_SYMBOLS:
+        if symbol not in REPLAY_SYMBOL_SET:
             raise ValueError(f"symbol is not available in {DATASET_ID}")
         return symbol
 
@@ -446,6 +467,7 @@ class ReplayController:
             snapshot.get("openingTrades"),
             self._daily_candles,
         )
+        self._invalidate_symbol_status(force=True)
         self._reset_anchor(); self._persist()
 
     def _persist(self) -> None:
@@ -465,6 +487,27 @@ class ReplayController:
             for symbol, quote in self._latest_quotes.items()
         }
 
+    def _invalidate_symbol_status(self, *, force: bool = False) -> None:
+        self._symbol_status_dirty = True
+        if force:
+            self._symbol_status_snapshot = []
+            self._symbol_status_refreshed_at = float("-inf")
+
+    def _current_symbol_statuses(self) -> list[dict[str, object]]:
+        now = self.clock()
+        should_refresh = not self._symbol_status_snapshot or (
+            self._symbol_status_dirty
+            and now - self._symbol_status_refreshed_at >= SYMBOL_STATUS_REFRESH_SECONDS
+        )
+        if should_refresh:
+            self._symbol_status_snapshot = [
+                self._symbol_status(symbol)
+                for symbol in REPLAY_SYMBOLS
+            ]
+            self._symbol_status_dirty = False
+            self._symbol_status_refreshed_at = now
+        return self._symbol_status_snapshot
+
     def _status(self) -> dict[str, object]:
         elapsed, duration = max(0.0, (self.cursor - DATASET_START).total_seconds()), (DATASET_END - DATASET_START).total_seconds()
         wall = 0.0 if self._run_started_wall is None else max(0.0, self.clock() - self._run_started_wall)
@@ -474,7 +517,7 @@ class ReplayController:
             "requestedSpeed": self.requested_speed, "effectiveSpeed": round(elapsed / wall if wall > 0 else 0.0, 3),
             "processedEventCount": self.last_sequence, "totalEventCount": self.source.total_events,
             "progress": round(min(1.0, elapsed / duration), 8), "lagMs": round(max(0.0, (target - self.cursor).total_seconds()) * 1000),
-            "symbols": [self._symbol_status(symbol) for symbol in REPLAY_SYMBOLS]}
+            "symbols": self._current_symbol_statuses()}
 
     def _symbol_status(self, symbol: str) -> dict[str, object]:
         price = self._latest_trades.get(symbol)
@@ -505,7 +548,7 @@ def normalize_restored_daily_candles(value: object) -> dict[str, dict[str, dict[
     restored: dict[str, dict[str, dict[str, object]]] = {}
     for symbol, rows in value.items():
         normalized_symbol = str(symbol).strip().upper()
-        if normalized_symbol not in REPLAY_SYMBOLS or not isinstance(rows, dict):
+        if normalized_symbol not in REPLAY_SYMBOL_SET or not isinstance(rows, dict):
             continue
         restored[normalized_symbol] = {
             str(market_date): dict(candle)

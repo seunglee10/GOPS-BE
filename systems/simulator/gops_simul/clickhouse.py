@@ -9,7 +9,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
-from gops_simul.dataset import DATASET_ID, REPLAY_SYMBOLS, isoformat_z, parse_timestamp
+from gops_simul.dataset import DATASET_ID, REPLAY_SYMBOL_SET, isoformat_z, parse_timestamp
 from gops_simul.tick_replay import ReplayEvent
 
 
@@ -87,7 +87,7 @@ class ClickHouseReplayEventSource:
 
     def events_for_symbol_after(self, symbol: str, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]:
         normalized = symbol.strip().upper()
-        if normalized not in REPLAY_SYMBOLS:
+        if normalized not in REPLAY_SYMBOL_SET:
             raise ValueError(f"symbol is not available in {self.dataset_id}")
         rows = self.client.query_rows(
             "SELECT sequence, event_time, feed, payload FROM market_data.simulation_replay_events "
@@ -106,7 +106,7 @@ class ClickHouseReplayEventSource:
 
     def candle_snapshot(self, symbol: str, interval: str, through: datetime, limit: int) -> dict[str, object]:
         symbol = symbol.strip().upper(); seconds = INTERVAL_SECONDS.get(interval)
-        if symbol not in REPLAY_SYMBOLS: raise ValueError(f"symbol is not available in {self.dataset_id}")
+        if symbol not in REPLAY_SYMBOL_SET: raise ValueError(f"symbol is not available in {self.dataset_id}")
         if seconds is None: raise ValueError(f"unsupported replay candle interval: {interval}")
         daily = interval in {"1D", "1d"}
         rows = self.client.query_rows(

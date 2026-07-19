@@ -1318,10 +1318,18 @@ AGENT_SNAPSHOT_TOTAL_DEADLINE_MS
 
 `gops-simulator`는 AWS app overlay에서 `replicas: 1`로 일반 app 배포와 함께 유지한다.
 실제 원본은 S3의
-`simulator/replay/v2/dataset=sp500-top20-plus-amd-mu-20260715-kst/` gzip JSONL과 ClickHouse의
+`simulator/replay/v3/dataset=sp500-full-20260715-kst/` gzip JSONL과 ClickHouse의
 TTL 없는 `simulation_replay_events`, `simulation_replay_candles_1m`에 저장한다.
 manifest hash·크기·종목별 trade/quote 수와 ClickHouse 건수가 모두 일치한 데이터셋만
 `simulation_replay_datasets.status=READY`가 된다.
+
+v3 유니버스는 `systems/market-data/config/sp500-universe.json`의 기준일
+`2026-06-30` S&P 500 전체 502개 티커를 symbol hash와 함께 고정한다. 예상 데이터는
+5,700만~8,500만 이벤트, 영구 저장량 약 2.6~3.8GiB이며 적재는 약 1시간 30분~2시간
+30분이다. staging·최종 파트·병합 파트가 동시에 존재하는 피크를 위해 ClickHouse PVC는
+80GiB를 요청한다. 기존 PVC는 StatefulSet을 다시 만들지 않고
+`scripts/aws/expand-clickhouse-pvc.sh`로 데이터 보존 상태에서 확장하며, importer는
+80GiB capacity와 최소 15GiB 파일시스템 여유를 사전 확인한다.
 
 적재는 `scripts/aws/run-simulator-replay-import.sh`가 suspend 상태의 전용 Job을
 생성한 뒤 실행한다. Job은 `alfaka-market-data-sa`의 S3 권한, 기존 Alpaca·ClickHouse
@@ -1329,12 +1337,15 @@ Secret을 사용하며 파일별 S3 검증이 끝나면 로컬 gzip을 지워 �
 제한한다. `READY` 데이터셋이 이미 있으면 다시 수집하지 않는다. simulator image가
 선택된 로컬·GitHub 배포는 새 image로 이 import gate를 app rollout 전에 자동 실행한다.
 따라서 새 데이터셋이 준비되기 전에 기존 READY Pod를 교체하지 않는다.
+502종목의 3,012개 원본 파일은 ClickHouse staging에 파일별로 넣지 않고 작업자 전체에서
+25만 행 배치로 합친다. Alpaca 429·일시 5xx·네트워크 오류와 S3 요청은 제한된 백오프로
+재시도하며, manifest에는 요청·성공 종목 수, 저장 행 수와 오류 종목을 기록한다.
 
 일반 배포는 ConfigMap의 `GOPS_SIMULATOR_URL`을 backend에 주입하고 simulator rollout도
 필수 gate로 기다린다. 별도 시작 스크립트는 필요 없다. 새 Pod는 `LIVE/idle`로 시작하고,
 화면의 플레이 버튼이 `start` action을 호출하기 전에는 새 run을 만들거나 재생하지 않는다.
 기존 `scripts/aws/start-dev-simulator.sh`는 ClickHouse schema와 고정 dataset의 `READY`,
-0보다 큰 event 수, health를 수동 점검하고 LIVE로 정리하는 호환 도구다. replica와 backend
+0보다 큰 event 수, 정확히 502개 symbol, health를 수동 점검하고 LIVE로 정리하는 호환 도구다. replica와 backend
 환경변수는 변경하지 않는다. SIP/BOATS
 ingestor, market processor, order-flow pin, 실시간 Redis/Kafka, trade-condition
 deployment는 변경하지 않는다. simulator는 ClickHouse를 chunk 조회하고 시계·캔들·quote와
