@@ -19,7 +19,7 @@ from alfaka.orderflow import (
 )
 from alfaka.orderflow.classification import normalize_quote, normalize_trade
 
-from gops_simul.dataset import DATASET_ID, REPLAY_SYMBOLS
+from gops_simul.dataset import DATASET_ID, REPLAY_SYMBOL_SET, REPLAY_SYMBOLS
 
 
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
@@ -95,7 +95,7 @@ class ReplayOrderFlowProjection:
     ) -> dict[str, object]:
         normalized = str(symbol or "").strip().upper()
         virtual_session_date = through.astimezone(MARKET_TIMEZONE).date().isoformat()
-        if normalized not in REPLAY_SYMBOLS:
+        if normalized not in REPLAY_SYMBOL_SET:
             return self._payload(
                 normalized,
                 virtual_session_date,

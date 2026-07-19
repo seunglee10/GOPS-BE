@@ -97,7 +97,7 @@ Resource and PVC targets:
 
 | Component | Resources | PVC | Data policy |
 | --- | --- | --- | --- |
-| ClickHouse | request `cpu 4`, `memory 6Gi`; limit `cpu 4`, `memory 8Gi` | `50Gi` minimum | Restore from verified backup or snapshot |
+| ClickHouse | request `cpu 4`, `memory 6Gi`; limit `cpu 4`, `memory 8Gi` | `80Gi` minimum | Restore from verified backup or snapshot |
 | Kafka | request `cpu 1`, `memory 2Gi`; limit `cpu 2`, `memory 4Gi`; `KAFKA_HEAP_OPTS=-Xms1g -Xmx2g` | `30Gi` minimum | Preserve logs/offsets unless reset is approved |
 | GraphDB | `GDB_HEAP_SIZE=4g`; request `memory 6Gi`; limit `memory 7Gi` | `10Gi` minimum | Restore full `/opt/graphdb/home` archive |
 | Redis | request `memory 1Gi`; limit `memory 4Gi`; `maxmemory=3Gi`; `volatile-lru` | `10Gi` minimum | Preserve non-cache state; cache reset requires approval |
@@ -217,7 +217,7 @@ Node placement:
 
 PVCs:
 
-- ClickHouse: `50Gi` or larger
+- ClickHouse: `80Gi` or larger
 - Kafka: `30Gi` or larger
 - GraphDB: `10Gi` or larger
 - Redis: `10Gi` or larger

@@ -27,7 +27,7 @@ from systems.simulator.gops_simul.tick_replay import InMemoryReplayEventSource, 
 class _BlockingReplayController:
     def __init__(self) -> None:
         self.source = SimpleNamespace(
-            dataset_id="sp500-top20-plus-amd-mu-20260715-kst-v2",
+            dataset_id="sp500-full-20260715-kst-v3",
             total_events=1,
         )
         self.state = "running"

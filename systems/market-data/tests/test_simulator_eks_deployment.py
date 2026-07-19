@@ -13,8 +13,9 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         dataset_source = (SIMULATOR_ROOT / "gops_simul" / "dataset.py").read_text(encoding="utf-8")
         schema = (REPO_ROOT / "infra" / "clickhouse" / "initdb" / "01-market-data.sql").read_text(encoding="utf-8")
 
-        self.assertIn('DATASET_ID: Final = "sp500-top20-plus-amd-mu-20260715-kst-v2"', dataset_source)
-        self.assertIn('"AMD", "MU"', dataset_source)
+        self.assertIn('DATASET_ID: Final = "sp500-full-20260715-kst-v3"', dataset_source)
+        self.assertIn("EXPECTED_SYMBOL_COUNT: Final = 502", dataset_source)
+        self.assertIn('"sp500-universe.json"', dataset_source)
         self.assertIn("simulation_replay_events", schema)
         self.assertIn("simulation_replay_candles_1m", schema)
         replay_schema = schema.split("CREATE TABLE IF NOT EXISTS market_data.trade_ticks", 1)[0]
@@ -32,9 +33,9 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
 
         self.assertIn("name: gops-simulator", rendered)
         self.assertIn("replicas: 0", rendered)
-        self.assertIn("cpu: 250m", rendered)
-        self.assertIn("memory: 256Mi", rendered)
+        self.assertIn("cpu: 500m", rendered)
         self.assertIn("memory: 512Mi", rendered)
+        self.assertIn("memory: 1Gi", rendered)
         self.assertIn("SIM_REPLAY_DATASET_ID", rendered)
         self.assertIn("CLICKHOUSE_URL", rendered)
         self.assertIn("REDIS_URL", rendered)
@@ -66,6 +67,13 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         )
         self.assertIn("systems/simulator/*", detector)
         self.assertIn("Dockerfile.gops-simulator", detector)
+        self.assertIn("systems/market-data/config/*", detector)
+
+        dockerfile = (REPO_ROOT / "infra" / "docker" / "Dockerfile.gops-simulator").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("sp500-universe.json", dockerfile)
+        self.assertIn("sp500-heatmap-seed.json", dockerfile)
 
     def test_on_demand_scripts_only_switch_global_mode_and_preserve_live_pipeline(self):
         start_script = (REPO_ROOT / "scripts" / "aws" / "start-dev-simulator.sh").read_text(
@@ -95,7 +103,12 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         self.assertNotIn("alfaka-market-processor", stop_script)
         self.assertNotIn("trade-condition-executor", stop_script)
 
-        for script in ("start-dev-simulator.sh", "stop-dev-simulator.sh", "run-simulator-replay-import.sh"):
+        for script in (
+            "start-dev-simulator.sh",
+            "stop-dev-simulator.sh",
+            "run-simulator-replay-import.sh",
+            "expand-clickhouse-pvc.sh",
+        ):
             subprocess.run(
                 ["bash", "-n", f"scripts/aws/{script}"],
                 cwd=REPO_ROOT,
@@ -123,7 +136,20 @@ class SimulatorEksDeploymentContractTests(unittest.TestCase):
         self.assertNotIn('kubectl set image "job/${JOB_NAME}"', runner)
         self.assertIn("condition=complete", runner)
         self.assertIn("simulation_replay_datasets", runner)
+        self.assertIn("EXPECTED_SYMBOL_COUNT", runner)
+        self.assertIn('"${CLICKHOUSE_STORAGE_SCRIPT}" --check', runner)
         self.assertIn('simulator_image="${SIMULATOR_IMAGE:-}"', runner)
+
+        clickhouse = (REPO_ROOT / "infra" / "k8s" / "base" / "platform" / "clickhouse-statefulset.yaml").read_text(
+            encoding="utf-8"
+        )
+        expansion = (REPO_ROOT / "scripts" / "aws" / "expand-clickhouse-pvc.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("storage: 80Gi", clickhouse)
+        self.assertIn("TARGET_STORAGE_GIB=\"${CLICKHOUSE_TARGET_STORAGE_GIB:-80}\"", expansion)
+        self.assertIn("allowVolumeExpansion", expansion)
+        self.assertIn("MIN_FREE_GIB", expansion)
 
         local_deploy = (REPO_ROOT / "scripts" / "aws" / "deploy-dev-local.sh").read_text(
             encoding="utf-8"

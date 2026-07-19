@@ -5,12 +5,15 @@ import gzip
 import hashlib
 import json
 import os
+import time as time_module
+import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, date, datetime, time, timedelta
+from functools import lru_cache
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock
 from typing import Any, Iterator
 
 from gops_simul.config import PROJECT_ROOT
@@ -30,9 +33,37 @@ from gops_simul.storage import normalize_symbols
 
 DATA_BASE_URL = "https://data.alpaca.markets"
 DEFAULT_IMPORT_DAYS = 7
-CLICKHOUSE_INSERT_BATCH_SIZE = 50_000
+CLICKHOUSE_INSERT_BATCH_SIZE = 250_000
 DEFAULT_IMPORT_WORKERS = 4
 SOURCE_SEQUENCE_STRIDE = 1_000_000_000
+ALPACA_MAX_ATTEMPTS = 9
+ALPACA_RETRY_BASE_SECONDS = 0.5
+ALPACA_RETRY_MAX_SECONDS = 30.0
+
+
+class ClickHouseStagingWriter:
+    """Combine rows from many symbol files into bounded ClickHouse inserts."""
+
+    def __init__(self, client, *, batch_size: int = CLICKHOUSE_INSERT_BATCH_SIZE) -> None:
+        self.client = client
+        self.batch_size = max(1, int(batch_size))
+        self._lock = Lock()
+        self._batch: list[dict[str, object]] = []
+
+    def add(self, row: dict[str, object]) -> None:
+        pending: list[dict[str, object]] = []
+        with self._lock:
+            self._batch.append(row)
+            if len(self._batch) >= self.batch_size:
+                pending, self._batch = self._batch, []
+        if pending:
+            self.client.insert_json_each_row("market_data.simulation_replay_staging", pending)
+
+    def flush(self) -> None:
+        with self._lock:
+            pending, self._batch = self._batch, []
+        if pending:
+            self.client.insert_json_each_row("market_data.simulation_replay_staging", pending)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -123,13 +154,27 @@ def build_fixed_dataset(*, output_root: Path, base_url: str, headers: dict[str, 
     if clickhouse_url:
         from gops_simul.clickhouse import ClickHouseHttpClient
         clickhouse = ClickHouseHttpClient(clickhouse_url, database=clickhouse_database, user=clickhouse_user,
-            password=clickhouse_password, timeout_seconds=120)
+            password=clickhouse_password,
+            timeout_seconds=float(os.getenv("SIM_CLICKHOUSE_IMPORT_TIMEOUT_SECONDS", "7200")))
         _clear_clickhouse_build(clickhouse)
+    staging_writer = ClickHouseStagingWriter(clickhouse) if clickhouse else None
     worker_count = max(1, min(16, int(os.getenv("SIM_IMPORT_WORKERS", str(DEFAULT_IMPORT_WORKERS)))))
     manifest = dataset_manifest_template(); manifest["createdAt"] = datetime.now(UTC).isoformat()
     manifest["source"] = {"provider": "alpaca", "baseUrl": base_url, "adjustment": "raw", "limit": limit,
         "importWorkers": worker_count}
     counts = manifest["counts"]
+    counts["bySymbol"] = {
+        symbol: {"trades": 0, "quotes": 0}
+        for symbol in REPLAY_SYMBOLS
+    }
+    completed_files: dict[str, int] = {symbol: 0 for symbol in REPLAY_SYMBOLS}
+    error_symbols: set[str] = set()
+    manifest["importResult"] = {
+        "requestedSymbolCount": len(REPLAY_SYMBOLS),
+        "successfulSymbolCount": 0,
+        "storedRowCount": 0,
+        "errorSymbols": [],
+    }
     try:
         tasks: list[tuple[int, int, FeedSegment, str, str]] = []
         for segment_index, segment in enumerate(FEED_SEGMENTS, 1):
@@ -142,14 +187,20 @@ def build_fixed_dataset(*, output_root: Path, base_url: str, headers: dict[str, 
             executor.submit(_collect_fixed_file, root=root, file_ordinal=file_ordinal,
                 segment_index=segment_index, segment=segment, symbol=symbol, kind=kind,
                 base_url=base_url, headers=headers, limit=limit, max_pages=max_pages,
-                s3_prefix=s3_prefix, clickhouse=clickhouse, local_only=local_only,
-                stop_event=stop_event): file_ordinal
+                s3_prefix=s3_prefix, staging_writer=staging_writer, local_only=local_only,
+                stop_event=stop_event): (file_ordinal, symbol)
             for file_ordinal, segment_index, segment, symbol, kind in tasks
         }
         results: dict[int, tuple[dict[str, object], int]] = {}
         try:
             for future in as_completed(futures):
-                results[futures[future]] = future.result()
+                file_ordinal, symbol = futures[future]
+                try:
+                    results[file_ordinal] = future.result()
+                    completed_files[symbol] += 1
+                except Exception:
+                    error_symbols.add(symbol)
+                    raise
         except Exception:
             stop_event.set()
             for future in futures:
@@ -157,12 +208,23 @@ def build_fixed_dataset(*, output_root: Path, base_url: str, headers: dict[str, 
             raise
         finally:
             executor.shutdown(wait=True, cancel_futures=True)
+        if staging_writer:
+            staging_writer.flush()
         for file_ordinal, _segment_index, _segment, _symbol, _kind in tasks:
             entry, row_count = results[file_ordinal]
             symbol = str(entry["symbol"]); kind = str(entry["kind"])
-            symbol_counts = counts["bySymbol"].setdefault(symbol, {"trades": 0, "quotes": 0})
+            symbol_counts = counts["bySymbol"][symbol]
             manifest["files"].append(entry); counts[kind] += row_count; counts["events"] += row_count; symbol_counts[kind] += row_count
         if int(counts["events"]) <= 0: raise RuntimeError("Alpaca returned no replay events")
+        empty_symbols = {
+            symbol
+            for symbol, symbol_counts in counts["bySymbol"].items()
+            if int(symbol_counts["trades"]) + int(symbol_counts["quotes"]) <= 0
+        }
+        if empty_symbols:
+            error_symbols.update(empty_symbols)
+            raise RuntimeError(f"Alpaca returned no replay events for: {','.join(sorted(empty_symbols))}")
+        _update_import_result(manifest, counts, completed_files, error_symbols)
         if clickhouse:
             _materialize_clickhouse(clickhouse)
             total = clickhouse.query_rows("SELECT count() events, countIf(event_type='trade') trades, countIf(event_type='quote') quotes "
@@ -171,7 +233,11 @@ def build_fixed_dataset(*, output_root: Path, base_url: str, headers: dict[str, 
                 raise RuntimeError("ClickHouse total verification mismatch")
             rows = clickhouse.query_rows("SELECT symbol, countIf(event_type='trade') trades, countIf(event_type='quote') quotes "
                 f"FROM market_data.simulation_replay_events WHERE dataset_id='{DATASET_ID}' GROUP BY symbol")
-            actual = {str(row["symbol"]): {"trades": int(row["trades"]), "quotes": int(row["quotes"])} for row in rows}
+            actual = {
+                symbol: {"trades": 0, "quotes": 0}
+                for symbol in REPLAY_SYMBOLS
+            }
+            actual.update({str(row["symbol"]): {"trades": int(row["trades"]), "quotes": int(row["quotes"])} for row in rows})
             if actual != counts["bySymbol"]: raise RuntimeError("ClickHouse per-symbol verification mismatch")
         manifest["status"] = "LOCAL_READY" if local_only else "READY"; manifest["completedAt"] = datetime.now(UTC).isoformat()
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
@@ -179,6 +245,7 @@ def build_fixed_dataset(*, output_root: Path, base_url: str, headers: dict[str, 
         if clickhouse: _record_dataset_status(clickhouse, manifest)
         return manifest
     except Exception as exc:
+        _update_import_result(manifest, counts, completed_files, error_symbols)
         manifest.update(status="FAILED", error=str(exc)); manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
         if clickhouse: _record_dataset_status(clickhouse, manifest)
         raise
@@ -196,11 +263,12 @@ def deterministic_source_sequence(file_ordinal: int, row_number: int) -> int:
 
 def _collect_fixed_file(*, root: Path, file_ordinal: int, segment_index: int, segment: FeedSegment,
                         symbol: str, kind: str, base_url: str, headers: dict[str, str], limit: int,
-                        max_pages: int | None, s3_prefix: str, clickhouse, local_only: bool,
+                        max_pages: int | None, s3_prefix: str,
+                        staging_writer: ClickHouseStagingWriter | None, local_only: bool,
                         stop_event: Event) -> tuple[dict[str, object], int]:
     relative = Path(f"feed={segment.feed}/segment={segment_index:02d}/symbol={symbol}/{kind}.jsonl.gz")
     path = root / relative; path.parent.mkdir(parents=True, exist_ok=True)
-    row_count = 0; batch: list[dict[str, object]] = []
+    row_count = 0
     with gzip.open(path, "wt", encoding="utf-8", newline="\n") as handle:
         for row_count, row in enumerate(iter_kind_rows(kind=kind, base_url=base_url, symbol=symbol,
             feed=segment.feed, start=isoformat_z(segment.start), end=isoformat_z(segment.end),
@@ -208,15 +276,12 @@ def _collect_fixed_file(*, root: Path, file_ordinal: int, segment_index: int, se
             if stop_event.is_set():
                 raise RuntimeError("replay import cancelled after another file failed")
             encoded = json.dumps(row, sort_keys=True, separators=(",", ":")); handle.write(encoded + "\n")
-            if clickhouse:
-                batch.append({"dataset_id": DATASET_ID, "event_time": row["t"], "source_file": str(relative),
+            if staging_writer:
+                staging_writer.add({"dataset_id": DATASET_ID, "event_time": row["t"], "source_file": str(relative),
                     "source_sequence": deterministic_source_sequence(file_ordinal, row_count), "symbol": symbol,
                     "event_type": "trade" if kind == "trades" else "quote", "feed": segment.feed, "payload": encoded})
-                if len(batch) >= CLICKHOUSE_INSERT_BATCH_SIZE:
-                    clickhouse.insert_json_each_row("market_data.simulation_replay_staging", batch); batch.clear()
             if row_count % 500_000 == 0:
                 print(f"[{segment_index:02d}/{segment.feed}] {symbol} {kind}: {row_count:,} rows", flush=True)
-    if clickhouse and batch: clickhouse.insert_json_each_row("market_data.simulation_replay_staging", batch)
     digest = sha256_file(path)
     entry = {"path": str(relative), "feed": segment.feed, "segment": segment_index, "symbol": symbol,
         "kind": kind, "rowCount": row_count, "compressedBytes": path.stat().st_size, "sha256": digest,
@@ -238,11 +303,32 @@ def _clear_clickhouse_build(client) -> None:
 def _materialize_clickhouse(client) -> None:
     client.execute("INSERT INTO market_data.simulation_replay_events (dataset_id,event_time,sequence,symbol,event_type,feed,payload) "
         "SELECT dataset_id,event_time,toUInt64(row_number() OVER (ORDER BY event_time,source_sequence)),symbol,event_type,feed,payload "
-        f"FROM market_data.simulation_replay_staging WHERE dataset_id='{DATASET_ID}'")
+        f"FROM market_data.simulation_replay_staging WHERE dataset_id='{DATASET_ID}' "
+        "SETTINGS max_threads=4,max_memory_usage=6000000000,max_bytes_before_external_sort=1000000000")
     client.execute("INSERT INTO market_data.simulation_replay_candles_1m (dataset_id,event_time,symbol,open,high,low,close,volume,trade_count) "
         "SELECT dataset_id,toStartOfMinute(event_time),symbol,argMin(JSONExtractFloat(payload,'p'),tuple(event_time,source_sequence)),"
         "max(JSONExtractFloat(payload,'p')),min(JSONExtractFloat(payload,'p')),argMax(JSONExtractFloat(payload,'p'),tuple(event_time,source_sequence)),"
-        f"sum(JSONExtractFloat(payload,'s')),count() FROM market_data.simulation_replay_staging WHERE dataset_id='{DATASET_ID}' AND event_type='trade' GROUP BY dataset_id,toStartOfMinute(event_time),symbol")
+        f"sum(JSONExtractFloat(payload,'s')),count() FROM market_data.simulation_replay_staging WHERE dataset_id='{DATASET_ID}' AND event_type='trade' "
+        "GROUP BY dataset_id,toStartOfMinute(event_time),symbol "
+        "SETTINGS max_threads=4,max_memory_usage=6000000000,max_bytes_before_external_group_by=1000000000")
+
+
+def _update_import_result(
+    manifest: dict[str, object],
+    counts: dict[str, object],
+    completed_files: dict[str, int],
+    error_symbols: set[str],
+) -> None:
+    expected_files_per_symbol = len(FEED_SEGMENTS) * 2
+    manifest["importResult"] = {
+        "requestedSymbolCount": len(REPLAY_SYMBOLS),
+        "successfulSymbolCount": sum(
+            completed == expected_files_per_symbol
+            for completed in completed_files.values()
+        ),
+        "storedRowCount": int(counts.get("events") or 0),
+        "errorSymbols": sorted(error_symbols),
+    }
 
 
 def _record_dataset_status(client, manifest: dict[str, object]) -> None:
@@ -260,9 +346,26 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+@lru_cache(maxsize=1)
 def _s3_client():
     import boto3
-    return boto3.client("s3", region_name=os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION"))
+    from botocore.config import Config
+
+    return boto3.client(
+        "s3",
+        region_name=os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION"),
+        config=Config(
+            retries={"max_attempts": 10, "mode": "adaptive"},
+            max_pool_connections=16,
+        ),
+    )
+
+
+@lru_cache(maxsize=1)
+def _s3_transfer_config():
+    from boto3.s3.transfer import TransferConfig
+
+    return TransferConfig(use_threads=False)
 
 
 def _s3_manifest_exists(prefix: str) -> bool:
@@ -278,7 +381,13 @@ def _upload_s3(path: Path, uri: str, *, sha256: str, row_count: int | None = Non
     metadata = {"sha256": sha256}
     if row_count is not None: metadata["row-count"] = str(row_count)
     bucket, key = _s3_bucket_key(uri); client = _s3_client()
-    client.upload_file(str(path), bucket, key, ExtraArgs={"Metadata": metadata})
+    client.upload_file(
+        str(path),
+        bucket,
+        key,
+        ExtraArgs={"Metadata": metadata},
+        Config=_s3_transfer_config(),
+    )
     head = client.head_object(Bucket=bucket, Key=key); remote = head.get("Metadata") or {}
     if int(head.get("ContentLength") or -1) != path.stat().st_size or remote.get("sha256") != sha256:
         raise RuntimeError(f"S3 verification failed for {uri}")
@@ -299,7 +408,36 @@ def build_url(*, kind: str, base_url: str, symbol: str, feed: str, start: str, e
 
 
 def fetch_json(url: str, headers: dict[str, str]) -> dict[str, Any]:
-    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response: return json.loads(response.read().decode())
+    request = urllib.request.Request(url, headers=headers)
+    for attempt in range(1, ALPACA_MAX_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode())
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429 and not 500 <= exc.code < 600:
+                raise
+            if attempt >= ALPACA_MAX_ATTEMPTS:
+                raise
+            retry_after = exc.headers.get("Retry-After") if exc.headers else None
+            delay = _retry_delay(attempt, retry_after)
+            print(f"Alpaca HTTP {exc.code}; retrying in {delay:.1f}s ({attempt}/{ALPACA_MAX_ATTEMPTS})", flush=True)
+            time_module.sleep(delay)
+        except (urllib.error.URLError, TimeoutError):
+            if attempt >= ALPACA_MAX_ATTEMPTS:
+                raise
+            delay = _retry_delay(attempt, None)
+            print(f"Alpaca request failed; retrying in {delay:.1f}s ({attempt}/{ALPACA_MAX_ATTEMPTS})", flush=True)
+            time_module.sleep(delay)
+    raise RuntimeError("unreachable Alpaca retry state")
+
+
+def _retry_delay(attempt: int, retry_after: str | None) -> float:
+    try:
+        requested = float(retry_after) if retry_after is not None else 0.0
+    except (TypeError, ValueError):
+        requested = 0.0
+    exponential = ALPACA_RETRY_BASE_SECONDS * (2 ** max(0, attempt - 1))
+    return min(ALPACA_RETRY_MAX_SECONDS, max(requested, exponential))
 
 
 def normalize_rows(kind: str, symbol: str, payload: dict[str, Any]) -> list[dict[str, object]]:

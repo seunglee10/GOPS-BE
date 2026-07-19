@@ -11,6 +11,8 @@ RUN pip install --no-cache-dir --requirement /app/requirements.txt
 
 COPY systems/simulator /app
 COPY systems/market-data/shared /app/market-data-shared
+COPY systems/market-data/config/sp500-universe.json /app/config/sp500-universe.json
+COPY systems/market-data/config/sp500-heatmap-seed.json /app/config/sp500-heatmap-seed.json
 
 RUN groupadd --gid 10001 simulator \
     && useradd --uid 10001 --gid simulator --no-create-home --shell /usr/sbin/nologin simulator

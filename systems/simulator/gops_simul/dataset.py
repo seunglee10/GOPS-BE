@@ -1,34 +1,68 @@
-"""Immutable contract for the 2026-07-15 KST S&P replay with AMD and Micron."""
+"""Immutable contract for the 2026-07-15 KST full S&P 500 replay."""
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Final
 
 
-DATASET_ID: Final = "sp500-top20-plus-amd-mu-20260715-kst-v2"
-DATASET_SCHEMA_VERSION: Final = 2
-DATASET_S3_PREFIX: Final = "simulator/replay/v2/dataset=sp500-top20-plus-amd-mu-20260715-kst"
+DATASET_ID: Final = "sp500-full-20260715-kst-v3"
+DATASET_SCHEMA_VERSION: Final = 3
+DATASET_S3_PREFIX: Final = "simulator/replay/v3/dataset=sp500-full-20260715-kst"
 DATASET_START: Final = datetime(2026, 7, 14, 15, 0, tzinfo=UTC)
 DATASET_END: Final = datetime(2026, 7, 15, 15, 0, tzinfo=UTC)
 MARKET_CAP_SNAPSHOT_DATE: Final = "2026-06-30"
+EXPECTED_SYMBOL_COUNT: Final = 502
+UNIVERSE_SYMBOLS_SHA256: Final = "c1e72d49557182d11cd64d33bba16778f7b4184e5dfd58b921f2b46fe0d10cef"
 
-REPLAY_SYMBOLS: Final = (
-    "NVDA", "MSFT", "AAPL", "AMZN", "META", "AVGO", "GOOGL", "GOOG", "BRK.B",
-    "TSLA", "LLY", "JPM", "WMT", "V", "ORCL", "MA", "NFLX", "XOM", "COST", "HD", "JNJ",
-    "AMD", "MU",
-)
 
-COMPANY_BY_SYMBOL: Final = {
-    "NVDA": "NVIDIA", "MSFT": "Microsoft", "AAPL": "Apple", "AMZN": "Amazon",
-    "META": "Meta Platforms", "AVGO": "Broadcom", "GOOGL": "Alphabet", "GOOG": "Alphabet",
-    "BRK.B": "Berkshire Hathaway", "TSLA": "Tesla", "LLY": "Eli Lilly",
-    "JPM": "JPMorgan Chase", "WMT": "Walmart", "V": "Visa", "ORCL": "Oracle",
-    "MA": "Mastercard", "NFLX": "Netflix", "XOM": "Exxon Mobil", "COST": "Costco",
-    "HD": "Home Depot", "JNJ": "Johnson & Johnson", "AMD": "Advanced Micro Devices",
-    "MU": "Micron Technology",
-}
+def _config_path(filename: str, env_name: str) -> Path:
+    candidates: list[Path | None] = [
+        Path(configured) if (configured := os.getenv(env_name, "").strip()) else None,
+        Path("/app/config") / filename,
+    ]
+    module_parents = Path(__file__).resolve().parents
+    if len(module_parents) > 3:
+        candidates.append(module_parents[3] / "systems" / "market-data" / "config" / filename)
+    for candidate in candidates:
+        if candidate is not None and candidate.is_file():
+            return candidate
+    raise RuntimeError(f"simulator config is unavailable: {filename}")
+
+
+def _load_replay_universe() -> tuple[tuple[str, ...], dict[str, str], dict[str, str]]:
+    universe_path = _config_path("sp500-universe.json", "SIM_REPLAY_UNIVERSE_PATH")
+    payload = json.loads(universe_path.read_text(encoding="utf-8"))
+    symbols = tuple(str(symbol).strip().upper() for symbol in payload.get("symbols", []))
+    digest = hashlib.sha256("\n".join(symbols).encode("utf-8")).hexdigest()
+    if len(symbols) != EXPECTED_SYMBOL_COUNT or len(set(symbols)) != EXPECTED_SYMBOL_COUNT:
+        raise RuntimeError(f"fixed replay universe must contain {EXPECTED_SYMBOL_COUNT} unique symbols")
+    if payload.get("sourceRetrievedAt") != MARKET_CAP_SNAPSHOT_DATE or digest != UNIVERSE_SYMBOLS_SHA256:
+        raise RuntimeError("fixed replay universe changed; create a new immutable dataset version")
+
+    company_path = _config_path("sp500-heatmap-seed.json", "SIM_REPLAY_COMPANY_SEED_PATH")
+    company_payload = json.loads(company_path.read_text(encoding="utf-8"))
+    company_names = {
+        str(item.get("symbol") or "").strip().upper(): str(item.get("companyName") or "").strip()
+        for item in company_payload.get("items", [])
+        if isinstance(item, dict)
+    }
+    companies = {symbol: company_names.get(symbol) or symbol for symbol in symbols}
+    provenance = {
+        "source": str(payload.get("source") or ""),
+        "sourceRetrievedAt": str(payload.get("sourceRetrievedAt") or ""),
+        "symbolsSha256": digest,
+    }
+    return symbols, companies, provenance
+
+
+REPLAY_SYMBOLS, COMPANY_BY_SYMBOL, UNIVERSE_PROVENANCE = _load_replay_universe()
+REPLAY_SYMBOL_SET: Final = frozenset(REPLAY_SYMBOLS)
 
 
 @dataclass(frozen=True)
@@ -77,6 +111,7 @@ def dataset_manifest_template() -> dict[str, object]:
         "datasetId": DATASET_ID,
         "status": "BUILDING",
         "marketCapSnapshotDate": MARKET_CAP_SNAPSHOT_DATE,
+        "universe": {**UNIVERSE_PROVENANCE, "symbolCount": len(REPLAY_SYMBOLS)},
         "startTime": isoformat_z(DATASET_START),
         "endTimeExclusive": isoformat_z(DATASET_END),
         "symbols": list(REPLAY_SYMBOLS),
