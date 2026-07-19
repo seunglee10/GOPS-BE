@@ -28,6 +28,10 @@ score-profile provenance를 반환한다. `preference*`, `personalizationDelta`,
 provenance를 반환한다. OpenAI structured output을 사용할 수 없으면 같은 검색 결과로 만든
 결정론적 초안을 반환하지만 프로필을 저장·활성화하지 않는다. 최종 프로필 생성과 활성화는
 기존 CRUD/active API를 통한 사용자의 명시적 적용 뒤에만 일어난다.
+빠른 예시 문구 `거래대금이 강하고 추세가 이어지는 종목`의 완성된 suggestion만 사용자별
+Redis key로 30일(`2592000`초) 캐시한다. cache hit는 retrieval·LLM 호출 없이 같은 초안을
+반환한다. 다른 문구는 캐시하지 않으며 Redis 미설정·읽기·쓰기 오류는 요청 실패로 바꾸지
+않고 기존 suggestion 생성 경로로 fail-open한다.
 
 ## Backend Role
 

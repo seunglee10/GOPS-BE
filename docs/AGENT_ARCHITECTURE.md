@@ -25,6 +25,9 @@ query normalizer가 입력을 형태소 유사 fragment로 정규화하고, 고�
 LLM에 전달한다. LLM은 허용된 블록·세부 key의 가중치와 근거만 구조화해 반환하며 서버가
 각 그룹 합계 100과 값 범위를 다시 검증한다. 제안은 저장되지 않은 초안이고 hard gate,
 Evidence Reliability, soft penalty와 직접 매수 조건을 변경할 수 없다.
+빠른 예시 `거래대금이 강하고 추세가 이어지는 종목`은 같은 사용자의 완성된 제안을 Redis에
+30일간 저장해 재요청 시 retrieval·LLM 경로를 건너뛴다. 다른 자연어 요청은 캐시하지 않으며,
+Redis 장애나 미설정 상태에서는 기존 생성 경로로 fail-open한다.
 
 ## 목적
 
