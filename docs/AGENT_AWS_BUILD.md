@@ -1324,9 +1324,10 @@ manifest hash·크기·종목별 trade/quote 수와 ClickHouse 건수가 모두 
 `simulation_replay_datasets.status=READY`가 된다.
 
 v3 유니버스는 `systems/market-data/config/sp500-universe.json`의 기준일
-`2026-06-30` S&P 500 전체 502개 티커를 symbol hash와 함께 고정한다. 예상 데이터는
-5,700만~8,500만 이벤트, 영구 저장량 약 2.6~3.8GiB이며 적재는 약 1시간 30분~2시간
-30분이다. staging·최종 파트·병합 파트가 동시에 존재하는 피크를 위해 ClickHouse PVC는
+`2026-06-30` S&P 500 전체 502개 티커를 symbol hash와 함께 고정한다. 첫 dev 수집 실측은
+93,275,117 이벤트(체결 40,303,220, 호가 52,971,897), S3 gzip 3,012개
+994,400,238 bytes(약 948.3MiB)이며 적재는 약 1시간 30분~2시간 30분이다.
+staging·최종 파트·병합 파트가 동시에 존재하는 피크를 위해 ClickHouse PVC는
 80GiB를 요청한다. 기존 PVC는 StatefulSet을 다시 만들지 않고
 `scripts/aws/expand-clickhouse-pvc.sh`로 데이터 보존 상태에서 확장하며, importer는
 80GiB capacity와 최소 15GiB 파일시스템 여유를 사전 확인한다.
@@ -1340,6 +1341,12 @@ Secret을 사용하며 파일별 S3 검증이 끝나면 로컬 gzip을 지워 �
 502종목의 3,012개 원본 파일은 ClickHouse staging에 파일별로 넣지 않고 작업자 전체에서
 25만 행 배치로 합친다. Alpaca 429·일시 5xx·네트워크 오류와 S3 요청은 제한된 백오프로
 재시도하며, manifest에는 요청·성공 종목 수, 저장 행 수와 오류 종목을 기록한다.
+최종 `simulation_replay_events` 순번과 `simulation_replay_candles_1m`은 15분 구간별로
+materialize해 하루 전체 window sort의 메모리 피크를 피하고, 이전 구간 누적 건수를
+sequence offset으로 사용해 전역 시간순을 보존한다. S3 원본 업로드가 끝난 뒤 최종 변환만
+실패한 경우 `SIM_REPLAY_RESUME_FROM_S3=true scripts/aws/run-simulator-replay-import.sh`로
+3,012개 gzip의 크기·SHA-256·행 수를 검증하며 staging을 복원한다. 이 복구 실행은 Alpaca를
+다시 호출하지 않는다.
 
 일반 배포는 ConfigMap의 `GOPS_SIMULATOR_URL`을 backend에 주입하고 simulator rollout도
 필수 gate로 기다린다. 별도 시작 스크립트는 필요 없다. 새 Pod는 `LIVE/idle`로 시작하고,

@@ -696,6 +696,7 @@ run_simulator_replay_import_if_selected() {
   (
     cd "${WORKTREE_DIR}"
     SIMULATOR_IMAGE="${simulator_image}:${IMAGE_TAG}" \
+      SIM_REPLAY_RESUME_FROM_S3="${SIM_REPLAY_RESUME_FROM_S3:-false}" \
       K8S_NAMESPACE="${K8S_NAMESPACE}" \
       scripts/aws/run-simulator-replay-import.sh
   )

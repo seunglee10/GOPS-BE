@@ -32,10 +32,22 @@ trade/quote 수, S3 metadata, ClickHouse 건수를 검증한다. 요청·성공 
 manifest와 ClickHouse 상태를 `FAILED`로 남기며 시뮬레이터는 실행되지 않는다.
 ClickHouse staging insert는 종목 파일마다 만들지 않고 작업자 전체에서 25만 행 단위로
 합쳐 작은 MergeTree part가 수천 개 생기는 것을 방지한다. S3 client도 작업 전체에서
-재사용하고 업로드 재시도를 적용한다.
+재사용하고 업로드 재시도를 적용한다. 최종 event 순번과 1분봉은 하루 전체를 한 쿼리로
+정렬하지 않고 15분 구간별로 생성하며, 이전 구간의 누적 행 수를 다음 sequence 시작값으로
+사용한다. 이 방식은 전역 시간순을 유지하면서 ClickHouse 정렬 메모리 피크를 제한한다.
 
-전체 데이터는 약 5,700만~8,500만 이벤트, S3 gzip 0.55~0.82GiB, ClickHouse
-2~3GiB를 예상한다. 수집부터 검증까지 약 1시간 30분~2시간 30분을 계획한다.
+Alpaca 수집과 S3 파일 검증까지 끝난 뒤 ClickHouse 변환만 실패했다면 원천 API를 다시
+호출하지 않는다. 아래처럼 실행하면 S3의 3,012개 gzip을 크기·SHA-256·행 수로 다시 검증한
+뒤 staging을 복원하고 최종 변환부터 재시도한다.
+
+```sh
+SIM_REPLAY_RESUME_FROM_S3=true \
+  AWS_PROFILE=gops-dev scripts/aws/run-simulator-replay-import.sh
+```
+
+첫 dev 수집 실측은 93,275,117 이벤트(체결 40,303,220, 호가 52,971,897)이며
+S3 gzip 3,012개는 994,400,238 bytes(약 948.3MiB)다. 수집부터 검증까지는
+약 1시간 30분~2시간 30분을 계획한다.
 적재 중 staging·최종 파트·병합 파트가 겹치므로 ClickHouse PVC는 80GiB로 확장하고
 실제 여유 공간이 최소 15GiB인지 확인한 뒤 Job을 시작한다.
 

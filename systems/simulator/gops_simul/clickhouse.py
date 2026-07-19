@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, time, timedelta, timezone
@@ -25,18 +26,25 @@ class ClickHouseHttpClient:
 
     def query_rows(self, sql: str) -> list[dict[str, object]]:
         request = self._request(f"{sql.rstrip().rstrip(';')} FORMAT JSONEachRow\n".encode())
-        with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+        with self._open(request) as response:
             return [json.loads(line) for line in response.read().decode().splitlines() if line.strip()]
 
     def execute(self, sql: str) -> None:
-        with urllib.request.urlopen(self._request(sql.encode()), timeout=self.timeout_seconds) as response: response.read()
+        with self._open(self._request(sql.encode())) as response: response.read()
 
     def insert_json_each_row(self, table: str, rows: Iterable[dict[str, object]]) -> int:
         rows = list(rows)
         if not rows: return 0
         body = f"INSERT INTO {table} FORMAT JSONEachRow\n" + "".join(json.dumps(row, separators=(",", ":")) + "\n" for row in rows)
-        with urllib.request.urlopen(self._request(body.encode()), timeout=self.timeout_seconds) as response: response.read()
+        with self._open(self._request(body.encode())) as response: response.read()
         return len(rows)
+
+    def _open(self, request: urllib.request.Request):
+        try:
+            return urllib.request.urlopen(request, timeout=self.timeout_seconds)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode(errors="replace").strip()
+            raise RuntimeError(f"ClickHouse HTTP {exc.code}: {detail or exc.reason}") from exc
 
     def _request(self, body: bytes) -> urllib.request.Request:
         headers = {"Content-Type": "text/plain; charset=utf-8", "X-ClickHouse-User": self.user}

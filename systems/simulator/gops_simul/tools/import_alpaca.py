@@ -18,8 +18,10 @@ from typing import Any, Iterator
 
 from gops_simul.config import PROJECT_ROOT
 from gops_simul.dataset import (
+    DATASET_END,
     DATASET_ID,
     DATASET_S3_PREFIX,
+    DATASET_START,
     FEED_SEGMENTS,
     REPLAY_SYMBOLS,
     FeedSegment,
@@ -35,6 +37,7 @@ DATA_BASE_URL = "https://data.alpaca.markets"
 DEFAULT_IMPORT_DAYS = 7
 CLICKHOUSE_INSERT_BATCH_SIZE = 250_000
 DEFAULT_IMPORT_WORKERS = 4
+MATERIALIZE_CHUNK_MINUTES = 15
 SOURCE_SEQUENCE_STRIDE = 1_000_000_000
 ALPACA_MAX_ATTEMPTS = 9
 ALPACA_RETRY_BASE_SECONDS = 0.5
@@ -91,16 +94,24 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--clickhouse-user", default=os.getenv("CLICKHOUSE_USER", "default"))
     parser.add_argument("--clickhouse-password", default=os.getenv("CLICKHOUSE_PASSWORD", ""))
     parser.add_argument("--local-only", action="store_true")
+    parser.add_argument(
+        "--resume-from-s3",
+        action="store_true",
+        default=os.getenv("SIM_REPLAY_RESUME_FROM_S3", "").strip().lower() in {"1", "true", "yes"},
+        help="restore already uploaded immutable source files from S3 instead of calling Alpaca again",
+    )
     args = parser.parse_args(argv)
 
     if args.fixed_dataset:
         if not args.local_only and (not args.s3_uri or not args.clickhouse_url):
             raise SystemExit("--fixed-dataset requires --s3-uri and --clickhouse-url unless --local-only is set")
+        if args.resume_from_s3 and args.local_only:
+            raise SystemExit("--resume-from-s3 cannot be combined with --local-only")
         manifest = build_fixed_dataset(output_root=Path(args.data_root), base_url=args.base_url,
-            headers=alpaca_headers(), limit=args.limit, max_pages=args.max_pages, s3_uri=args.s3_uri,
+            headers={} if args.resume_from_s3 else alpaca_headers(), limit=args.limit, max_pages=args.max_pages, s3_uri=args.s3_uri,
             clickhouse_url=args.clickhouse_url, clickhouse_database=args.clickhouse_database,
             clickhouse_user=args.clickhouse_user, clickhouse_password=args.clickhouse_password,
-            local_only=args.local_only)
+            local_only=args.local_only, resume_from_s3=args.resume_from_s3)
         print(json.dumps(manifest, ensure_ascii=False, indent=2)); return
 
     symbols = selected_symbols(args.symbol, args.symbols)
@@ -143,12 +154,14 @@ def iter_kind_rows(*, kind: str, base_url: str, symbol: str, feed: str, start: s
 def build_fixed_dataset(*, output_root: Path, base_url: str, headers: dict[str, str], limit: int,
                         max_pages: int | None, s3_uri: str | None, clickhouse_url: str | None,
                         clickhouse_database: str, clickhouse_user: str, clickhouse_password: str,
-                        local_only: bool) -> dict[str, object]:
+                        local_only: bool, resume_from_s3: bool = False) -> dict[str, object]:
     root = output_root / DATASET_ID; manifest_path = root / "manifest.json"
     if manifest_path.exists() and json.loads(manifest_path.read_text()).get("status") in {"READY", "LOCAL_READY"}:
         raise RuntimeError(f"immutable dataset already exists at {root}")
     root.mkdir(parents=True, exist_ok=True)
     s3_prefix = str(s3_uri or "").rstrip("/")
+    if resume_from_s3 and not s3_prefix:
+        raise RuntimeError("S3 URI is required to resume the fixed dataset import")
     if s3_prefix and _s3_manifest_exists(s3_prefix): raise RuntimeError(f"immutable S3 dataset already exists at {s3_prefix}")
     clickhouse = None
     if clickhouse_url:
@@ -161,7 +174,7 @@ def build_fixed_dataset(*, output_root: Path, base_url: str, headers: dict[str, 
     worker_count = max(1, min(16, int(os.getenv("SIM_IMPORT_WORKERS", str(DEFAULT_IMPORT_WORKERS)))))
     manifest = dataset_manifest_template(); manifest["createdAt"] = datetime.now(UTC).isoformat()
     manifest["source"] = {"provider": "alpaca", "baseUrl": base_url, "adjustment": "raw", "limit": limit,
-        "importWorkers": worker_count}
+        "importWorkers": worker_count, "restoredFromS3": resume_from_s3}
     counts = manifest["counts"]
     counts["bySymbol"] = {
         symbol: {"trades": 0, "quotes": 0}
@@ -183,8 +196,9 @@ def build_fixed_dataset(*, output_root: Path, base_url: str, headers: dict[str, 
                     tasks.append((len(tasks), segment_index, segment, symbol, kind))
         stop_event = Event()
         executor = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="replay-import")
+        collect_file = _restore_fixed_file_from_s3 if resume_from_s3 else _collect_fixed_file
         futures = {
-            executor.submit(_collect_fixed_file, root=root, file_ordinal=file_ordinal,
+            executor.submit(collect_file, root=root, file_ordinal=file_ordinal,
                 segment_index=segment_index, segment=segment, symbol=symbol, kind=kind,
                 base_url=base_url, headers=headers, limit=limit, max_pages=max_pages,
                 s3_prefix=s3_prefix, staging_writer=staging_writer, local_only=local_only,
@@ -295,22 +309,126 @@ def _collect_fixed_file(*, root: Path, file_ordinal: int, segment_index: int, se
     return entry, row_count
 
 
+def _restore_fixed_file_from_s3(*, root: Path, file_ordinal: int, segment_index: int,
+                                segment: FeedSegment, symbol: str, kind: str,
+                                base_url: str, headers: dict[str, str], limit: int,
+                                max_pages: int | None, s3_prefix: str,
+                                staging_writer: ClickHouseStagingWriter | None,
+                                local_only: bool, stop_event: Event) -> tuple[dict[str, object], int]:
+    del headers, max_pages
+    relative = Path(f"feed={segment.feed}/segment={segment_index:02d}/symbol={symbol}/{kind}.jsonl.gz")
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    uri = f"{s3_prefix}/{relative.as_posix()}"
+    bucket, key = _s3_bucket_key(uri)
+    client = _s3_client()
+    head = client.head_object(Bucket=bucket, Key=key)
+    metadata = head.get("Metadata") or {}
+    expected_sha256 = str(metadata.get("sha256") or "")
+    expected_row_count = int(metadata.get("row-count") or -1)
+    if not expected_sha256 or expected_row_count < 0:
+        raise RuntimeError(f"S3 replay metadata is incomplete for {uri}")
+    client.download_file(str(bucket), str(key), str(path), Config=_s3_transfer_config())
+    if path.stat().st_size != int(head.get("ContentLength") or -1):
+        raise RuntimeError(f"S3 replay size mismatch for {uri}")
+    if sha256_file(path) != expected_sha256:
+        raise RuntimeError(f"S3 replay checksum mismatch for {uri}")
+
+    row_count = 0
+    with gzip.open(path, "rt", encoding="utf-8") as handle:
+        for row_count, line in enumerate(handle, 1):
+            if stop_event.is_set():
+                raise RuntimeError("replay import cancelled after another file failed")
+            encoded = line.rstrip("\n")
+            row = json.loads(encoded)
+            if staging_writer:
+                staging_writer.add({"dataset_id": DATASET_ID, "event_time": row["t"], "source_file": str(relative),
+                    "source_sequence": deterministic_source_sequence(file_ordinal, row_count), "symbol": symbol,
+                    "event_type": "trade" if kind == "trades" else "quote", "feed": segment.feed, "payload": encoded})
+    if row_count != expected_row_count:
+        raise RuntimeError(f"S3 replay row-count mismatch for {uri}: expected {expected_row_count}, got {row_count}")
+    entry = {"path": str(relative), "feed": segment.feed, "segment": segment_index, "symbol": symbol,
+        "kind": kind, "rowCount": row_count, "compressedBytes": path.stat().st_size, "sha256": expected_sha256,
+        "apiParameters": {"symbols": symbol, "start": isoformat_z(segment.start), "end": isoformat_z(segment.end),
+            "feed": segment.feed, "sort": "asc", "limit": limit, "adjustment": "raw"}}
+    if not local_only:
+        path.unlink()
+    print(f"[{segment_index:02d}/{segment.feed}] {symbol} {kind}: restored {row_count:,} rows from S3", flush=True)
+    return entry, row_count
+
+
 def _clear_clickhouse_build(client) -> None:
     for table in ("simulation_replay_staging", "simulation_replay_events", "simulation_replay_candles_1m"):
         client.execute(f"ALTER TABLE market_data.{table} DELETE WHERE dataset_id='{DATASET_ID}' SETTINGS mutations_sync=1")
 
 
 def _materialize_clickhouse(client) -> None:
-    client.execute("INSERT INTO market_data.simulation_replay_events (dataset_id,event_time,sequence,symbol,event_type,feed,payload) "
-        "SELECT dataset_id,event_time,toUInt64(row_number() OVER (ORDER BY event_time,source_sequence)),symbol,event_type,feed,payload "
-        f"FROM market_data.simulation_replay_staging WHERE dataset_id='{DATASET_ID}' "
-        "SETTINGS max_threads=4,max_memory_usage=6000000000,max_bytes_before_external_sort=1000000000")
-    client.execute("INSERT INTO market_data.simulation_replay_candles_1m (dataset_id,event_time,symbol,open,high,low,close,volume,trade_count) "
-        "SELECT dataset_id,toStartOfMinute(event_time),symbol,argMin(JSONExtractFloat(payload,'p'),tuple(event_time,source_sequence)),"
-        "max(JSONExtractFloat(payload,'p')),min(JSONExtractFloat(payload,'p')),argMax(JSONExtractFloat(payload,'p'),tuple(event_time,source_sequence)),"
-        f"sum(JSONExtractFloat(payload,'s')),count() FROM market_data.simulation_replay_staging WHERE dataset_id='{DATASET_ID}' AND event_type='trade' "
-        "GROUP BY dataset_id,toStartOfMinute(event_time),symbol "
-        "SETTINGS max_threads=4,max_memory_usage=6000000000,max_bytes_before_external_group_by=1000000000")
+    sequence_offset = 0
+    windows = list(_materialization_windows())
+    window_counts: list[tuple[int, int]] = []
+    for index, (start, end) in enumerate(windows, 1):
+        bounds = _event_time_bounds(start, end)
+        row = client.query_rows(
+            "SELECT count() events, countIf(event_type='trade') trades "
+            "FROM market_data.simulation_replay_staging "
+            f"WHERE dataset_id='{DATASET_ID}' AND {bounds}"
+        )[0]
+        event_count = int(row["events"])
+        trade_count = int(row["trades"])
+        window_counts.append((event_count, trade_count))
+        if event_count:
+            client.execute(
+                "INSERT INTO market_data.simulation_replay_events "
+                "(dataset_id,event_time,sequence,symbol,event_type,feed,payload) "
+                f"SELECT dataset_id,event_time,toUInt64({sequence_offset}) + "
+                "toUInt64(row_number() OVER (ORDER BY event_time,source_sequence)),"
+                "symbol,event_type,feed,payload "
+                "FROM market_data.simulation_replay_staging "
+                f"WHERE dataset_id='{DATASET_ID}' AND {bounds} "
+                "SETTINGS max_threads=2,max_memory_usage=3500000000,"
+                "max_bytes_before_external_sort=268435456"
+            )
+            sequence_offset += event_count
+        print(f"materialized events {index}/{len(windows)}: {event_count:,} rows", flush=True)
+    if sequence_offset <= 0:
+        raise RuntimeError("ClickHouse staging contains no replay events to materialize")
+
+    for index, ((start, end), (_event_count, trade_count)) in enumerate(zip(windows, window_counts), 1):
+        if trade_count <= 0:
+            print(f"materialized candles {index}/{len(windows)}: 0 trades", flush=True)
+            continue
+        bounds = _event_time_bounds(start, end)
+        client.execute(
+            "INSERT INTO market_data.simulation_replay_candles_1m "
+            "(dataset_id,event_time,symbol,open,high,low,close,volume,trade_count) "
+            "SELECT dataset_id,toStartOfMinute(event_time),symbol,"
+            "argMin(JSONExtractFloat(payload,'p'),tuple(event_time,source_sequence)),"
+            "max(JSONExtractFloat(payload,'p')),min(JSONExtractFloat(payload,'p')),"
+            "argMax(JSONExtractFloat(payload,'p'),tuple(event_time,source_sequence)),"
+            "sum(JSONExtractFloat(payload,'s')),count() "
+            "FROM market_data.simulation_replay_staging "
+            f"WHERE dataset_id='{DATASET_ID}' AND event_type='trade' AND {bounds} "
+            "GROUP BY dataset_id,toStartOfMinute(event_time),symbol "
+            "SETTINGS max_threads=2,max_memory_usage=3500000000,"
+            "max_bytes_before_external_group_by=268435456"
+        )
+        print(f"materialized candles {index}/{len(windows)}: {trade_count:,} trades", flush=True)
+
+
+def _materialization_windows() -> Iterator[tuple[datetime, datetime]]:
+    cursor = DATASET_START
+    chunk = timedelta(minutes=MATERIALIZE_CHUNK_MINUTES)
+    while cursor < DATASET_END:
+        end = min(DATASET_END, cursor + chunk)
+        yield cursor, end
+        cursor = end
+
+
+def _event_time_bounds(start: datetime, end: datetime) -> str:
+    return (
+        f"event_time >= parseDateTime64BestEffort('{isoformat_z(start)}', 9) "
+        f"AND event_time < parseDateTime64BestEffort('{isoformat_z(end)}', 9)"
+    )
 
 
 def _update_import_result(

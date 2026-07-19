@@ -4,9 +4,14 @@ import sys
 import unittest
 import urllib.parse
 import urllib.error
+import gzip
+import hashlib
 import json
+import tempfile
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
+from threading import Event
 from unittest.mock import patch
 
 
@@ -84,6 +89,109 @@ def trade(sequence: int, seconds: float, symbol: str, price: float) -> ReplayEve
 
 
 class DatasetContractTests(unittest.TestCase):
+    def test_clickhouse_materialization_uses_bounded_contiguous_windows(self):
+        windows = list(import_alpaca._materialization_windows())
+
+        self.assertEqual(len(windows), 96)
+        self.assertEqual(windows[0][0], DATASET_START)
+        self.assertEqual(windows[-1][1], DATASET_END)
+        self.assertTrue(all(end - start == timedelta(minutes=15) for start, end in windows))
+        self.assertTrue(all(left[1] == right[0] for left, right in zip(windows, windows[1:])))
+
+    def test_clickhouse_materialization_carries_sequence_offset_between_windows(self):
+        class FakeClickHouseClient:
+            def __init__(self):
+                self.count_index = 0
+                self.executed = []
+
+            def query_rows(self, _sql):
+                values = [(3, 2), (2, 0)]
+                events, trades = values[self.count_index] if self.count_index < len(values) else (0, 0)
+                self.count_index += 1
+                return [{"events": events, "trades": trades}]
+
+            def execute(self, sql):
+                self.executed.append(sql)
+
+        client = FakeClickHouseClient()
+        with patch("builtins.print"):
+            import_alpaca._materialize_clickhouse(client)
+
+        event_queries = [sql for sql in client.executed if "simulation_replay_events" in sql]
+        candle_queries = [sql for sql in client.executed if "simulation_replay_candles_1m" in sql]
+        self.assertEqual(len(event_queries), 2)
+        self.assertIn("toUInt64(0) +", event_queries[0])
+        self.assertIn("toUInt64(3) +", event_queries[1])
+        self.assertTrue(all("event_time >=" in sql and "event_time <" in sql for sql in event_queries))
+        self.assertEqual(len(candle_queries), 1)
+
+    def test_clickhouse_http_error_includes_server_detail(self):
+        error = urllib.error.HTTPError(
+            "http://clickhouse:8123",
+            500,
+            "Internal Server Error",
+            {},
+            BytesIO(b"MEMORY_LIMIT_EXCEEDED"),
+        )
+        client = ClickHouseHttpClient("http://clickhouse:8123")
+
+        with patch("urllib.request.urlopen", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, "MEMORY_LIMIT_EXCEEDED"):
+                client.execute("SELECT 1")
+
+    def test_failed_import_can_restore_verified_source_file_from_s3(self):
+        rows = [
+            {"T": "t", "S": "MMM", "p": 100.0, "s": 1, "t": "2026-07-14T15:00:01Z"},
+            {"T": "t", "S": "MMM", "p": 100.1, "s": 2, "t": "2026-07-14T15:00:02Z"},
+        ]
+        compressed = gzip.compress(
+            ("\n".join(json.dumps(row, separators=(",", ":")) for row in rows) + "\n").encode()
+        )
+        digest = hashlib.sha256(compressed).hexdigest()
+
+        class FakeS3Client:
+            def head_object(self, **_kwargs):
+                return {
+                    "ContentLength": len(compressed),
+                    "Metadata": {"sha256": digest, "row-count": str(len(rows))},
+                }
+
+            def download_file(self, _bucket, _key, filename, **_kwargs):
+                Path(filename).write_bytes(compressed)
+
+        class FakeStagingWriter:
+            def __init__(self):
+                self.rows = []
+
+            def add(self, row):
+                self.rows.append(row)
+
+        writer = FakeStagingWriter()
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            import_alpaca, "_s3_client", return_value=FakeS3Client()
+        ):
+            entry, row_count = import_alpaca._restore_fixed_file_from_s3(
+                root=Path(directory),
+                file_ordinal=0,
+                segment_index=1,
+                segment=FEED_SEGMENTS[0],
+                symbol="MMM",
+                kind="trades",
+                base_url="https://data.alpaca.markets",
+                headers={},
+                limit=10_000,
+                max_pages=None,
+                s3_prefix="s3://example/replay",
+                staging_writer=writer,
+                local_only=False,
+                stop_event=Event(),
+            )
+
+        self.assertEqual(row_count, 2)
+        self.assertEqual(entry["sha256"], digest)
+        self.assertEqual([row["source_sequence"] for row in writer.rows], [1, 2])
+        self.assertEqual([row["event_type"] for row in writer.rows], ["trade", "trade"])
+
     def test_clickhouse_import_batches_are_large_enough_for_full_tick_volume(self):
         self.assertGreaterEqual(import_alpaca.CLICKHOUSE_INSERT_BATCH_SIZE, 250_000)
 

@@ -67,8 +67,14 @@ if [[ -z "${simulator_image}" ]]; then
 fi
 
 kubectl delete job "${JOB_NAME}" -n "${K8S_NAMESPACE}" --ignore-not-found --wait=true
-kubectl set image -f "${JOB_MANIFEST}" replay-import="${simulator_image}" --local -o yaml \
-  | kubectl apply -f -
+if [[ "${SIM_REPLAY_RESUME_FROM_S3:-false}" == "true" ]]; then
+  kubectl set image -f "${JOB_MANIFEST}" replay-import="${simulator_image}" --local -o yaml \
+    | kubectl set env -f - SIM_REPLAY_RESUME_FROM_S3=true --local -o yaml \
+    | kubectl apply -f -
+else
+  kubectl set image -f "${JOB_MANIFEST}" replay-import="${simulator_image}" --local -o yaml \
+    | kubectl apply -f -
+fi
 kubectl patch job "${JOB_NAME}" -n "${K8S_NAMESPACE}" --type merge -p '{"spec":{"suspend":false}}'
 
 printf 'Replay import started with image %s\n' "${simulator_image}"
