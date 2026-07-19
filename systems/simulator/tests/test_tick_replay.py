@@ -234,6 +234,46 @@ class DatasetContractTests(unittest.TestCase):
         query = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query)
         self.assertEqual(query["date_time_output_format"], ["iso"])
 
+    def test_clickhouse_previous_close_snapshot_selects_all_replay_symbols_from_canonical_daily_rows(self):
+        class FakeClickHouseClient:
+            def __init__(self):
+                self.queries = []
+
+            def query_rows(self, sql):
+                self.queries.append(sql)
+                if "simulation_replay_datasets" in sql:
+                    return [{"status": "READY", "total_events": 2}]
+                return [
+                    {"symbol": symbol, "previous_close": 100.0 + index}
+                    for index, symbol in enumerate(REPLAY_SYMBOLS)
+                ]
+
+        client = FakeClickHouseClient()
+        source = ClickHouseReplayEventSource(client, DATASET_ID)
+
+        previous_closes = source.previous_close_snapshot()
+
+        self.assertEqual(len(previous_closes), EXPECTED_SYMBOL_COUNT)
+        self.assertEqual(previous_closes[REPLAY_SYMBOLS[0]], 100.0)
+        query = client.queries[-1]
+        self.assertIn("argMax(close", query)
+        self.assertIn("canonical_version = 'v2'", query)
+        self.assertIn("price_adjustment = 'split'", query)
+        self.assertIn("market_session = 'regular'", query)
+        self.assertIn("2026-07-13", query)
+
+    def test_clickhouse_previous_close_snapshot_rejects_an_incomplete_baseline(self):
+        class FakeClickHouseClient:
+            def query_rows(self, sql):
+                if "simulation_replay_datasets" in sql:
+                    return [{"status": "READY", "total_events": 2}]
+                return [{"symbol": "NVDA", "previous_close": 100.0}]
+
+        source = ClickHouseReplayEventSource(FakeClickHouseClient(), DATASET_ID)
+
+        with self.assertRaisesRegex(RuntimeError, "previous close baseline is incomplete"):
+            source.previous_close_snapshot()
+
     def test_replay_sequence_query_does_not_scan_by_virtual_time(self):
         class FakeClickHouseClient:
             def __init__(self):
@@ -612,6 +652,45 @@ class ReplayControllerTests(unittest.TestCase):
         self.assertAlmostEqual(nvda["changePercent"], 2.01005, places=5)
         self.assertIsNone(msft["price"])
         self.assertIsNone(msft["changePercent"])
+
+    def test_status_uses_the_previous_regular_session_close_instead_of_the_first_replay_trade(self):
+        controller = ReplayController(
+            InMemoryReplayEventSource(
+                [
+                    trade(1, 1, "NVDA", 99.5),
+                    trade(2, 3, "NVDA", 101.5),
+                ],
+                previous_closes={"NVDA": 100.0},
+            ),
+            clock=self.clock,
+        )
+        controller.set_mode("simulation")
+        controller.resume()
+        self.clock.value += 4
+
+        nvda = next(item for item in controller.status()["symbols"] if item["symbol"] == "NVDA")
+
+        self.assertEqual(nvda["price"], 101.5)
+        self.assertEqual(nvda["previousClose"], 100.0)
+        self.assertEqual(nvda["changePercent"], 1.5)
+
+    def test_status_does_not_fall_back_to_the_first_trade_when_previous_close_is_missing(self):
+        controller = ReplayController(
+            InMemoryReplayEventSource([
+                trade(1, 1, "NVDA", 99.5),
+                trade(2, 3, "NVDA", 101.5),
+            ]),
+            clock=self.clock,
+        )
+        controller.set_mode("simulation")
+        controller.resume()
+        self.clock.value += 4
+
+        nvda = next(item for item in controller.status()["symbols"] if item["symbol"] == "NVDA")
+
+        self.assertEqual(nvda["price"], 101.5)
+        self.assertIsNone(nvda["previousClose"])
+        self.assertIsNone(nvda["changePercent"])
 
     def test_start_rejects_an_empty_dataset(self):
         controller = ReplayController(InMemoryReplayEventSource([]), clock=self.clock)
