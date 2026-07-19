@@ -40,10 +40,12 @@ Page 1 has no visible trade-symbol tab row or carousel counters. Today's fills s
 arrows around the active company summary, and current/similar cases switch with arrows beside
 the chart. These controls float over the content edge instead of reserving side columns, and
 disabled end controls are hidden. The decision summary is a single prominent neutral sentence
-without a repeated grade heading. `차트`, `뉴스`, `재무`, and `시장` render as a readable
+wrapped in one pair of straight double quotes without a repeated grade heading. Existing outer
+double quotes from the API are normalized so they are not duplicated. `차트`, `뉴스`, `재무`, and `시장` render as a readable
 two-by-two overview with category headings, text status badges, and up to two prioritized item
-labels. Small evidence values are omitted from the default view; full evidence, source, and
-as-of values remain available on hover or keyboard focus.
+labels. Small evidence values are omitted from the default view. Source names and ISO as-of
+values remain in the report contract but are not rendered in checklist rows or marker tooltips.
+The chart has no separate candle/path/missed-check/no-forecast legend below the plot.
 
 The page-1 chart uses a compact 360-pixel plotting viewport on a shared daily `T-60..T+20`
 axis. It renders normalized OHLC plus volume, RSI, and MACD. Entry and missed
