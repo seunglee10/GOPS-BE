@@ -17,6 +17,7 @@ for source_root in (SIMULATOR_ROOT, MARKET_DATA_SHARED_ROOT):
         sys.path.insert(0, str(source_root))
 
 from gops_simul.dataset import (
+    ALLOWED_SPEEDS,
     DATASET_END,
     DATASET_ID,
     DATASET_S3_PREFIX,
@@ -210,6 +211,7 @@ class DatasetContractTests(unittest.TestCase):
         self.assertEqual(COMPANY_BY_SYMBOL["MU"], "Micron Technology")
         self.assertEqual(len(set(COMPANY_BY_SYMBOL.values())), 22)
         self.assertEqual([segment.feed for segment in FEED_SEGMENTS], ["sip", "boats", "sip"])
+        self.assertEqual(ALLOWED_SPEEDS, (1, 2, 5, 10))
 
     def test_half_open_filter_rejects_the_exact_end_boundary(self):
         self.assertTrue(in_half_open_window(DATASET_START, DATASET_START, DATASET_END))
@@ -476,16 +478,37 @@ class ReplayControllerTests(unittest.TestCase):
     def test_speed_can_change_mid_run_without_dropping_events(self):
         self.controller.set_mode("simulation")
         self.controller.resume()
-        self.controller.set_speed(5)
+        changed = self.controller.set_speed(2)
+        self.assertEqual(changed["requestedSpeed"], 2)
+        self.controller.set_speed(10)
         self.clock.value += 1
 
         completed = self.controller.status()
 
-        self.assertEqual(completed["requestedSpeed"], 5)
+        self.assertEqual(completed["requestedSpeed"], 10)
         self.assertEqual(completed["processedEventCount"], 4)
         self.assertEqual([event.sequence for event in self.controller.emitted_events()], [1, 2, 3, 4])
         with self.assertRaises(ValueError):
-            self.controller.set_speed(2)
+            self.controller.set_speed(20)
+
+    def test_legacy_speed_is_migrated_when_configuration_or_state_is_restored(self):
+        configured = ReplayController(self.source, clock=self.clock, default_speed=60)
+        self.assertEqual(configured.default_speed, 10)
+
+        store = MemoryStateStore()
+        store.snapshot = {
+            "mode": "simulation",
+            "state": "paused",
+            "runId": "legacy-run",
+            "virtualTime": DATASET_START.isoformat(),
+            "requestedSpeed": 300,
+            "processedEventCount": 0,
+        }
+
+        restored = ReplayController(self.source, clock=self.clock, state_store=store)
+
+        self.assertEqual(restored.status()["requestedSpeed"], 10)
+        self.assertEqual(store.snapshot["requestedSpeed"], 10)
 
     def test_execution_events_page_in_sequence_and_resume_from_checkpoint(self):
         self.controller.set_mode("simulation")

@@ -26,7 +26,7 @@ class ActionRequest(BaseModel):
 
 
 class SpeedRequest(BaseModel):
-    speed: Literal[1, 5, 20, 60]
+    speed: Literal[1, 2, 5, 10]
 
 
 def build_default_controller(settings: Settings) -> ReplayController:

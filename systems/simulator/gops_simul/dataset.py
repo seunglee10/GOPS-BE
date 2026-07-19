@@ -48,7 +48,7 @@ FEED_SEGMENTS: Final = (
     FeedSegment("sip", datetime(2026, 7, 15, 8, 0, tzinfo=UTC), DATASET_END),
 )
 
-ALLOWED_SPEEDS: Final = (1, 5, 20, 60)
+ALLOWED_SPEEDS: Final = (1, 2, 5, 10)
 
 
 def in_half_open_window(value: datetime, start: datetime, end: datetime) -> bool:

@@ -18,6 +18,21 @@ from gops_simul.state_store import ReplayStateStore
 
 KST = timezone(timedelta(hours=9))
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
+LEGACY_REPLAY_SPEEDS = frozenset({20, 60, 300})
+
+
+def normalize_configured_replay_speed(value: object, *, fallback: int | None = None) -> int:
+    try:
+        speed = int(value)
+    except (TypeError, ValueError):
+        speed = -1
+    if speed in ALLOWED_SPEEDS:
+        return speed
+    if speed in LEGACY_REPLAY_SPEEDS:
+        return max(ALLOWED_SPEEDS)
+    if fallback in ALLOWED_SPEEDS:
+        return int(fallback)
+    raise ValueError(f"speed must be one of {ALLOWED_SPEEDS}")
 
 
 @dataclass(frozen=True)
@@ -115,8 +130,7 @@ class ReplayController:
     def __init__(self, source: ReplayEventSource, *, clock: Callable[[], float] = time.monotonic,
                  default_speed: int = 1, max_events_per_pump: int = 50_000,
                  state_store: ReplayStateStore | None = None) -> None:
-        if default_speed not in ALLOWED_SPEEDS:
-            raise ValueError(f"speed must be one of {ALLOWED_SPEEDS}")
+        default_speed = normalize_configured_replay_speed(default_speed)
         self.source = source
         self.clock = clock
         self.default_speed = default_speed
@@ -418,7 +432,10 @@ class ReplayController:
         if not isinstance(snapshot, dict) or snapshot.get("mode") != "simulation" or not snapshot.get("runId"): return
         self.mode, self.run_id = "simulation", str(snapshot["runId"])
         self.state = "paused" if snapshot.get("state") == "running" else str(snapshot.get("state") or "paused")
-        self.requested_speed = int(snapshot.get("requestedSpeed") or self.default_speed)
+        self.requested_speed = normalize_configured_replay_speed(
+            snapshot.get("requestedSpeed"),
+            fallback=self.default_speed,
+        )
         self.cursor = parse_timestamp(snapshot.get("virtualTime") or DATASET_START.isoformat())
         self.last_sequence = int(snapshot.get("processedEventCount") or 0)
         self._latest_quotes = dict(snapshot.get("latestQuotes") or {})

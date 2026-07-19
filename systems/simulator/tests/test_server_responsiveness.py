@@ -21,6 +21,7 @@ for source_root in (SIMULATOR_ROOT, MARKET_DATA_SHARED_ROOT):
         sys.path.insert(0, str(source_root))
 
 from systems.simulator.gops_simul.server import create_app
+from systems.simulator.gops_simul.tick_replay import InMemoryReplayEventSource, ReplayController
 
 
 class _BlockingReplayController:
@@ -66,6 +67,18 @@ class _BlockingReplayController:
 
 
 class SimulatorServerResponsivenessTests(unittest.TestCase):
+    def test_speed_endpoint_accepts_only_the_supported_replay_speeds(self) -> None:
+        app = create_app(replay_controller=ReplayController(InMemoryReplayEventSource([])))
+
+        with TestClient(app) as client:
+            for speed in (1, 2, 5, 10):
+                response = client.put("/api/control/speed", json={"speed": speed})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["requestedSpeed"], speed)
+            for speed in (20, 60, 300):
+                response = client.put("/api/control/speed", json={"speed": speed})
+                self.assertEqual(response.status_code, 422)
+
     def _assert_endpoint_stays_responsive(self, path: str) -> None:
         controller = _BlockingReplayController()
         app = create_app(replay_controller=controller)

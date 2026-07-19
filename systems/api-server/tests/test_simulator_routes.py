@@ -272,20 +272,15 @@ class SimulatorRoutesTest(unittest.TestCase):
     def test_operator_can_change_replay_speed(self):
         self.gateway.mode = "simulation"
 
-        response = self.client.put(
-            "/api/simulator/speed",
-            json={"speed": 60},
-        )
+        for speed in (1, 2, 5, 10):
+            response = self.client.put("/api/simulator/speed", json={"speed": speed})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["requestedSpeed"], speed)
+            self.assertIn(("speed", speed), self.gateway.calls)
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["requestedSpeed"], 60)
-        self.assertIn(("speed", 60), self.gateway.calls)
-
-        invalid = self.client.put("/api/simulator/speed", json={"speed": 2})
-        self.assertEqual(invalid.status_code, 422)
-
-        removed = self.client.put("/api/simulator/speed", json={"speed": 300})
-        self.assertEqual(removed.status_code, 422)
+        for removed_speed in (20, 60, 300):
+            removed = self.client.put("/api/simulator/speed", json={"speed": removed_speed})
+            self.assertEqual(removed.status_code, 422)
 
     def test_simulation_quote_is_available_to_quick_order(self):
         self.gateway.mode = "simulation"

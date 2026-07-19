@@ -129,6 +129,8 @@ market correlation/relative-strength context로만 계산한다. context가 없�
 `2026-07-15 00:00`에서 시작하고 모든 사용자에게 동일하다. Simulator는 시계·캔들·
 quote replay와 재생 시작 직전의 불변 지수 snapshot을 소유한다. 계좌·주문·가격조건은
 Postgres paper 원장에서 `userId`와 `runId`로 격리한다.
+공개 speed 요청은 `1·2·5·10×`만 허용한다. 배포 전에 저장된 `20·60·300×` 실행 상태는
+simulator 복원 경계에서 `10×`로 낮춘 뒤 다시 저장한다.
 
 시작 스크립트 완료 상태는 `LIVE/idle`이다. 프런트 플레이 버튼의
 `POST /api/simulator/action {"action":"start"}`가 새 `runId` 준비와 `running` 전환을

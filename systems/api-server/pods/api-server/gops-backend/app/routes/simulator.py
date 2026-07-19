@@ -22,7 +22,7 @@ class SimulatorActionRequest(BaseModel):
 
 
 class SimulatorSpeedRequest(BaseModel):
-    speed: Literal[1, 5, 20, 60]
+    speed: Literal[1, 2, 5, 10]
 
 
 @router.get("/status")
