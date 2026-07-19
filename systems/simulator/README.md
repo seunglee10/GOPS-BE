@@ -88,6 +88,7 @@ PUT  /api/control/speed      {"speed":1|2|5|10}
 GET  /api/control/candles
 GET  /api/control/symbols
 GET  /api/control/indices
+GET  /api/control/indices/performance?range=1M&startAt=...
 GET  /api/control/quotes?symbols=AAPL,MSFT
 GET  /api/control/order-flow?symbol=...
 GET  /api/control/execution-events?runId=...&afterSequence=...&limit=...
@@ -103,6 +104,11 @@ simulator의 처리 완료 sequence까지 checkpoint를 전진시킨다. 활성 
 재생 시작 시각 `2026-07-15 00:00 KST` 직전까지 관측된 15개 지수·시장지표의 불변
 스냅샷을 반환한다. 따라서 같은 데이터셋의 모든 run이 같은 값을 표시하고 미래 값이
 재생 화면에 섞이지 않는다.
+
+성과 패널용 `GET /api/control/indices/performance`는 FRED `SP500`에서 고정한 replay
+시작 전 실제 일봉과 불변 snapshot의 `^GSPC` 5분 관측값을 합치고, 요청 `startAt`
+이상이면서 현재 `virtualTime` 이하인 값만 가격수익률 point로 반환한다. LIVE Yahoo
+history나 임의 보간값은 사용하지 않으며 유효 point가 부족하면 빈 시계열을 그대로 반환한다.
 
 SIM 차트는 재생 시작 전 정상 과거 캔들과 현재 가상시각까지의 replay 캔들만 합친다.
 Bid/Ask 차트와 Order Flow 패널은 `simulation_replay_events`의 quote/trade를 종목별로

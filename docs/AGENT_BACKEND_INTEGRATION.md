@@ -127,7 +127,8 @@ market correlation/relative-strength context로만 계산한다. context가 없�
 서비스를 가리킨다. 백엔드는 `/api/simulator/status|mode|action|speed`만 공개하며
 기존 phase, 합성 news, basket 경로는 제공하지 않는다. 가상시각은 KST
 `2026-07-15 00:00`에서 시작하고 모든 사용자에게 동일하다. Simulator는 시계·캔들·
-quote replay와 재생 시작 직전의 불변 지수 snapshot을 소유한다. 계좌·주문·가격조건은
+quote replay와 재생 시작 직전의 불변 지수 snapshot 및 고정 S&P 500 성과
+projection을 소유한다. 계좌·주문·가격조건은
 Postgres paper 원장에서 `userId`와 `runId`로 격리한다.
 공개 speed 요청은 `1·2·5·10×`만 허용한다. 배포 전에 저장된 `20·60·300×` 실행 상태는
 simulator 복원 경계에서 `10×`로 낮춘 뒤 다시 저장한다.
@@ -139,6 +140,13 @@ Simulator status의 `symbols[]`는 고정한 S&P 500 전체 502종목을 반환�
 `price`는 cursor까지 관측된 마지막 원본 체결가이고, `changePercent`는 같은 run에서
 처음 관측된 원본 체결가 대비 변화율이다. 아직 체결을 관측하지 못한 종목은 둘 다 null이며,
 재시작 시 이전 run의 값은 제거한다.
+
+`GET /api/control/indices/performance?range&startAt`는 FRED `SP500`에서 고정한 replay
+시작 전 실제 일봉과 지수 snapshot의 실제 5분 관측값 중 `startAt`과 현재
+`virtualTime` 사이의 값만 `^GSPC` 가격수익률 시계열로 반환한다.
+`GET /api/account/performance`는 SIM에서 LIVE Yahoo history를 호출하지 않고 이
+projection을 benchmark로 사용한다. 관측값이 두 개 미만이면 임의 보간 없이 기존
+benchmark 부족 warning을 반환한다.
 
 `GET /api/charts/candles`는 replay 시작 전 정상 과거 봉과 현재 가상시각까지의 replay
 봉만 합친다. `/ws/charts`도 simulator candle snapshot을 묶어서 보내며 실시간 Redis

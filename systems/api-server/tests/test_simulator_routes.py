@@ -146,6 +146,23 @@ class FakeSimulatorGateway:
             "virtualTime": self.virtual_time,
         }
 
+    def index_performance(self, range_value, start_at):
+        self.calls.append(("index-performance", range_value, start_at))
+        return {
+            "symbol": "^GSPC",
+            "name": "S&P 500",
+            "method": "price_return",
+            "source": "simulation_replay",
+            "range": range_value,
+            "asOf": "2026-07-14T14:55:00Z",
+            "points": [
+                {"time": "2026-07-14T14:00:00Z", "returnPercent": 0},
+                {"time": "2026-07-14T14:55:00Z", "returnPercent": 0.24},
+            ],
+            "simulation": True,
+            "virtualTime": self.virtual_time,
+        }
+
     def order_flow(self, symbol):
         self.calls.append(("order-flow", symbol))
         return {
@@ -478,6 +495,11 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(read_snapshots.call_args.args[1], "2026-07-07T15:00:00+00:00")
         self.assertEqual(response.json()["asOf"], "2026-07-14T14:00:00Z")
         self.assertEqual(len(response.json()["portfolio"]["points"]), 1)
+        self.assertEqual(len(response.json()["benchmark"]["points"]), 2)
+        self.assertIn(
+            ("index-performance", "1W", datetime(2026, 7, 14, 14, 0, tzinfo=timezone.utc)),
+            self.gateway.calls,
+        )
         benchmark_provider.assert_not_called()
 
     def test_kis_holdings_source_bypasses_simulation_account(self):

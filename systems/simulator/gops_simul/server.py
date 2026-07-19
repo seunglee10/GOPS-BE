@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from gops_simul.clickhouse import ClickHouseHttpClient, ClickHouseReplayEventSource
 from gops_simul.config import Settings
 from gops_simul.dataset import ALLOWED_SPEEDS, DATASET_ID, REPLAY_SYMBOLS
-from gops_simul.index_snapshot import replay_index_snapshot
+from gops_simul.index_snapshot import replay_index_performance, replay_index_snapshot
 from gops_simul.tick_replay import InMemoryReplayEventSource, ReplayController
 from gops_simul.state_store import RedisReplayStateStore
 
@@ -216,6 +216,20 @@ def create_app(
         return replay_index_snapshot(
             dataset_id=controller.source.dataset_id,
             run_id=str(status.get("runId")) if status.get("runId") else None,
+            virtual_time=str(status.get("virtualTime")) if status.get("virtualTime") else None,
+        )
+
+    @app.get("/api/control/indices/performance")
+    def replay_indices_performance(
+        range_value: str = Query(default="1M", alias="range", pattern="^(1W|1M|3M|1Y|ALL)$"),
+        start_at: str | None = Query(default=None, alias="startAt"),
+    ) -> dict[str, object]:
+        status = controller.status_snapshot()
+        if status.get("mode") != "simulation":
+            raise HTTPException(status_code=409, detail="simulation mode is not active")
+        return replay_index_performance(
+            range_value=range_value,
+            start_at=start_at,
             virtual_time=str(status.get("virtualTime")) if status.get("virtualTime") else None,
         )
 
