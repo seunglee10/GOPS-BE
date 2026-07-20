@@ -16,7 +16,7 @@ _runtime_config_logged = False
 
 @router.get("/api/health")
 @router.get("/health")
-def health() -> dict[str, str]:
+async def health() -> dict[str, str]:
     """backend 프로세스가 살아 있는지 확인하는 기본 health 응답을 반환합니다."""
     return {"status": "ok", "service": "gops-backend"}
 

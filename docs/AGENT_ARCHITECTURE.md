@@ -567,6 +567,8 @@ Yahoo 기관 event·목표가·추천 분포는 수집기 메모리에서 기업
 문장만 표시하고, 문장이 만료되거나 수집되지 않았으면 결측으로 남긴다. 저장된 자연어 report route는
 SIM에서 계속 차단하며, cutoff evidence는 결정론적 화면 설명에만 사용하고 주문·추천·agent snapshot
 입력으로 전달하지 않는다.
+제품 시연에서 NVDA의 SIM headline만 데이터센터 성장과 CUDA 생태계 진입장벽을 설명하는 고정
+문장을 사용하며, headline 이외의 수치·탭 판단은 기존 cutoff-safe 재구성 계약을 그대로 따른다.
 
 Snapshot bundle additions:
 

@@ -9,6 +9,8 @@ Kafka, Redis/Valkey, ClickHouse, GraphDB, S3, Secret 계약을 정리한다.
 옵션이 아니다. order migration `0017_recommendation_score_profiles.sql`은 이름 있는 점수
 프로필과 활성 프로필 revision, run scoring digest/snapshot을 추가한다. 동시에 자동
 개인화 파생 preference/risk/event/candidate-feature 테이블과 관련 run 컬럼을 제거한다.
+order migration `0019_stable_recommendation_default.sql`은 새 투자 프로필의 추천 수식 DB
+기본값을 `stable`로 바꾸며 기존 사용자가 명시적으로 선택한 값은 변경하지 않는다.
 `orders`, `executions`, `order_coach_fill_history`, portfolio/evidence snapshot,
 recommendation run/item/outcome은 보존 대상이다. 배포 전후 이 테이블들의 행 수와 FK
 무결성을 확인해야 한다.

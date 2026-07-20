@@ -15,6 +15,13 @@ def utc_text() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
+def _iso_date(value: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(value).strip()[:10])
+    except (TypeError, ValueError):
+        return None
+
+
 class CompanyJournalRepository:
     def __init__(self, client: ClickHouseHttpClient | None = None) -> None:
         self.client = client or ClickHouseHttpClient(
@@ -423,6 +430,68 @@ class CompanyJournalRepository:
                 "isClosed": True,
             })
         return [{"symbol": symbol, "candles": grouped[symbol]} for symbol in normalized if grouped[symbol]]
+
+    def load_valuation_price_series(
+        self,
+        symbol: str,
+        period_end_dates: list[str],
+        cutoff: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return only the closing prices needed at reported fiscal period ends."""
+
+        targets = sorted({
+            parsed.isoformat()
+            for value in period_end_dates
+            if value and (parsed := _iso_date(value)) is not None
+        })
+        if not targets:
+            return []
+        cutoff_parameters = {"cutoff": cutoff.astimezone(timezone.utc).isoformat()} if cutoff else {}
+        completed_daily_cutoff = ""
+        if cutoff is not None:
+            completed_daily_cutoff = (
+                "AND toDate(toTimeZone(event_time, 'America/New_York')) "
+                "< toDate(toTimeZone(parseDateTime64BestEffort({cutoff:String}), 'America/New_York'))"
+            )
+        rows = self._safe_rows(
+            f"""
+            SELECT toDate(toTimeZone(event_time, 'America/New_York')) AS trading_date,
+                   argMax(close, tuple(inserted_at, ifNull(source_event_id, ''))) AS close
+            FROM {self.database}.chart_candles
+            WHERE symbol = {{symbol:String}}
+              AND is_closed = 1
+              AND lower(interval) IN ('1d', '1day', 'day')
+              AND arrayExists(
+                period_end -> trading_date >= period_end - 10 AND trading_date <= period_end,
+                {{periodEnds:Array(Date)}}
+              )
+              {completed_daily_cutoff}
+            GROUP BY trading_date
+            ORDER BY trading_date ASC
+            FORMAT JSONEachRow
+            """,
+            {"symbol": symbol, "periodEnds": targets, **cutoff_parameters},
+        )
+        prices: list[tuple[date, float]] = []
+        for row in rows:
+            trading_date = _iso_date(row.get("trading_date"))
+            try:
+                close = float(row.get("close"))
+            except (TypeError, ValueError):
+                continue
+            if trading_date is not None:
+                prices.append((trading_date, close))
+        selected: dict[date, float] = {}
+        for target_text in targets:
+            target = date.fromisoformat(target_text)
+            eligible = [item for item in prices if item[0] <= target and (target - item[0]).days <= 10]
+            if eligible:
+                trading_date, close = max(eligible, key=lambda item: item[0])
+                selected[trading_date] = close
+        return [
+            {"timestamp": trading_date.isoformat(), "close": close}
+            for trading_date, close in sorted(selected.items())
+        ]
 
     @staticmethod
     def input_digest(bundle: dict[str, Any]) -> str:

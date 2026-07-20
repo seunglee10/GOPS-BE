@@ -17,6 +17,7 @@ from .decision_v1 import (
 )
 from .professional_v3 import rank_evidence_candidates
 from .narrative_context import build_narrative_context
+from .score_profiles import DEFAULT_RECOMMENDATION_STYLE
 
 
 ENABLED_ENV = "RECOMMENDATION_FIXED_REPLAY_ENABLED"
@@ -298,11 +299,15 @@ def validate_contract(payload: dict[str, Any], manifest: dict[str, Any]) -> None
 def _profile_snapshot(profile: dict[str, Any] | None) -> dict[str, Any]:
     source = profile or {}
     risk = str(source.get("risk_level") or source.get("riskLevel") or "balanced").lower()
-    style = str(source.get("recommendation_style") or source.get("recommendationStyle") or "balanced").lower()
+    style = str(
+        source.get("recommendation_style")
+        or source.get("recommendationStyle")
+        or DEFAULT_RECOMMENDATION_STYLE
+    ).lower()
     if risk not in {"conservative", "balanced", "aggressive"}:
         risk = "balanced"
     if style not in {"momentum", "balanced", "stable"}:
-        style = "balanced"
+        style = DEFAULT_RECOMMENDATION_STYLE
     return {
         "riskLevel": risk,
         "recommendationStyle": style,
@@ -314,7 +319,7 @@ def _profile_snapshot(profile: dict[str, Any] | None) -> dict[str, Any]:
             str(value).upper()
             for value in source.get("excluded_symbols") or source.get("excludedSymbols") or []
         ],
-        "source": "cutoff_snapshot" if profile else "balanced_default",
+        "source": "cutoff_snapshot" if profile else "stable_default",
     }
 
 

@@ -100,6 +100,15 @@ def test_personalized_recommendation_migration_versions_inputs_and_snapshot_refe
     assert "open_to_close_excess_return_pct" in sql
 
 
+def test_stable_recommendation_style_is_the_database_default():
+    [migration] = [
+        path for path in migration_files() if path.name == "0019_stable_recommendation_default.sql"
+    ]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ALTER COLUMN recommendation_style SET DEFAULT 'stable'" in sql
+
+
 def test_continuous_recommendation_v2_migration_declares_state_and_candidate_features():
     [migration] = [
         path for path in migration_files() if path.name == "0012_continuous_recommendation_v2.sql"

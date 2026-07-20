@@ -197,6 +197,45 @@ def test_performance_series_deduplicates_candles_before_per_symbol_limit():
     assert "toDate(toTimeZone(event_time, 'America/New_York'))" in client.query
 
 
+def test_valuation_price_series_returns_only_the_closest_prior_fiscal_period_closes():
+    class ClickHouseClient:
+        database = "market_data"
+
+        def __init__(self):
+            self.query = ""
+            self.parameters = {}
+
+        def query_json_each_row(self, query, parameters=None):
+            self.query = query
+            self.parameters = parameters or {}
+            return [
+                {"trading_date": "2021-12-30", "close": 29.41},
+                {"trading_date": "2022-12-29", "close": 14.60},
+                {"trading_date": "2022-12-30", "close": 14.61},
+            ]
+
+    client = ClickHouseClient()
+    cutoff = datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc)
+    result = CompanyJournalRepository(client=client).load_valuation_price_series(
+        "NVDA",
+        ["2021-12-31", "2022-12-31"],
+        cutoff=cutoff,
+    )
+
+    assert result == [
+        {"timestamp": "2021-12-30", "close": 29.41},
+        {"timestamp": "2022-12-30", "close": 14.61},
+    ]
+    assert "periodEnds:Array(Date)" in client.query
+    assert "period_end - 10" in client.query
+    assert "parseDateTime64BestEffort({cutoff:String})" in client.query
+    assert client.parameters == {
+        "symbol": "NVDA",
+        "periodEnds": ["2021-12-31", "2022-12-31"],
+        "cutoff": cutoff.isoformat(),
+    }
+
+
 def test_point_in_time_queries_bound_every_temporal_company_journal_source():
     class ClickHouseClient:
         database = "market_data"
@@ -284,6 +323,10 @@ def test_simulation_report_finishes_with_explicit_missing_data_when_cutoff_has_n
     assert report is not None
     assert report["validationStatus"] == "verified"
     assert report["sourceMode"] == "historical_reconstruction"
+    assert report["headline"] == (
+        "엔비디아는 데이터센터 실적 성장과 CUDA 생태계의 강력한 진입장벽을 바탕으로, "
+        "AI 인프라 시장의 주도권을 이어가고 있습니다."
+    )
     assert "recent_stock_return" in report["missingData"]
     assert "가상시각 이전의 완료 일봉이 부족" in report["recentMovement"]
 
@@ -563,6 +606,12 @@ def test_point_in_time_evidence_uses_cutoff_repository_instead_of_live_fundament
             assert cutoff == replay_cutoff
             return [{"symbol": "NVDA", "candles": [{"timestamp": "2026-07-13T04:00:00Z", "close": 104}]}]
 
+        def load_valuation_price_series(self, symbol, period_end_dates, cutoff=None):
+            assert symbol == "NVDA"
+            assert period_end_dates == ["2026-03-31"]
+            assert cutoff == replay_cutoff
+            return [{"timestamp": "2026-03-31", "close": 102.5}]
+
         def load_analyst_summary(self, symbol, cutoff=None):
             assert symbol == "NVDA"
             assert cutoff == replay_cutoff
@@ -593,6 +642,7 @@ def test_point_in_time_evidence_uses_cutoff_repository_instead_of_live_fundament
     assert result["financialSeries"][0]["filedAt"] == "2026-05-01"
     assert result["earningsSeries"][0]["actualEps"] == 2.3
     assert result["performanceSeries"][0]["candles"][0]["timestamp"] == "2026-07-13T04:00:00Z"
+    assert result["valuationPriceSeries"] == [{"timestamp": "2026-03-31", "close": 102.5}]
 
 
 def test_company_journal_evidence_does_not_remove_other_simulation_guards():

@@ -30,6 +30,7 @@ side rail 또는 장전/본장 selector를 만들지 않는다. 로직 탭은 �
 입력으로 비중을 편집한다. 프리셋을 불러오면 사용자 로직 초안으로 전환되며, 한 항목을 바꾸면 같은 그룹의
 나머지 활성 항목을 비례 재배분해 합계 100%를 유지한다. 저장·활성화하면 종목 목록
 탭으로 돌아가 새 profile revision으로 계산한 추천을 다시 읽는다.
+저장된 추천 수식이 없는 초기 상태와 활성 사용자 수식 삭제 후에는 `안정` 프리셋을 기본으로 표시한다.
 선택한 시작 프리셋과 사용자 로직은 흰색 채움과 검은 글자로 표시한다. 전체 비중 막대는
 초기 파랑·초록·주황·분홍·보라·청록 신호 팔레트를 패널 배경과 섞은 저채도 색상으로 표시한다.
 `내 로직`에는 자연어 요청 입력과 `AI 제안` 버튼을 둔다. 제안 카드는 상위 블록 비중만
@@ -205,8 +206,9 @@ backoff를 초기화한다. `simulation_quote_not_ready`, `simulation_quote_time
 `returnPercent` 기반 포트폴리오·S&P 500 퍼센트 차트를 유지해 배포 전 snapshot을 빈 화면으로
 바꾸지 않는다. 시작 원금은 보유종목 매입원가와 다르며 과거 generation이나 SIM 가상시각에
 현재 값을 소급하지 않는다. 평가금과 투자 원금 사이의 간극은 밴드로 표시한다. 투자 원금이
-평가금보다 높은 손실 간극은 파랑, 투자 원금이 평가금보다 낮은 수익 간극은 빨강이며 두 선이
-교차하는 시점에서 밴드 색도 나뉜다.
+평가금보다 높은 손실 간극은 빨강, 투자 원금이 평가금보다 낮은 수익 간극은 초록이며 두 선이
+교차하는 시점에서 밴드 색도 나뉜다. 성과 기간의 최초 선택은 `전체`이고, 성과 패널 제목은
+공통 `title-sm` 크기를 사용한다.
 SIM의 S&P 500 비교선은 simulator에 고정한 replay 시작 전 FRED 실제 일봉과 실제 5분
 지수 관측값으로 만든 point-in-time-safe benchmark만 사용한다. benchmark point가 부족하면 응답 warning을
 성과 toolbar에 표시하고 임의 선을 만들지 않는다. 성과 최초 조회는 다른 포트폴리오 패널과
@@ -853,9 +855,12 @@ canonical timestamp가 현재 candle에 있을 때만 focus한다. 이 상태는
 순부채를 같은 기간 시계열로 제공하며 실적 예상치 차트를 섞지 않는다. 가치 탭은 EPS/BPS/SPS/CPS 시계열·YoY와 현재 가격 기준 가치지표를
 표시하며, 실적 화면과 가치 화면을 다시 한 탭 안의 숨겨진 페이지로 합치지 않는다.
 
-EPS/BPS/SPS/CPS와 최신 PER/PBR/PSR/FCF Yield를 표시한다. 과거 PER/PBR/PSR은
-`/api/charts/candles`의 일봉에서 각 재무 결산일 이전 가장 가까운 거래일 종가를
-선택해 당시 EPS/BPS/SPS와 결합한다. 결산일 가격이 없으면 해당 점을 생략하며 현재가를
+EPS/BPS/SPS/CPS와 최신 PER/PBR/PSR/FCF Yield를 표시한다. EPS는 SEC EPS 또는
+SEC 순이익/발행주식수, BPS는 SEC 자본/발행주식수, SPS는 SEC 매출/발행주식수,
+CPS는 SEC 영업현금흐름/발행주식수로 계산한다. PER/PBR/PSR은 각각 결산일 종가를 이 세 주당값으로
+나누고 FCF Yield는 SEC FCF를 결산일 종가×SEC 발행주식수로 나눈다. LIVE는
+`/api/charts/candles`, SIM은 evidence의 `valuationPriceSeries`에서 각 재무 결산일 이전 가장 가까운
+실제 거래일 종가를 선택한다. 결산일 가격이 없으면 해당 점을 생략하며 현재가를
 과거 구간에 재사용하지 않는다. 투자자본 계약이 없는 ROIC는 추정하지 않는다.
 로컬 고정 자료는 `import.meta.env.DEV`와
 `companyJournalPreview=1`을 모두 만족할 때만 사용하며 `DEV PREVIEW`를 표시한다.
@@ -1093,6 +1098,10 @@ stale/breach/invalidation이 없는 hard-pass level 후보, 확인 피벗과 최
 제한적으로 조합하고 비최종 가격에는 proposal 전용 guide를 표시한다. 세 가격의 순서와
 point-in-time 출처를 증명하지 못하면 만들지 않는다. 종목별 분기, 최근 종가, 임의 2R,
 다른 interval, ATR 재계산, 레벨 재병합, 가짜 candle은 허용하지 않는다.
+고정 시연 데이터셋의 `NVDA/1D`에서만 서버가
+`simulation_demo_reward_risk_override`를 명시하면 현재 재생 중인 일봉을 패턴의
+as-of/확인 봉으로 해석할 수 있다. 일반 자산과 같은 종목의 일반 `tradePlan`은 계속 완료
+봉만 허용한다.
 박스의 Entry는 실제 확인 봉 timestamp를 사용하고 Stop/Target의 미래 끝점은 자산에
 저장하지 않는 logical index 투영만 사용해 가짜 candle timestamp를 만들지 않는다.
 기준선은 확인 봉부터, fill과 `수익 실현 검토`·`손실 제한 검토` 경계는 마지막 완료 봉 다음 슬롯부터 시작한다.
@@ -1226,8 +1235,9 @@ projection이 없거나 24시간이 지나면 기존 empty state를 표시한다
 기준선에 맞춘다. 투자사 의견은 읽기 쉬운 큰 본문으로 표시하되 의견 날짜는 숨기고, 시장 대비
 차트와 같은 독립 섹션으로 렌더링해 카드 배경·강조 테두리를 두지 않는다. 시장 대비 차트 제목
 아래의 기간·기준 설명도 표시하지 않는다. 기업저널 내부 뉴스 탭은 두지
-않지만 뉴스는 저장형 문장을 만드는 입력 근거로 계속 사용할 수 있다. 오른쪽 설명의 hover/focus는
-관련 차트 계열을 강조하며 선택된 재무 용어는 공통 사전 tooltip으로 설명한다. 안정성 탭의
+않지만 뉴스는 저장형 문장을 만드는 입력 근거로 계속 사용할 수 있다. 오른쪽 설명이나 지표 chip을
+선택하면 관련 최신 점뿐 아니라 해당 차트 카드 전체를 파란빛으로 강조하며, 설명이 두 차트를 함께
+참조하면 두 카드 모두 강조한다. 선택된 재무 용어는 공통 사전 tooltip으로 설명한다. 안정성 탭의
 기간별 수치표는 차트의 실제 높이 바로 다음에 배치하고 고정 카드 높이로 빈 공간을 만들지 않는다.
 실적·가치·매출·수익·안정성 탭의 제목, 차트, 표는 evidence 영역의 같은 왼쪽 기준선을 사용하며
 중첩된 fundamental section이나 chart card가 별도 수평 패딩을 더하지 않는다.
@@ -1239,23 +1249,36 @@ replay simulation에서도 report와 evidence route를 모두 다시 조회한�
 이전 report와 evidence를 먼저 지우고 다시 요청하되 실행 중 매 tick마다 재요청하지 않는다.
 SIM에서는 `CompanySummaryPanel`과 상대수익률 chart의 별도 fundamentals/candle fetch를 끄고,
 `/evidence`가 반환한 시점 재무·완료 일봉과 명시된 현재 Yahoo 실적 projection만 렌더링한다.
+개발 URL에 `companyJournalPreview=1`이 남아 있어도 SIM에서는 preview fixture를 강제로 끄며,
+화면에 `DEV PREVIEW` 값이나 문장을 섞지 않는다.
+상대수익률의 최대 2년 `performanceSeries`와 별도로 받은 `valuationPriceSeries`를 병합해
+2021년 이후 모든 결산연도의 PER/PBR/PSR/FCF Yield를 계산한다. 결산일 가격 projection은
+종목별 해당 결산일 직전 종가만 담으며, SIM cutoff 이후 가격이나 현재가로 빈 연도를 채우지 않는다.
 기존 universe item은 회사명·sector·
 industry 같은 식별 정보만 남기고 현재 가격·시가총액·재무·등락률은 제거한 뒤 시점 evidence로
 다시 채운다. 적격 자료가 없으면 최신값이나 preview fixture로 대체하지 않고 자료 부족 상태를 표시한다.
 투자사 의견은 LIVE와 SIM 모두 evidence의 `analystSummary`만 사용한다. LIVE는 24시간 현재 문장,
 SIM은 서버가 `replay_cutoff/sourceAsOf <= virtualTime`을 검증한 고정 replay 직전 문장을 받는다.
 프런트는 두 문장을 합치거나 가상시각을 query로 보내지 않는다. 실적도 서버가 cutoff를 통과시킨
-분기 예상치·보고 EVENT·SEC 실제치만 렌더링하며, 실적 탭은 기본·재진입 모두 최근 12개 분기로
-표시한다. 같은 분기가 SEC chart series와 evidence에 모두 있으면 evidence의 Yahoo 보정 실제 EPS와
+분기 예상치·보고 EVENT·SEC 실제치만 렌더링하며, 실적 탭의 실적 내역만 기본·재진입 모두 최근 12개
+분기로 표시한다. 가치·매출/수익·안정성 탭은 연도별 시계열로 고정하고 분기 전환 UI를 표시하지 않는다.
+같은 분기가 SEC chart series와 evidence에 모두 있으면 evidence의 Yahoo 보정 실제 EPS와
 정규화 매출을 먼저 채우고 SEC 중복값으로 덮어쓰지 않는다. SIM의 결정론적 report에도 복제하지 않는다.
-SIM 종료 시 mode 기반 request key가 `live`로 바뀌면서 report/evidence를 비우고 현재 데이터로 다시
-조회한다.
+SIM 진입·종료 시 mode 기반 request key로 `CompanySummaryPanel`을 새로 만들어 이전 mode의 내부
+재무·가격 state를 재사용하지 않는다. request key가 바뀌면 report/evidence를 비우고 해당 시점
+데이터로 다시 조회한다.
 
 기업저널 상단 네 탭의 중립 상태 신호는 회색이며 파란색을 긍정 의미로 사용하지 않는다. 넓은 화면의
 근거 영역과 오른쪽 AI 해석 영역은 `2:1` 비율을 사용하고, 960px 이하에서는 기존처럼 한 열로 쌓는다.
 상단 기업 요약은 넓은 화면에서 최대 두 줄에 들어오도록 충분한 본문 폭을 사용한다. 투자사 의견은
 실적 근거 영역 가운데에 큰 본문으로 배치하고, 오른쪽 `비교해서 볼 항목` 버튼은 다른 지표 chip보다
 큰 글자와 클릭 높이를 사용한다.
+
+가치 화면의 `PER / PBR / PSR / FCF Yield` 색상 범례는 `가치배수 추이` 아래에서 반복하지 않고
+`현재 가치배수`의 각 행 앞 색상점과 값 색상으로 통합한다. 색은 역사 차트 계열과 정확히 같아야 한다.
+가치 화면의 EPS/BPS/SPS/CPS 묶음 막대는 서로 붙지 않도록 각 막대 사이에 작은 고정 간격을 둔다.
+가치·매출/수익·안정성의 각 차트와 바로 뒤 수치표는 중복 세로 여백을 만들지 않고 작은 구분선
+간격만 유지한다. `현재 가치배수`의 용어 링크는 제목의 나머지 글자와 같은 크기와 굵기를 사용한다.
 
 어려운 재무 용어는 공통 `GlossaryText`를 사용하므로 hover, focus, Enter/Space에서 같은
 설명을 제공한다. `companyJournalPreview=1` fixture는 `import.meta.env.DEV`일 때만 활성화된다.

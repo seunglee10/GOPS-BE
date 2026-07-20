@@ -145,7 +145,7 @@ def test_profile_crud_and_intraday_refresh_returns_new_buy_recommendation(recomm
 
     assert profile.status_code == 200
     assert profile.json()["profile"]["riskLevel"] == "balanced"
-    assert profile.json()["profile"]["recommendationStyle"] == "balanced"
+    assert profile.json()["profile"]["recommendationStyle"] == "stable"
     assert profile.json()["profile"]["preferredSectors"] == ["Information Technology"]
     assert refresh.status_code == 200
     payload = refresh.json()
@@ -158,6 +158,14 @@ def test_profile_crud_and_intraday_refresh_returns_new_buy_recommendation(recomm
     assert payload["items"][0]["score"] >= 75
     assert len(payload["items"][0]["reasons"]) >= 2
     assert payload["summary"]["excludedWatchlistCount"] == 1
+
+
+def test_score_profile_catalog_defaults_to_stable_without_saved_profile(recommendation_app) -> None:
+    catalog = TestClient(recommendation_app).get("/api/recommendations/score-profiles")
+
+    assert catalog.status_code == 200
+    assert catalog.json()["active"]["presetStyle"] == "stable"
+    assert catalog.json()["active"]["name"] == "안정"
 
 
 def test_named_score_profile_crud_validation_and_active_fallback(recommendation_app) -> None:
@@ -223,9 +231,11 @@ def test_named_score_profile_crud_validation_and_active_fallback(recommendation_
     repository = recommendation_app.state.recommendation_repository
     assert repository.delete_score_profile("another-user", created["id"]) is False
     assert repository.activate_score_profile("another-user", created["id"], preset_style="balanced") is None
-    assert client.delete(f"/api/recommendations/score-profiles/{created['id']}").status_code == 200
+    deleted = client.delete(f"/api/recommendations/score-profiles/{created['id']}")
+    assert deleted.status_code == 200
+    assert deleted.json()["activeFallback"] == "stable"
     after_delete = client.get("/api/recommendations/score-profiles").json()
-    assert after_delete["active"]["name"] == "균형"
+    assert after_delete["active"]["name"] == "안정"
 
     for index in range(20):
         response = client.post(

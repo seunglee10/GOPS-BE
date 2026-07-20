@@ -15,6 +15,7 @@ PUT    /api/recommendations/score-profiles/active
 ```
 
 기본 모멘텀·균형·안정 프로필은 immutable이고 custom 프로필은 사용자별 최대 20개다.
+사용자 설정이 없거나 활성 custom 프로필이 삭제된 경우의 기본 추천 수식은 `stable`이다.
 이름은 대소문자 무시 고유값이며 모든 블록·세부 그룹 합계가 100이어야 한다.
 추천 응답은 `customRankScore`, canonical/effective block score, portfolio 반영률과
 score-profile provenance를 반환한다. `preference*`, `personalizationDelta`,
@@ -174,6 +175,13 @@ build는 현재 simulator의 dataset ID와 시작 시각을 서버가 주입하�
 저장된 종합 해설은 `GET /api/charts/analysis-assets/commentary?symbol&interval`에서
 asset identity, commentary, 최종 drawing ID만 PostgreSQL JSONB projection으로 읽는다.
 이 safe-read도 현재 dataset의 사전 생성 snapshot만 반환하며 replay 중 해설을 동적으로 생성하지 않는다.
+시연 데이터셋에 한해 `NVDA/1D` 전체 자산 GET은 저장된 하락 쐐기 자산의 시각을
+`2026-07-14T04:00:00Z`로 제한한 응답 복사본을 snapshot보다 우선한다. 이 데모
+projection은 PostgreSQL이나 candle 원본을 변경하지 않고, 저장 자산의 실제
+`asOf`에 도달하면 자동으로 비활성화하며 미래 해설은 포함하지 않는다. 저장된 확정
+하락 쐐기 `tradePlan`이 손익비 기준 미달만으로 `no_trade`인 경우에는 응답 복사본에서만
+`buy_candidate/long`으로 승격하고 `minimumRewardRisk`를 실제 계산 손익비에 맞춘다.
+`simulation_demo_reward_risk_override` 사유가 이 비영속 시연 예외를 식별한다.
 예외적으로 `GET /api/market/news/latest`는 live Redis를 건너뛰고 ClickHouse의
 `published_at <= virtualTime AND localized_at <= virtualTime`인 저장 기사만 읽는다.
 `GET /api/charts/events`는 SIM `virtualTime`을 cutoff로 전달해
@@ -428,7 +436,8 @@ snapshot의 `sector`는 GraphDB `gops:sector` canonical 값을 사용하고, 화
 한글 라벨은 `sectorLabelKo`로 함께 내려준다.
 
 추천 profile의 `recommendationStyle`은 `momentum`, `balanced`, `stable` 중 하나이며
-custom profile FK가 없을 때만 기본 점수 프로필 선택에 사용한다. run에는 투자 프로필
+custom profile FK가 없을 때만 기본 점수 프로필 선택에 사용한다. 새 프로필의 기본값은
+`stable`이며 위험성향 기본값 `balanced`와는 독립적이다. run에는 투자 프로필
 revision, 활성 점수 프로필 ID/revision/schema/digest가 반영된 `run_key`와
 `scoring_input_digest`를 저장한다. 동일 slot이라도 설정이 바뀌면 새 run을 계산하고,
 동일 설정이면 기존 run을 replay한다. 주문·fill은 점수 입력이 아니다.
@@ -989,15 +998,20 @@ route 자체를 실패시키지 않고 missing data로 남기며, 검증된 문�
 메모리에서 기업별 한 문장으로 조합하고 원본 row/JSON을 폐기한다. 문장은 별도
 `yahoo_analyst_summaries` projection에만 24시간 보관하므로 report·receipt·OpenAI 입력에 복제하지 않는다.
 
-`/evidence`는 기업저널 panel 전용 읽기 계약으로 분기 재무, SEC/Yahoo 실적, 최대 520개 일봉을
-한 번에 반환한다. replay simulation에서는 두 GET route가 simulator status의 `virtualTime`을
+`/evidence`는 기업저널 panel 전용 읽기 계약으로 분기 재무, SEC/Yahoo 실적, 최대 520개 상대수익률
+일봉을 한 번에 반환한다. 가치배수에는 이 2년 제한을 재사용하지 않고, 2021년 이후 각 SEC 결산일
+이전 10일 안의 가장 가까운 종가만 `valuationPriceSeries`로 작게 반환한다. replay simulation에서는
+두 GET route가 simulator status의 `virtualTime`을
 서버 내부 cutoff로 사용한다. report route는 최신 LIVE 보고서를 읽거나 생성 queue에 넣지 않고,
 cutoff 이전 완료 일봉·이전 날짜에 공개된 SEC 실적·cutoff까지 실제 수집된 Yahoo snapshot만으로
 결정론적 `sourceMode=historical_reconstruction` 보고서를 즉시 만든다. `/evidence`의 가격·SEC
-재무와 실제 실적에는 같은 cutoff를 적용하고 응답은 `simulation`, `cutoff`, `sourceMode`
+재무·실제 실적·`valuationPriceSeries`에는 같은 cutoff를 적용하고 응답은 `simulation`, `cutoff`, `sourceMode`
 provenance를 포함한다. SEC는 시간 정밀도가 날짜뿐이므로 replay 당일 filing을 제외한다. 완료
 일봉은 New York 기준 현재 replay 날짜보다 이전 session만 선택한다. 적격 row가
 없으면 결측으로 남기며 최신 report, live fundamentals adapter, 현재 candle로 fallback하지 않는다.
+SIM의 NVDA headline은 제품 시연 계약에 따라 `엔비디아는 데이터센터 실적 성장과 CUDA 생태계의
+강력한 진입장벽을 바탕으로, AI 인프라 시장의 주도권을 이어가고 있습니다.`로 고정하며 나머지
+탭의 수치와 문장은 동일한 cutoff 근거에서 계산한다.
 `/evidence`는 SIM에서 Yahoo 분기 예상치의 `collected_at <= cutoff`와 보고 EVENT의
 `event_at <= cutoff`를 강제한다. 보고 완료된 EVENT `actual_value`는 대응 SEC 분기의
 누적·분할 미조정 EPS보다 우선한다. `analystSummary`는 매일 현재 Yahoo action에서 다시 만든

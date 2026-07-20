@@ -1048,6 +1048,138 @@ class SimulatorRoutesTest(unittest.TestCase):
         delete_response = self.client.delete("/api/charts/analysis-assets?symbols=NVDA&intervals=1m")
         self.assertEqual(delete_response.status_code, 409)
 
+    def test_simulation_nvda_daily_asset_uses_demo_falling_wedge_dated_to_july_14(self):
+        self.gateway.mode = "simulation"
+        stored_asset = {
+            "assetVersion": "geometry",
+            "algorithmVersion": "ohlcv-consensus-pattern-families-v6",
+            "symbol": "NVDA",
+            "interval": "1D",
+            "sourceInterval": "1D",
+            "asOf": "2026-07-16T04:00:00.000Z",
+            "generatedAt": "2026-07-17T14:27:53.472Z",
+            "status": "ready",
+            "commentary": {"status": "ready", "paragraphs": [{"text": "7월 16일 해설"}]},
+            "geometry": {
+                "drawings": [
+                    {
+                        "id": "wedge-upper",
+                        "type": "trendLine",
+                        "label": "하락 쐐기 · 돌파 확인",
+                        "anchors": [
+                            {"timestamp": "2026-05-27T04:00:00.000Z", "price": 237.90},
+                            {"timestamp": "2026-07-16T04:00:00.000Z", "price": 190.07},
+                        ],
+                        "createdAt": "2026-07-16T04:00:00.000Z",
+                        "updatedAt": "2026-07-16T04:00:00.000Z",
+                    },
+                    {
+                        "id": "wedge-lower",
+                        "type": "trendLine",
+                        "label": "하락 쐐기 · 돌파 확인",
+                        "anchors": [
+                            {"timestamp": "2026-05-27T04:00:00.000Z", "price": 208.12},
+                            {"timestamp": "2026-07-16T04:00:00.000Z", "price": 179.10},
+                        ],
+                        "createdAt": "2026-07-16T04:00:00.000Z",
+                        "updatedAt": "2026-07-16T04:00:00.000Z",
+                    },
+                ],
+                "drawingGroups": {"levels": [], "trend": [], "pattern": ["wedge-upper", "wedge-lower"]},
+                "patterns": [{
+                    "id": "nvda-falling-wedge",
+                    "kind": "falling_wedge",
+                    "state": "confirmed",
+                    "upper": {
+                        "start": {"timestamp": "2026-05-27T04:00:00.000Z", "price": 237.90},
+                        "end": {"timestamp": "2026-07-16T04:00:00.000Z", "price": 190.07},
+                    },
+                    "lower": {
+                        "start": {"timestamp": "2026-05-27T04:00:00.000Z", "price": 208.12},
+                        "end": {"timestamp": "2026-07-16T04:00:00.000Z", "price": 179.10},
+                    },
+                    "confirmation": {
+                        "breakoutAt": "2026-07-15T04:00:00.000Z",
+                        "confirmedAt": "2026-07-16T04:00:00.000Z",
+                    },
+                }],
+                "primaryPattern": {"id": "nvda-falling-wedge", "kind": "falling_wedge"},
+                "tradePlan": {
+                    "version": "pattern-trade-timing-v1",
+                    "symbol": "NVDA",
+                    "interval": "1D",
+                    "patternId": "nvda-falling-wedge",
+                    "patternKind": "falling_wedge",
+                    "patternState": "confirmed",
+                    "action": "no_trade",
+                    "direction": None,
+                    "signalAt": "2026-07-15T04:00:00.000Z",
+                    "entryTrigger": 193.238143,
+                    "entryPrice": 211.51,
+                    "stopPrice": 184.443583,
+                    "targetPrice": 221.259757,
+                    "riskPerShare": 27.066417,
+                    "rewardPerShare": 9.749757,
+                    "rewardRiskRatio": 0.3602,
+                    "minimumRewardRisk": 2.0,
+                    "projectionBars": 10,
+                    "reasons": ["confirmed_upward_breakout", "reward_risk_below_minimum"],
+                },
+            },
+        }
+        dynamic_asset = {
+            "assetVersion": "geometry",
+            "algorithmVersion": "ohlcv-consensus-pattern-families-v6",
+            "symbol": "NVDA",
+            "interval": "1D",
+            "sourceInterval": "1D",
+            "asOf": "2026-07-13T04:00:00.000Z",
+            "generatedAt": "2026-07-15T00:00:00.000Z",
+            "status": "ready",
+            "geometry": {
+                "drawings": [{"id": "safe-level", "type": "horizontalLine"}],
+                "drawingGroups": {"levels": ["safe-level"], "trend": [], "pattern": []},
+                "patterns": [],
+                "primaryPattern": None,
+                "tradePlan": None,
+            },
+        }
+        storage = SimpleNamespace(
+            get=lambda _symbol, _interval: stored_asset,
+            get_snapshot=lambda _dataset, _symbol, _interval, _cutoff: dynamic_asset,
+        )
+
+        with patch("app.routes.chart_assets.chart_asset_storage", return_value=storage):
+            response = self.client.get("/api/charts/analysis-assets?symbol=NVDA&interval=1D")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        asset = payload["assets"]["1D"]
+        self.assertEqual(asset["asOf"], "2026-07-14T04:00:00.000Z")
+        self.assertEqual(asset["geometry"]["primaryPattern"]["kind"], "falling_wedge")
+        self.assertEqual(asset["geometry"]["patterns"][0]["confirmation"]["breakoutAt"], "2026-07-14T04:00:00.000Z")
+        self.assertEqual(asset["geometry"]["patterns"][0]["confirmation"]["confirmedAt"], "2026-07-14T04:00:00.000Z")
+        self.assertEqual(asset["geometry"]["drawings"][-1]["anchors"][-1]["timestamp"], "2026-07-14T04:00:00.000Z")
+        trade_plan = asset["geometry"]["tradePlan"]
+        self.assertEqual(trade_plan["action"], "buy_candidate")
+        self.assertEqual(trade_plan["direction"], "long")
+        self.assertEqual(trade_plan["minimumRewardRisk"], trade_plan["rewardRiskRatio"])
+        self.assertNotIn("reward_risk_below_minimum", trade_plan["reasons"])
+        self.assertIn("simulation_demo_reward_risk_override", trade_plan["reasons"])
+        self.assertEqual(stored_asset["geometry"]["tradePlan"]["action"], "no_trade")
+        self.assertEqual(stored_asset["geometry"]["tradePlan"]["minimumRewardRisk"], 2.0)
+        self.assertNotIn("commentary", asset)
+        self.assertTrue(payload["meta"]["demoOverride"])
+        self.assertEqual(payload["meta"]["demoOverrideAsOf"], "2026-07-14T04:00:00.000Z")
+
+        self.gateway.virtual_time = "2026-07-17T00:00:00+09:00"
+        with patch("app.routes.chart_assets.chart_asset_storage", return_value=storage):
+            after_confirmation = self.client.get("/api/charts/analysis-assets?symbol=NVDA&interval=1D")
+
+        self.assertEqual(after_confirmation.status_code, 200)
+        self.assertEqual(after_confirmation.json()["assets"]["1D"]["asOf"], dynamic_asset["asOf"])
+        self.assertFalse(after_confirmation.json()["meta"]["demoOverride"])
+
     def test_other_point_in_time_unsafe_market_data_stays_blocked(self):
         self.gateway.mode = "simulation"
 

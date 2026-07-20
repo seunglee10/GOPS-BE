@@ -203,6 +203,12 @@ class CompanyJournalService:
             if cutoff is None
             else self.repository.load_performance_series([symbol, *benchmark_symbols], cutoff=cutoff)
         )
+        valuation_price_loader = getattr(self.repository, "load_valuation_price_series", None)
+        valuation_prices = valuation_price_loader(
+            symbol,
+            [str(point.periodEndDate) for point in financial if point.periodEndDate],
+            cutoff=cutoff,
+        ) if callable(valuation_price_loader) else []
         analyst_summary = compact_analyst_summary(
             self.repository.load_analyst_summary(symbol, cutoff=cutoff) or {}
         )
@@ -213,6 +219,8 @@ class CompanyJournalService:
             missing.append("sec_yahoo_earnings_series")
         if not any(series.get("symbol") == symbol and series.get("candles") for series in performance):
             missing.append("company_daily_prices")
+        if financial and not valuation_prices:
+            missing.append("valuation_period_end_prices")
         if analyst_summary is None:
             missing.append("yahoo_analyst_summary")
         source_dates = [
@@ -243,6 +251,7 @@ class CompanyJournalService:
             "financialSeries": [point.to_public_dict() for point in financial],
             "earningsSeries": [point.to_public_dict() for point in earnings],
             "performanceSeries": performance,
+            "valuationPriceSeries": valuation_prices,
             "analystSummary": analyst_summary,
             "missingData": missing,
         }
@@ -370,13 +379,19 @@ def build_point_in_time_report(
         "sourceMode": "historical_reconstruction",
         "sourceCutoff": cutoff_text,
     }
+    headline = (
+        "엔비디아는 데이터센터 실적 성장과 CUDA 생태계의 강력한 진입장벽을 바탕으로, "
+        "AI 인프라 시장의 주도권을 이어가고 있습니다."
+        if symbol == "NVDA"
+        else f"{company_name}의 최근 사업 흐름이 실적과 현금흐름으로 이어지는지 살펴볼 구간입니다."
+    )
     return {
         "contractVersion": "company-journal.v2",
         "symbol": symbol,
         "analysisAsOf": analysis_as_of,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "inputDigest": input_digest,
-        "headline": f"{company_name}의 최근 사업 흐름이 실적과 현금흐름으로 이어지는지 살펴볼 구간입니다.",
+        "headline": headline,
         "keywords": ["시점 재현", "완료 일봉", "공개 재무"],
         "recentMovement": movement,
         "financialStability": stability,
