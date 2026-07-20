@@ -178,7 +178,10 @@ asset identity, commentary, 최종 drawing ID만 PostgreSQL JSONB projection으�
 시연 데이터셋에 한해 `NVDA/1D` 전체 자산 GET은 저장된 하락 쐐기 자산의 시각을
 `2026-07-14T04:00:00Z`로 제한한 응답 복사본을 snapshot보다 우선한다. 이 데모
 projection은 PostgreSQL이나 candle 원본을 변경하지 않고, 저장 자산의 실제
-`asOf`에 도달하면 자동으로 비활성화하며 미래 해설은 포함하지 않는다.
+`asOf`에 도달하면 자동으로 비활성화하며 미래 해설은 포함하지 않는다. 저장된 확정
+하락 쐐기 `tradePlan`이 손익비 기준 미달만으로 `no_trade`인 경우에는 응답 복사본에서만
+`buy_candidate/long`으로 승격하고 `minimumRewardRisk`를 실제 계산 손익비에 맞춘다.
+`simulation_demo_reward_risk_override` 사유가 이 비영속 시연 예외를 식별한다.
 예외적으로 `GET /api/market/news/latest`는 live Redis를 건너뛰고 ClickHouse의
 `published_at <= virtualTime AND localized_at <= virtualTime`인 저장 기사만 읽는다.
 `GET /api/charts/events`는 SIM `virtualTime`을 cutoff로 전달해

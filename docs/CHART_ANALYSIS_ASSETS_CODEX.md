@@ -27,7 +27,10 @@
 시연용 SIM 응답에는 한 가지 명시적 비영속 예외가 있다. `NVDA/1D`는 저장된
 `falling_wedge` 자산 복사본의 시각을 2026-07-14로 제한해 동적 자산보다 우선한다.
 PostgreSQL 자산과 candle 원본은 수정하지 않고, 실제 저장 자산 `asOf` 이후에는 예외를
-적용하지 않으며 commentary도 복사하지 않는다.
+적용하지 않으며 commentary도 복사하지 않는다. 저장 `tradePlan`이 확정 상승 돌파 뒤
+손익비 기준 미달만으로 `no_trade`가 된 경우 응답 복사본에서만 `buy_candidate/long`으로
+승격한다. 이때 최소 손익비는 계산된 손익비로 맞추고
+`simulation_demo_reward_risk_override` 사유를 남긴다.
 
 ## 계산과 자산 계약
 

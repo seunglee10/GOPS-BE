@@ -1094,6 +1094,10 @@ stale/breach/invalidation이 없는 hard-pass level 후보, 확인 피벗과 최
 제한적으로 조합하고 비최종 가격에는 proposal 전용 guide를 표시한다. 세 가격의 순서와
 point-in-time 출처를 증명하지 못하면 만들지 않는다. 종목별 분기, 최근 종가, 임의 2R,
 다른 interval, ATR 재계산, 레벨 재병합, 가짜 candle은 허용하지 않는다.
+고정 시연 데이터셋의 `NVDA/1D`에서만 서버가
+`simulation_demo_reward_risk_override`를 명시하면 현재 재생 중인 일봉을 패턴의
+as-of/확인 봉으로 해석할 수 있다. 일반 자산과 같은 종목의 일반 `tradePlan`은 계속 완료
+봉만 허용한다.
 박스의 Entry는 실제 확인 봉 timestamp를 사용하고 Stop/Target의 미래 끝점은 자산에
 저장하지 않는 logical index 투영만 사용해 가짜 candle timestamp를 만들지 않는다.
 기준선은 확인 봉부터, fill과 `수익 실현 검토`·`손실 제한 검토` 경계는 마지막 완료 봉 다음 슬롯부터 시작한다.

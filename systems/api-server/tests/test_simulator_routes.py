@@ -1105,9 +1105,25 @@ class SimulatorRoutesTest(unittest.TestCase):
                 }],
                 "primaryPattern": {"id": "nvda-falling-wedge", "kind": "falling_wedge"},
                 "tradePlan": {
+                    "version": "pattern-trade-timing-v1",
+                    "symbol": "NVDA",
+                    "interval": "1D",
                     "patternId": "nvda-falling-wedge",
                     "patternKind": "falling_wedge",
+                    "patternState": "confirmed",
+                    "action": "no_trade",
+                    "direction": None,
                     "signalAt": "2026-07-15T04:00:00.000Z",
+                    "entryTrigger": 193.238143,
+                    "entryPrice": 211.51,
+                    "stopPrice": 184.443583,
+                    "targetPrice": 221.259757,
+                    "riskPerShare": 27.066417,
+                    "rewardPerShare": 9.749757,
+                    "rewardRiskRatio": 0.3602,
+                    "minimumRewardRisk": 2.0,
+                    "projectionBars": 10,
+                    "reasons": ["confirmed_upward_breakout", "reward_risk_below_minimum"],
                 },
             },
         }
@@ -1144,6 +1160,14 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(asset["geometry"]["patterns"][0]["confirmation"]["breakoutAt"], "2026-07-14T04:00:00.000Z")
         self.assertEqual(asset["geometry"]["patterns"][0]["confirmation"]["confirmedAt"], "2026-07-14T04:00:00.000Z")
         self.assertEqual(asset["geometry"]["drawings"][-1]["anchors"][-1]["timestamp"], "2026-07-14T04:00:00.000Z")
+        trade_plan = asset["geometry"]["tradePlan"]
+        self.assertEqual(trade_plan["action"], "buy_candidate")
+        self.assertEqual(trade_plan["direction"], "long")
+        self.assertEqual(trade_plan["minimumRewardRisk"], trade_plan["rewardRiskRatio"])
+        self.assertNotIn("reward_risk_below_minimum", trade_plan["reasons"])
+        self.assertIn("simulation_demo_reward_risk_override", trade_plan["reasons"])
+        self.assertEqual(stored_asset["geometry"]["tradePlan"]["action"], "no_trade")
+        self.assertEqual(stored_asset["geometry"]["tradePlan"]["minimumRewardRisk"], 2.0)
         self.assertNotIn("commentary", asset)
         self.assertTrue(payload["meta"]["demoOverride"])
         self.assertEqual(payload["meta"]["demoOverrideAsOf"], "2026-07-14T04:00:00.000Z")

@@ -30,6 +30,7 @@ NVDA_SIMULATION_DEMO_AS_OF = "2026-07-14T04:00:00.000Z"
 NVDA_SIMULATION_DEMO_DATASET_ID = "sp500-full-20260715-kst-v3"
 NVDA_SIMULATION_DEMO_SYMBOL = "NVDA"
 NVDA_SIMULATION_DEMO_INTERVAL = "1D"
+NVDA_SIMULATION_DEMO_TRADE_PLAN_REASON = "simulation_demo_reward_risk_override"
 
 
 class ChartAssetBuildRequest(BaseModel):
@@ -325,9 +326,66 @@ def _build_nvda_simulation_demo_asset(
         return None
 
     demo_asset = _clamp_demo_dates(persisted_asset, demo_as_of)
+    _promote_nvda_simulation_demo_trade_plan(demo_asset)
     demo_asset["generatedAt"] = utc_now_iso()
     demo_asset.pop("commentary", None)
     return demo_asset
+
+
+def _promote_nvda_simulation_demo_trade_plan(asset: dict[str, Any]) -> None:
+    geometry = asset.get("geometry")
+    if not isinstance(geometry, dict):
+        return
+    patterns = geometry.get("patterns")
+    trade_plan = geometry.get("tradePlan")
+    if not isinstance(patterns, list) or not isinstance(trade_plan, dict):
+        return
+
+    pattern = next(
+        (
+            item
+            for item in patterns
+            if isinstance(item, dict)
+            and item.get("kind") == "falling_wedge"
+            and item.get("state") == "confirmed"
+            and item.get("id") == trade_plan.get("patternId")
+        ),
+        None,
+    )
+    reasons = trade_plan.get("reasons")
+    reward_risk_ratio = trade_plan.get("rewardRiskRatio")
+    required_prices = [
+        trade_plan.get("entryTrigger"),
+        trade_plan.get("entryPrice"),
+        trade_plan.get("stopPrice"),
+        trade_plan.get("targetPrice"),
+    ]
+    allowed_reasons = {"confirmed_upward_breakout", "reward_risk_below_minimum"}
+    if (
+        pattern is None
+        or trade_plan.get("action") != "no_trade"
+        or trade_plan.get("patternState") != "confirmed"
+        or not isinstance(reasons, list)
+        or not all(isinstance(reason, str) for reason in reasons)
+        or "reward_risk_below_minimum" not in reasons
+        or set(reasons).difference(allowed_reasons)
+        or not isinstance(reward_risk_ratio, (int, float))
+        or isinstance(reward_risk_ratio, bool)
+        or reward_risk_ratio <= 0
+        or not all(
+            isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+            for value in required_prices
+        )
+    ):
+        return
+
+    trade_plan["action"] = "buy_candidate"
+    trade_plan["direction"] = "long"
+    trade_plan["minimumRewardRisk"] = reward_risk_ratio
+    trade_plan["reasons"] = [
+        *(reason for reason in reasons if reason != "reward_risk_below_minimum"),
+        NVDA_SIMULATION_DEMO_TRADE_PLAN_REASON,
+    ]
 
 
 def _clamp_demo_dates(value: Any, cutoff: datetime) -> Any:
