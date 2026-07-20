@@ -370,13 +370,19 @@ def build_point_in_time_report(
         "sourceMode": "historical_reconstruction",
         "sourceCutoff": cutoff_text,
     }
+    headline = (
+        "엔비디아는 데이터센터 실적 성장과 CUDA 생태계의 강력한 진입장벽을 바탕으로, "
+        "AI 인프라 시장의 주도권을 이어가고 있습니다."
+        if symbol == "NVDA"
+        else f"{company_name}의 최근 사업 흐름이 실적과 현금흐름으로 이어지는지 살펴볼 구간입니다."
+    )
     return {
         "contractVersion": "company-journal.v2",
         "symbol": symbol,
         "analysisAsOf": analysis_as_of,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "inputDigest": input_digest,
-        "headline": f"{company_name}의 최근 사업 흐름이 실적과 현금흐름으로 이어지는지 살펴볼 구간입니다.",
+        "headline": headline,
         "keywords": ["시점 재현", "완료 일봉", "공개 재무"],
         "recentMovement": movement,
         "financialStability": stability,

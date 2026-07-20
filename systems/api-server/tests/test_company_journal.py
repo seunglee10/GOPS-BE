@@ -284,6 +284,10 @@ def test_simulation_report_finishes_with_explicit_missing_data_when_cutoff_has_n
     assert report is not None
     assert report["validationStatus"] == "verified"
     assert report["sourceMode"] == "historical_reconstruction"
+    assert report["headline"] == (
+        "엔비디아는 데이터센터 실적 성장과 CUDA 생태계의 강력한 진입장벽을 바탕으로, "
+        "AI 인프라 시장의 주도권을 이어가고 있습니다."
+    )
     assert "recent_stock_return" in report["missingData"]
     assert "가상시각 이전의 완료 일봉이 부족" in report["recentMovement"]
 

@@ -998,6 +998,9 @@ cutoff 이전 완료 일봉·이전 날짜에 공개된 SEC 실적·cutoff까지
 provenance를 포함한다. SEC는 시간 정밀도가 날짜뿐이므로 replay 당일 filing을 제외한다. 완료
 일봉은 New York 기준 현재 replay 날짜보다 이전 session만 선택한다. 적격 row가
 없으면 결측으로 남기며 최신 report, live fundamentals adapter, 현재 candle로 fallback하지 않는다.
+SIM의 NVDA headline은 제품 시연 계약에 따라 `엔비디아는 데이터센터 실적 성장과 CUDA 생태계의
+강력한 진입장벽을 바탕으로, AI 인프라 시장의 주도권을 이어가고 있습니다.`로 고정하며 나머지
+탭의 수치와 문장은 동일한 cutoff 근거에서 계산한다.
 `/evidence`는 SIM에서 Yahoo 분기 예상치의 `collected_at <= cutoff`와 보고 EVENT의
 `event_at <= cutoff`를 강제한다. 보고 완료된 EVENT `actual_value`는 대응 SEC 분기의
 누적·분할 미조정 EPS보다 우선한다. `analystSummary`는 매일 현재 Yahoo action에서 다시 만든
