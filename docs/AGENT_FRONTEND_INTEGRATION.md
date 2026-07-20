@@ -281,8 +281,10 @@ focus/pointer 선택한 `OrderTicket`·`QuickOrderPanel`(paper 변형 포함), �
 현재 화면에 표시된 최종 지지·저항 horizontal line의 오른쪽 가격 pill은 같은
 snapshot 경로를 사용하는 semantic button이다. pill을 직접 선택하면 pointer의 연속
 Y 좌표가 아니라 해당 drawing anchor의 정확한 소수점 두 자리 가격으로 스냅한다.
-숨김 또는 가격 pane 밖 레벨, 추세·패턴·제안·사용자 drawing과 평균 매입가는 이 스냅
-대상이 아니며, pill 바깥의 가격축은 기존 연속 가격 선택을 유지한다.
+숨김 또는 가격 pane 밖 레벨, 추세·패턴·제안·사용자 drawing은 이 스냅 대상이 아니다.
+현재 종목의 평균 매입가 pill은 보유 포지션 tooltip을 유지하는 semantic button이며,
+선택하면 해당 평균 매입가를 같은 snapshot 경로로 주문 패널에 적용한다. pill 바깥의
+가격축은 기존 연속 가격 선택을 유지한다.
 
 `이 가격에 예약하자`, `이 때 사자` 같은 차트 맥락 문장은 Agent/주문/알림 API보다
 먼저 로컬 확인 intent로 분기한다. 현재 `ChartTradeSetup`의 진입·목표·손절과 asset
