@@ -10,7 +10,7 @@ for path in (ROOT / "systems" / "market-data" / "shared", ROOT / "systems" / "ag
     if str(path) not in sys.path: sys.path.insert(0, str(path))
 
 from gops_agents.chart_assets.storage import (  # noqa: E402
-    MAX_ASSET_BYTES, POSTGRES_TABLE, PostgresChartAssetStorage, _asset_projection,
+    MAX_ASSET_BYTES, POSTGRES_SNAPSHOT_TABLE, POSTGRES_TABLE, PostgresChartAssetStorage, _asset_projection,
     _validate_asset_schema, build_chart_asset_storage_from_env,
 )
 
@@ -35,6 +35,47 @@ class ChartAssetStorageTest(unittest.TestCase):
         self.assertIn("EXCLUDED.as_of >=", query)
         self.assertIn("EXCLUDED.payload_digest IS DISTINCT FROM", query)
         self.assertEqual(parameters[:2], ("NVDA", "1D"))
+
+    def test_simulation_snapshot_save_is_isolated_by_dataset_and_cutoff(self):
+        connection = Connection()
+        storage = PostgresChartAssetStorage("postgresql://test", connect=lambda *_args, **_kwargs: connection)
+
+        self.assertTrue(storage.save_snapshot("dataset-1", "2026-07-16T00:00:00.000Z", _asset()))
+
+        query, parameters = connection.executions[0]
+        self.assertIn(f"INSERT INTO {POSTGRES_SNAPSHOT_TABLE}", query)
+        self.assertIn('ON CONFLICT (dataset_id, symbol, "interval")', query)
+        self.assertEqual(parameters[0], "dataset-1")
+        self.assertEqual(parameters[2:4], ("NVDA", "1D"))
+
+    def test_simulation_snapshot_rejects_asset_after_cutoff_before_write(self):
+        connection = Connection()
+        storage = PostgresChartAssetStorage("postgresql://test", connect=lambda *_args, **_kwargs: connection)
+
+        with self.assertRaisesRegex(ValueError, "asOf exceeds"):
+            storage.save_snapshot("dataset-1", "2026-07-09T00:00:00.000Z", _asset())
+
+        self.assertEqual(connection.executions, [])
+
+    def test_snapshot_commentary_projection_uses_dataset_identity(self):
+        asset = _asset()
+        asset["commentary"] = _commentary_v2()
+        connection = Connection(rows=[{
+            "asset_version": asset["assetVersion"], "algorithm_version": asset["algorithmVersion"],
+            "as_of": asset["asOf"], "generated_at": asset["generatedAt"],
+            "input_digest": asset["inputDigest"], "drawing_ids": ["snapshot-one"],
+            "commentary": asset["commentary"],
+        }])
+        storage = PostgresChartAssetStorage("postgresql://test", connect=lambda *_args, **_kwargs: connection)
+
+        projected = storage.get_snapshot_commentary(
+            "dataset-1", "nvda", "1D", "2026-07-16T00:00:00.000Z",
+        )
+
+        self.assertEqual(projected["drawingIds"], ["snapshot-one"])
+        query, parameters = connection.executions[0]
+        self.assertIn(f"FROM {POSTGRES_SNAPSHOT_TABLE}", query)
+        self.assertEqual(parameters[:3], ("dataset-1", "NVDA", "1D"))
 
     def test_json_schema_accepts_legacy_and_v6_payload_fixtures(self):
         _validate_asset_schema(_asset())

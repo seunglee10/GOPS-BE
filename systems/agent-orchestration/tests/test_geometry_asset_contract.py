@@ -17,7 +17,7 @@ for path in (
 from gops_agents.chart_assets.envelope import ALLOWED_INTERVALS, ChartAssetBuildEnvelope  # noqa: E402
 from gops_agents.chart_assets import envelope as envelope_contract  # noqa: E402
 from gops_agents.chart_assets.job_store import PostgresChartAssetJobStore  # noqa: E402
-from gops_agents.chart_assets.storage import POSTGRES_TABLE, build_chart_asset_storage_from_env  # noqa: E402
+from gops_agents.chart_assets.storage import POSTGRES_SNAPSHOT_TABLE, POSTGRES_TABLE, build_chart_asset_storage_from_env  # noqa: E402
 
 
 class GeometryAssetContractTest(unittest.TestCase):
@@ -75,6 +75,7 @@ class GeometryAssetContractTest(unittest.TestCase):
 
     def test_runtime_asset_store_is_postgres_geometry_table(self):
         self.assertEqual(POSTGRES_TABLE, "chart_assets.geometry_assets")
+        self.assertEqual(POSTGRES_SNAPSHOT_TABLE, "chart_assets.geometry_asset_snapshots")
         with self.assertRaises(RuntimeError):
             build_chart_asset_storage_from_env()
 
@@ -115,6 +116,19 @@ class GeometryAssetContractTest(unittest.TestCase):
         self.assertIn("geometry_build_jobs_active_request_idx", queue_sql)
         self.assertIn("geometry_build_jobs_priority_idx", queue_sql)
         self.assertIn("WHERE status IN ('queued', 'running')", queue_sql)
+
+        snapshot_sql = (
+            ROOT
+            / "systems"
+            / "agent-orchestration"
+            / "jobs"
+            / "chart-asset-migrations"
+            / "005_geometry_asset_simulation_snapshots.sql"
+        ).read_text(encoding="utf-8")
+        self.assertIn("chart_assets.geometry_asset_snapshots", snapshot_sql)
+        self.assertIn('PRIMARY KEY (dataset_id, symbol, "interval")', snapshot_sql)
+        self.assertIn("CHECK (as_of <= snapshot_cutoff)", snapshot_sql)
+        self.assertIn("build_target", snapshot_sql)
 
 
 class _Connection:

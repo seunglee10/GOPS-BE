@@ -30,6 +30,9 @@ class FakeStorage:
         self.get_calls = []
         self.get_commentary_calls = []
         self.get_symbol_assets_calls = []
+        self.snapshot_calls = []
+        self.snapshot_commentary_calls = []
+        self.snapshot_assets = {}
     def get(self, symbol, interval):
         self.get_calls.append((symbol, interval))
         return self.assets.get(symbol, {}).get(interval)
@@ -49,9 +52,25 @@ class FakeStorage:
             "drawingIds": ["level-1", "pattern-1"],
             "commentary": {"version": "chart-commentary.v2", "status": "ready"},
         }
-    def coverage(self, symbols=None):
+    def get_snapshot(self, dataset_id, symbol, interval, cutoff=None):
+        self.snapshot_calls.append((dataset_id, symbol, interval, cutoff))
+        return self.snapshot_assets.get((dataset_id, symbol, interval))
+    def get_symbol_snapshots(self, dataset_id, symbol, cutoff=None):
+        return {interval: self.get_snapshot(dataset_id, symbol, interval, cutoff) for interval in ALL_INTERVALS}
+    def get_snapshot_commentary(self, dataset_id, symbol, interval, cutoff=None):
+        self.snapshot_commentary_calls.append((dataset_id, symbol, interval, cutoff))
+        asset = self.snapshot_assets.get((dataset_id, symbol, interval))
+        if not asset:
+            return None
+        return {
+            "assetVersion": asset["assetVersion"], "algorithmVersion": asset["algorithmVersion"],
+            "asOf": asset["asOf"], "generatedAt": asset["generatedAt"],
+            "inputDigest": asset["inputDigest"], "drawingIds": ["snapshot-level"],
+            "commentary": asset.get("commentary"),
+        }
+    def coverage(self, symbols=None, dataset_id=None):
         items = [{"symbol": "NVDA", "interval": "1D", "generatedAt": "2026-07-11T00:00:00.000Z", "status": "ready"}]
-        return [item for item in items if not symbols or item["symbol"] in symbols]
+        return [{**item, **({"datasetId": dataset_id} if dataset_id else {})} for item in items if not symbols or item["symbol"] in symbols]
     def delete(self, symbols, intervals):
         self.deleted = (symbols, intervals)
         return 1
@@ -70,6 +89,19 @@ class FailingStorage:
     def get_commentary(self, _symbol, _interval): raise RuntimeError("postgres unavailable")
     def coverage(self, _symbols=None): raise RuntimeError("postgres unavailable")
     def delete(self, _symbols, _intervals): raise RuntimeError("postgres unavailable")
+
+
+class FakeSimulatorGateway:
+    def __init__(self, mode="live"):
+        self.mode = mode
+
+    def status(self):
+        return {
+            "available": True, "mode": self.mode, "state": "paused",
+            "datasetId": "dataset-20260715", "runId": "run-1" if self.mode == "simulation" else None,
+            "startTime": "2026-07-15T00:00:00.000Z",
+            "virtualTime": "2026-07-15T14:00:00.000Z",
+        }
 
 
 class ChartAssetsRoutesTest(unittest.TestCase):
@@ -138,6 +170,57 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         response = self.client.get("/api/charts/analysis-assets/coverage", params={"symbols": "NVDA,AAPL"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["total"], 1)
+
+    def test_simulation_reads_only_the_dataset_snapshot_and_commentary(self):
+        self.client.app.state.simulator_gateway = FakeSimulatorGateway("simulation")
+        snapshot = {
+            "assetVersion": "geometry", "algorithmVersion": "ohlcv-consensus-pattern-families-v6",
+            "symbol": "NVDA", "interval": "1D", "sourceInterval": "1D",
+            "asOf": "2026-07-14T04:00:00.000Z", "generatedAt": "2026-07-19T00:00:00.000Z",
+            "inputDigest": "sha256:snapshot", "commentary": {"version": "chart-commentary.v2", "status": "ready"},
+        }
+        self.storage.snapshot_assets[("dataset-20260715", "NVDA", "1D")] = snapshot
+
+        full = self.client.get("/api/charts/analysis-assets", params={"symbol": "NVDA", "interval": "1D"})
+        commentary = self.client.get("/api/charts/analysis-assets/commentary", params={"symbol": "NVDA", "interval": "1D"})
+
+        self.assertEqual(full.status_code, 200)
+        self.assertEqual(full.json()["assets"]["1D"]["inputDigest"], "sha256:snapshot")
+        self.assertEqual(full.json()["meta"]["assetContext"], "simulation")
+        self.assertEqual(full.json()["meta"]["snapshotStatus"], "ready")
+        self.assertEqual(commentary.json()["asset"]["inputDigest"], "sha256:snapshot")
+        self.assertEqual(self.storage.get_calls, [])
+        self.assertEqual(self.storage.get_commentary_calls, [])
+        self.assertEqual(self.storage.snapshot_calls[-1], (
+            "dataset-20260715", "NVDA", "1D", "2026-07-15T14:00:00.000Z"
+        ))
+
+    def test_simulation_missing_snapshot_does_not_fallback_to_live(self):
+        self.client.app.state.simulator_gateway = FakeSimulatorGateway("simulation")
+        response = self.client.get("/api/charts/analysis-assets", params={"symbol": "NVDA", "interval": "1D"})
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["assets"]["1D"])
+        self.assertEqual(response.json()["meta"]["snapshotStatus"], "missing")
+        self.assertEqual(self.storage.get_calls, [])
+
+    def test_simulation_build_freezes_server_dataset_start_context(self):
+        self.client.app.state.simulator_gateway = FakeSimulatorGateway("simulation")
+        response = self.client.post("/api/charts/analysis-assets/build", json={
+            "symbols": ["NVDA"], "intervals": ["1D"], "force": True, "target": "simulation",
+        })
+        self.assertEqual(response.status_code, 202)
+        envelope = self.queue.items[-1]
+        self.assertEqual(envelope["target"], "simulation")
+        self.assertEqual(envelope["datasetId"], "dataset-20260715")
+        self.assertEqual(envelope["snapshotCutoff"], "2026-07-15T00:00:00.000Z")
+
+    def test_simulation_build_rejects_absent_context(self):
+        self.client.app.state.simulator_gateway = FakeSimulatorGateway("live")
+        response = self.client.post("/api/charts/analysis-assets/build", json={
+            "symbols": ["NVDA"], "intervals": ["1D"], "force": True, "target": "simulation",
+        })
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "simulation_context_unavailable")
 
     def test_delete_removes_selected_asset_rows(self):
         response = self.client.delete("/api/charts/analysis-assets", params={"symbols": "nvda", "intervals": "1D,1W"})

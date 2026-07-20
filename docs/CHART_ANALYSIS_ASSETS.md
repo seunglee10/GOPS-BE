@@ -69,10 +69,11 @@ v6는 기존 패턴 detector, ranking, hardPass, confirmation, `tradePlan`, prim
 저장된 `tradePlan`은 주문이 아니며 confirmed 패턴의 자격과 신호 시점을 제공한다.
 상승은 `buy_candidate/long`, 하락은 보유분 매도 검토인 `sell_candidate/exit_long`만
 생성하며 공매도 진입 시나리오는 없다. 화면의 제안 가격은 이를 그대로 복사하지 않고
-현재 interval의 최종 작도를 가격으로 번역한다. 패턴 제안은 상·하단 경계와 패턴 폭 또는
-깃대 길이만 사용하고, 패턴이 없을 때의 H-line 제안은 기준선·다음 진행 방향 선·반대
-위험선이 모두 실제 최종 drawing으로 존재할 때만 생성한다. 최근 종가, 2R 투영, 다른
-interval 자산 또는 서로 다른 근거의 조합으로 부족한 가격을 채우지 않는다.
+현재 interval의 작도를 가격으로 번역한다. 신규 포지션 박스는 `buy_candidate`만 표시한다.
+상승 패턴, 완전한 최종 H-line 세트, 활성 평행 채널 순으로 매수 setup을 찾고, 부족할 때만
+최종 level/추세와 stale·breach·invalidation이 없는 hard-pass level 후보 또는 확인 피벗을
+제한적으로 조합한다. 세 가격은 모두 근거 ID를 가지며 최근 종가, 2R 투영, 다른 interval은
+사용하지 않는다. 비최종 근거는 proposal 전용 비영속 guide로 함께 표시한다.
 
 ## 해석 trace
 
@@ -103,8 +104,11 @@ flowchart LR
   Kernel --> Facts["commentary fact pack<br/>indicators + stored events"]
   Facts --> LLM["strict structured commentary<br/>store false"]
   LLM --> Guard["references / facts / schema<br/>8 drawings / 256 KiB"]
-  Guard --> PG["PostgreSQL geometry_assets JSONB UPSERT"]
+  Guard --> Target{"build target"}
+  Target -- "LIVE" --> PG["PostgreSQL geometry_assets JSONB UPSERT"]
+  Target -- "SIM dataset start" --> PGS["geometry_asset_snapshots JSONB UPSERT"]
   PG --> API["Chart asset API"]
+  PGS --> API
   API --> UI["5 layers + commentary"]
 ```
 
@@ -115,7 +119,9 @@ flowchart LR
 repair materialization과 해설용 뉴스·실적 조회는 계속 ClickHouse에 있고 Geometry
 asset을 ClickHouse에 저장하거나 dual-write하지 않는다. LLM은 검증된 `commentary`
 optional field만 PostgreSQL JSONB에 합치며 prompt와 전체 fact pack은 저장하지 않는다.
-S3, Redis, Kafka는 자산 저장 경로에 없다.
+S3, Redis, Kafka는 자산 저장 경로에 없다. 시뮬레이션 자산은
+`chart_assets.geometry_asset_snapshots`에 `(dataset_id, symbol, interval)`별로 별도
+저장한다. replay GET은 이 snapshot을 읽기만 하고 Geometry나 LLM을 런타임에 실행하지 않는다.
 
 차트 runtime은 현재 symbol·interval의 candle snapshot과 저장 commentary 경량 projection을
 병렬로 읽는다. 해설 projection은 asset identity, commentary, 최종 drawing ID만 포함한다.
@@ -134,16 +140,19 @@ Alpaca가 성공했지만 실제 봉이 없는 slot은 `provider_confirmed_empty
 
 - API와 내부 build envelope 모두 `1m/1D`만 받으며 기본값도 두 interval이다.
 - worker는 `scheduled` item을 candle 조회 전에 `manual_refresh_only`로 종료한다.
-- 개발 패널은 개별 symbol의 `작도 자산 생성·갱신` 동작만 제공한다. 이 동작은 선택한
-  `1m/1D`를 항상 `manual + force`로 실행해 없는 row는 만들고 기존 row는 현재 완료 봉과
-  최신 커널로 교체한다. 완료 결과에는 algorithm version, 저장 as-of, trace mode,
+- 개발 패널은 개별 symbol의 `작도 자산 생성·갱신` 동작만 제공한다. LIVE 대상은 선택한
+  `1m/1D`를 `manual + force`로 실행한다. 활성 SIM 대상은 서버가 고정한 dataset ID와 시작
+  시각 이하의 저장 canonical candle/news/earnings만 사용해 snapshot을 만든다. 움직이는
+  virtual time을 cutoff로 쓰거나 replay 중 자동 생성하지 않는다. 완료 결과에는 target,
+  dataset/cutoff, algorithm version, 저장 as-of, trace mode,
   category별 후보 수와 write 검증을 표시하며 실패 시에는 기존 row 유지 여부를 명시한다.
 - 실패분은 별도 실행 종류로 분리하지 않고 같은 선택과 버튼으로 다시 실행한다. 수동
   S&P500 force 갱신은 개발 패널에 노출하지 않는다.
 - `symbols="sp500"`과 `force=true` 조합은 API에서 400으로 거절한다.
 - 같은 source/force/symbol/interval의 active 요청은 하나의 PostgreSQL job으로 합친다.
 - 수동 priority는 100이고 최대 2회 처리 뒤 만료된 lease는 실패로 종결한다.
-- 배포 시 기존 row를 일괄 재생성하거나 DB schema/data migration을 실행하지 않는다.
+- 배포 시 기존 LIVE row나 snapshot을 일괄 재생성하지 않는다. append-only snapshot table
+  migration만 먼저 적용하고 필요한 종목은 개발 패널에서 수동 생성한다.
 
 ## 사전 생성 종합 해설
 
@@ -188,14 +197,14 @@ commentary telemetry는 독립된 로그 항목으로 기록하며 글자·문�
 ## 화면 레이어와 해설
 
 자동 분석은 `해석`, `저항(지지·저항)`, `추세`, `패턴`, `제안`의 다섯 레이어로
-나뉜다. 초기값은 해석·제안 OFF, 나머지 ON이다. `drawingGroups`가 levels/trend/pattern
+나뉜다. 초기값은 다섯 레이어 모두 OFF다. `drawingGroups`가 levels/trend/pattern
 drawing ID의 원본이며 구자산은 stable ID와 geometry metadata로 호환 분류한다.
 SMA60/120은 차트 추가 도구가 소유하는 독립 보조지표이며 추세 토글이 가시성을 바꾸지
 않는다. 최근 골든·데드크로스 마커만 분석 이벤트로 추세 레이어가 소유한다. 제안 OFF는
 메모리 trade plan을 삭제하지 않고 표시와 제안 가격의 Y축 반영만 중단한다.
 
-해설은 유효한 구조화 `commentary`가 있으면 본문에서 파생한 차트 연동 링크만 먼저
-흰색 평문형 링크로 표시하고 `종합 해설 보기`를 눌렀을 때 세 문단 연속형 본문과 기존
+해설은 유효한 구조화 `commentary`가 있으면 본문에서 파생한 차트 연동 명사구를 먼저
+흰색 compact 버튼으로 표시하고 `종합 해설 보기`를 눌렀을 때 세 문단 연속형 본문과 기존
 signal 색 링크를 펼친다. 펼침·접힘은 작도 고정, 지표, 봉, 이벤트 상태를 변경하지 않으며
 자산 identity가 바뀌면 다시 접힌다. commentary가 없는
 구자산은 기존 규칙 기반 종합 해설로 fallback한다. 패널 상단의 별도 표는 KIS holdings API로
@@ -237,11 +246,11 @@ forming 3px/0.88, 그 밖에는 3px/0.78이고 fill은 0.04다. 추세와 채널
 해설 hover/focus는 대상의 원래 category 색을 유지한 채 opacity를 1로 올리고 선을
 0.75px(최대 4.5px) 굵게 한다. 다른 분석 작도는 각 원래 opacity의 65%로 낮추되
 캔들과 사용자 drawing은 더 약하게만 dim한다. 해석 레이어의 확정 바탕선과 모든 미선택
-후보는 category 색의 solid 5.5px(pattern), 4.5px(level), 4px(trend), opacity 0.40으로
+후보는 category 색의 solid 5.5px(pattern), 4.5px(level), 4px(trend), opacity 0.30으로
 동일하게 표시한다. 후보의 판정 상태에 따라 opacity를 달리하지 않는다. 근거 marker는
 캔들 위에 유지하며 해석 바탕선은 history, export, hit-test에 포함하지 않는다.
 제안 `riskRewardBox`도 가격축 pill이나 내부 설명 chip을 만들지 않으며, 오른쪽의
-클릭 가능한 DOM 라벨로 진입/목표/손절 또는 매도/예상 하단/재검토 가격을 표시한다.
+클릭 가능한 DOM 라벨로 위에서부터 `수익 실현 검토`, `매수 검토`, `손실 제한 검토`를 표시한다.
 각 라벨에는 `패턴 상단`, `패턴 폭`, `다음 저항선`처럼 가격 원천을 함께 표시한다.
 라벨과 주요 가격 행을 hover/focus하면 해당 원천 drawing을 강조하며, 패턴 폭·깃대
 길이처럼 여러 segment에서 파생된 가격은 해당 primary pattern 전체를 강조한다.
@@ -251,6 +260,12 @@ DOM 라벨은 매 scene에서 Canvas와 같은 geometry를 동기적으로 사�
 시나리오 hover/focus는 제안이 꺼져 있어도 이를 임시 표시하고, 시나리오 클릭은 연결된
 `chartDocumentId`의 제안 레이어만 토글한다. 최초 표시에는 projection 폭과 176px 라벨
 공간을 포함한 외부 auto-frame을 한 번 적용한다.
+
+차트 좌측 하단의 다섯 버튼은 chart hover 또는 focus-within에서만 나타나고 상태 문구는
+항상 남는다. 같은 버튼은 해설 패널의 보유 현황 아래에도 리모컨으로 표시되며 두 위치는
+하나의 document runtime visibility/availability를 공유한다. 해설의 지지·저항·추세·패턴
+카드와 조건부 매수 시나리오 카드도 같은 상태를 구독하며 hover/focus는 임시 강조, 클릭은
+대응 레이어 ON/OFF를 담당한다.
 
 최신성은 `current`, `outdated_snapshot`, `source_invalid`로 구분한다. 새 완료 봉이 생긴
 정상 자산은 당시 분석 스냅샷이므로 원래 opacity를 유지하고 `N봉 전`을 표시한다.

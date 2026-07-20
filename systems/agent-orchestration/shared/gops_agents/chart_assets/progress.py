@@ -169,7 +169,11 @@ def initial_state(envelope: ChartAssetBuildEnvelope) -> dict[str, Any]:
         "status": "queued",
         "source": envelope.source,
         "priority": envelope.priority,
-        "requested": {"symbolCount": len(envelope.symbols), "intervals": list(envelope.intervals), "force": envelope.force},
+        "requested": {
+            "symbolCount": len(envelope.symbols), "intervals": list(envelope.intervals),
+            "force": envelope.force, "target": envelope.target,
+            "datasetId": envelope.dataset_id, "snapshotCutoff": envelope.snapshot_cutoff,
+        },
         "progress": {"total": total, "done": 0, "failed": 0, "skipped": 0, "warnings": 0, "current": None},
         "repair": initial_repair_state(),
         "recentItems": [], "failedItems": [], "logs": [], "startedAt": None, "finishedAt": None, "cancelRequested": False,

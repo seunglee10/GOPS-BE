@@ -1213,7 +1213,7 @@ Compose 기본값은 `CHART_COMMENTARY_PROVIDER=disabled`와
 `CHART_COMMENTARY_REQUIRED=false`다. AWS overlay는 `provider=openai`, `required=true`로
 고정하고 `chart-asset-builder`의 `alfaka-openai-secret`을 필수로 만든다. writer는
 `CHART_COMMENTARY_MODEL`이 없으면 `OPENAI_MODEL`을 사용하고
-`chart-commentary.ko.v2`의 연속형 세 문단과 inline reference 계약을 검증한다.
+현재 writer는 `chart-commentary.ko.v5`의 간결한 세 문단과 inline reference 계약을 검증한다.
 required mode는 provider/key/model 누락 시 builder 시작을 실패시킨다. timeout, 429,
 5xx만 0.5초 뒤 한 번 재시도하며, strict output이 서버 후검증에서 탈락한 경우에도
 동일 fact pack으로 한 번만 교정한다. 영구 HTTP·인증·refusal은 재시도하지 않는다.
@@ -1241,9 +1241,11 @@ LLM enrichment 장애는 deterministic chart answer를 막지 않아야 한다.
 Geometry writer 변경은 `CHART_INTERPRETATION_ONLY=true` reader-only 프로필로 배포하지
 않는다. 일반 dev 배포에서 frontend, backend, agent-orchestrator를 함께 선택해 동일한
 immutable Git-SHA image tag의 `chart-asset-builder`까지 rollout한 뒤 force 재생성을 수행한다.
-재생성 전에는 `scripts/aws/preflight-chart-commentary-aws.sh`로 builder image, deploy mode,
-provider/required/model, key의 non-empty 여부와 prompt version을 확인한다. 스크립트는 Secret
-값이나 prompt/news 원문을 출력하지 않는다.
+일반 배포는 builder rollout 직후 `scripts/aws/preflight-chart-commentary-aws.sh`를 자동 실행해
+immutable image tag, provider/required/model, key의 non-empty 여부와
+`chart-commentary.ko.v5` prompt version을 확인한다. 실패하면 배포 성공 상태를 기록하지 않고
+기존 rollback 경로를 사용한다. 스크립트는 Secret 값이나 prompt/news 원문을 출력하지 않으며,
+자산 재생성이나 LLM 호출을 수행하지 않는다.
 
 AWS overlay는 Alpaca repair 동시성 2와 최대 range 8을 사용한다. 기존 평일 CronJob이
 queue item을 등록해도 builder는 scheduled item을 분석·복구·저장하지 않는다. API 패널과
@@ -1256,8 +1258,8 @@ PostgreSQL schema는
 `agent-orchestrator` 일반 배포의 자동 선행 gate로 적용하며 runtime은 자동 생성하지 않는다.
 PostgreSQL Secret이 없거나 Job이 실패하면 app rollout을 시작하지 않는다.
 범용 패턴 자산 배포 전에는 이 gate가
-`geometry_assets.drawing_count` check constraint와 queue priority/fingerprint index를
-갱신한다.
+`geometry_assets.drawing_count` check constraint, queue priority/fingerprint index와
+append-only `geometry_asset_snapshots` table/build-context columns를 적용한다.
 
 Financial final-answer synthesis is enabled with
 `AGENT_FINANCIAL_FINAL_ANSWER_PROVIDER=openai`. The orchestrator still reads SEC
@@ -1368,11 +1370,11 @@ SIM Order Flow는 같은 simulator image가 `systems/market-data/shared`의 분�
 LRU이며 LIVE Redis/Kafka와 tick table에는 쓰지 않는다. shared 코드 변경은 simulator
 image도 rebuild하며, Bid/Ask/OrderFlow 소켓만 `orderFlow=true`로 이 projection을 구독한다.
 
-SIM 차트 자동 작도는 별도 Deployment, Job, migration을 추가하지 않는다. backend의
-`GET /api/charts/analysis-assets`가 프런트가 요청한 현재 interval 하나에 대해서만 기존
-ClickHouse 과거 봉과 simulator replay 완료 봉을 합쳐 비영속 Geometry 자산을 만든다.
-응답은 `virtualTime`을 넘는 저장 자산을 제거하고 PostgreSQL이나 build queue에 쓰지
-않는다. 추천은 같은 simulator 배포에서 위 fixed replay 환경변수를 그대로 사용한다.
+SIM 차트 자동 작도는 runtime 계산용 Deployment나 Job을 추가하지 않는다. chart migration
+gate가 `geometry_asset_snapshots`를 먼저 만들고, 운영자는 활성 dataset에서 개발 패널로
+필요한 symbol의 `1m/1D`를 시작 시각 기준으로 한 번 생성한다. backend full/commentary GET은
+현재 dataset snapshot만 읽고 없으면 LIVE fallback 없이 생성 필요 상태를 반환한다.
+추천은 같은 simulator 배포에서 위 fixed replay 환경변수를 그대로 사용한다.
 시장 evidence는 고정하고, 활성 `runId`와 `virtualTime` 검증을 통과한 최신 paper portfolio만
 사용자별 재추천 입력으로 허용한다. 뉴스는 기존 cutoff-safe ClickHouse 읽기 경로를 유지한다.
 
@@ -1415,7 +1417,10 @@ provider 원본 row/JSON은 저장하지 않는다. 새 projection 적재가 성
 `yahoo_analyst_actions`와 `yahoo_analyst_consensus` 테이블을 삭제한다.
 ClickHouse 24.12 호환을 위해 DateTime64 수집시각의 TTL은
 `toDateTime(collected_at) + INTERVAL 1 DAY`로 선언한다. 첫 성공 실행이 projection 테이블을 만들며,
-SIM evidence도 이 현재 24시간 문장과 Yahoo 실적 projection을 cutoff와 구분된 overlay로 읽는다.
+같은 24시간 행에는 현재 문장과 `YAHOO_ANALYST_REPLAY_CUTOFF=2026-07-14T15:00:00Z`
+이전 action만으로 만든 고정 replay 문장을 함께 저장한다. 원본 action/consensus는 저장하지 않고
+두 문장 행도 매일 덮어쓴다. SIM evidence는 replay cutoff/source 시각을 검증한 replay 문장과
+cutoff 이전 Yahoo 분기 예상·보고 EVENT만 읽으며 현재 projection을 overlay하지 않는다.
 Yahoo 요청에서는 class-share 표기의 점을 대시로 바꾸되(`BRK.B` -> `BRK-B`), ClickHouse에는
 GOPS canonical symbol인 `BRK.B`를 유지한다.
 기업저널 report worker는 이 단기 문장을 입력·report·receipt에 복제하지 않는다. panel evidence
@@ -1437,6 +1442,7 @@ pending 존재 시 활성 processor가 없으면 다음 Dispatcher 실행에서 
 GET /api/company-journal/NVDA가 ready 또는 pending 계약 반환
 GET /api/company-journal/NVDA/evidence가 SEC/Yahoo/일봉 근거 또는 명시적 missingData 반환
 SIM에서 GET /api/company-journal/NVDA/evidence의 cutoff가 simulator virtualTime과 일치하고 미래 SEC/Yahoo/일봉 행이 없음
+SIM 투자사 의견의 sourceAsOf가 cutoff 이하이고 실적 내역이 최근 12개 분기로 표시됨
 SIM에서 GET /api/company-journal/NVDA는 409를 유지하며 다른 market/agent guard도 그대로 차단
 worker 완료 후 verified report가 ClickHouse에 append
 기존 report row와 원천 테이블 row count가 감소하지 않음

@@ -775,6 +775,24 @@ deploy_app_workloads() {
   done
 }
 
+verify_chart_commentary_writer() {
+  if ! service_selected "agent-orchestrator" || is_true "${CHART_INTERPRETATION_ONLY}"; then
+    return 0
+  fi
+  if is_true "${DRY_RUN}"; then
+    printf 'DRY_RUN=true: skipping deployed chart commentary writer preflight.\n'
+    return 0
+  fi
+
+  (
+    cd "${WORKTREE_DIR}"
+    EXPECTED_IMAGE_TAG="${IMAGE_TAG}" \
+      EXPECTED_PROMPT_VERSION="chart-commentary.ko.v5" \
+      K8S_NAMESPACE="${K8S_NAMESPACE}" \
+      scripts/aws/preflight-chart-commentary-aws.sh
+  )
+}
+
 verify_simulator_rollout() {
   if is_true "${CHART_INTERPRETATION_ONLY}"; then
     return 0
@@ -891,6 +909,7 @@ main() {
   run_simulator_replay_import_if_selected
   run_migrations_if_requested
   deploy_app_workloads
+  verify_chart_commentary_writer
   verify_simulator_rollout
   if ! is_true "${CHART_INTERPRETATION_ONLY}"; then
     verify_ai_coach_snapshot_archive

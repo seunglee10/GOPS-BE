@@ -32,15 +32,17 @@ class PostgresChartAssetJobStore:
                 f"""
                 INSERT INTO {JOBS_TABLE} (
                     job_id, requested_by, submitted_at, status, force_build, source, priority, request_fingerprint,
-                    requested_intervals, symbol_count, total_items, repair, logs
-                ) VALUES (%s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, '{{}}'::jsonb, '[]'::jsonb)
+                    requested_intervals, symbol_count, total_items, repair, logs,
+                    build_target, simulation_dataset_id, simulation_cutoff
+                ) VALUES (%s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, '{{}}'::jsonb, '[]'::jsonb, %s, %s, %s)
                 ON CONFLICT DO NOTHING
                 RETURNING job_id
                 """,
                 (
                     envelope.job_id, envelope.requested_by, _timestamp(envelope.submitted_at), envelope.force,
                     envelope.source, envelope.priority, fingerprint, Jsonb(list(envelope.intervals)),
-                    len(envelope.symbols), total,
+                    len(envelope.symbols), total, envelope.target, envelope.dataset_id,
+                    _timestamp(envelope.snapshot_cutoff) if envelope.snapshot_cutoff else None,
                 ),
             ).fetchone()
             if inserted is None:
@@ -128,7 +130,8 @@ class PostgresChartAssetJobStore:
                 UPDATE {JOBS_TABLE}
                 SET status = 'running', started_at = COALESCE(started_at, now()), updated_at = now()
                 WHERE job_id = %s
-                RETURNING requested_by, submitted_at, force_build, requested_intervals, source
+                RETURNING requested_by, submitted_at, force_build, requested_intervals, source,
+                          build_target, simulation_dataset_id, simulation_cutoff
                 """,
                 (row["job_id"],),
             ).fetchone()
@@ -138,6 +141,9 @@ class PostgresChartAssetJobStore:
             job_id=row["job_id"], requested_by=job["requested_by"],
             submitted_at=_iso(job["submitted_at"]), symbols=[row["symbol"]],
             intervals=intervals, force=job["force_build"], source=job["source"],
+            target=job.get("build_target") or "live",
+            dataset_id=job.get("simulation_dataset_id"),
+            snapshot_cutoff=_iso(job.get("simulation_cutoff")),
         )
         return {"envelope": envelope, "symbol": row["symbol"], "interval": row["interval"], "attempts": row["attempts"]}
 
@@ -159,7 +165,12 @@ class PostgresChartAssetJobStore:
         return {
             "jobId": job_id, "status": job["status"],
             "source": job["source"], "priority": int(job["priority"]),
-            "requested": {"symbolCount": job["symbol_count"], "intervals": requested_intervals, "force": job["force_build"]},
+            "requested": {
+                "symbolCount": job["symbol_count"], "intervals": requested_intervals,
+                "force": job["force_build"], "target": job.get("build_target") or "live",
+                "datasetId": job.get("simulation_dataset_id"),
+                "snapshotCutoff": _iso(job.get("simulation_cutoff")),
+            },
             "progress": {
                 "total": job["total_items"], "done": len(done), "failed": len(failed),
                 "skipped": len(skipped), "warnings": len(warnings),

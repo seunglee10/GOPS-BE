@@ -284,6 +284,10 @@ def test_simulation_report_finishes_with_explicit_missing_data_when_cutoff_has_n
     assert report is not None
     assert report["validationStatus"] == "verified"
     assert report["sourceMode"] == "historical_reconstruction"
+    assert report["headline"] == (
+        "엔비디아는 데이터센터 실적 성장과 CUDA 생태계의 강력한 진입장벽을 바탕으로, "
+        "AI 인프라 시장의 주도권을 이어가고 있습니다."
+    )
     assert "recent_stock_return" in report["missingData"]
     assert "가상시각 이전의 완료 일봉이 부족" in report["recentMovement"]
 
@@ -481,7 +485,7 @@ def test_company_journal_analyst_evidence_is_current_and_compact(monkeypatch):
     assert "yahoo_analyst_summary" not in result["missingData"]
 
 
-def test_analyst_repository_reads_only_the_current_24_hour_projection_during_simulation():
+def test_analyst_repository_reads_the_daily_rebuilt_replay_projection_during_simulation():
     class ClickHouseClient:
         database = "market_data"
 
@@ -491,7 +495,7 @@ def test_analyst_repository_reads_only_the_current_24_hour_projection_during_sim
         def query_json_each_row(self, query, parameters=None):
             self.calls.append((query, parameters))
             return [{
-                "statement": "현재 조합 문장입니다.",
+                "statement": "7월 14일 기준 조합 문장입니다.",
                 "tone": "neutral",
                 "source_as_of": "2026-07-15 12:00:00.000",
                 "collected_at": "2026-07-15 13:30:00.000",
@@ -501,16 +505,18 @@ def test_analyst_repository_reads_only_the_current_24_hour_projection_during_sim
     cutoff = datetime.fromisoformat("2026-07-15T23:00:00+09:00")
     result = CompanyJournalRepository(client=client).load_analyst_summary("NVDA", cutoff=cutoff)
 
-    assert result["statement"] == "현재 조합 문장입니다."
+    assert result["statement"] == "7월 14일 기준 조합 문장입니다."
     query, parameters = client.calls[0]
     assert "yahoo_analyst_summaries FINAL" in query
+    assert "replay_statement AS statement" in query
     assert "collected_at >= now64(3) - INTERVAL 1 DAY" in query
-    assert "collected_at <=" not in query
+    assert "replay_cutoff <=" in query
+    assert "replay_source_as_of <=" in query
     assert "LIMIT 1" in query
-    assert parameters == {"symbol": "NVDA"}
+    assert parameters == {"symbol": "NVDA", "cutoff": "2026-07-15T14:00:00+00:00"}
 
 
-def test_simulation_earnings_repository_keeps_sec_cutoff_and_uses_current_yahoo_overlay():
+def test_simulation_earnings_repository_bounds_yahoo_rows_to_the_replay_cutoff():
     class ClickHouseClient:
         database = "market_data"
 
@@ -532,8 +538,10 @@ def test_simulation_earnings_repository_keeps_sec_cutoff_and_uses_current_yahoo_
     assert sec_parameters["cutoff"] == "2026-07-15T14:00:00+00:00"
     assert "actual_value AS actualValue" in yahoo_query
     assert "fiscal_period = 'EVENT'" in yahoo_query
-    assert "collected_at <=" not in yahoo_query
+    assert "event_at <= parseDateTime64BestEffort" in yahoo_query
+    assert "collected_at <= parseDateTime64BestEffort" in yahoo_query
     assert yahoo_parameters["symbol"] == "NVDA"
+    assert yahoo_parameters["cutoff"] == "2026-07-15T14:00:00+00:00"
 
 
 def test_point_in_time_evidence_uses_cutoff_repository_instead_of_live_fundamentals_adapter(monkeypatch):
@@ -561,8 +569,14 @@ def test_point_in_time_evidence_uses_cutoff_repository_instead_of_live_fundament
 
         def load_analyst_summary(self, symbol, cutoff=None):
             assert symbol == "NVDA"
-            assert cutoff is None
-            return None
+            assert cutoff == replay_cutoff
+            return {
+                "statement": "7월 14일 기준 투자사 의견입니다.",
+                "tone": "neutral",
+                "source_as_of": "2026-07-14 13:00:00.000",
+                "collected_at": "2026-07-19 00:00:00.000",
+                "source": "yahoo-finance",
+            }
 
     monkeypatch.setattr(
         "app.market_data.fundamentals.service.build_fundamentals_adapter",
@@ -577,7 +591,9 @@ def test_point_in_time_evidence_uses_cutoff_repository_instead_of_live_fundament
     assert result["simulation"] is True
     assert result["sourceMode"] == "historical_reconstruction"
     assert result["cutoff"] == replay_cutoff.isoformat()
-    assert result["currentProjectionSources"] == ["yahoo_earnings", "yahoo_analyst_summary"]
+    assert "currentProjectionSources" not in result
+    assert result["analystSummary"]["statement"] == "7월 14일 기준 투자사 의견입니다."
+    assert result["analystSummary"]["sourceAsOf"] == "2026-07-14 13:00:00.000"
     assert result["financialSeries"][0]["filedAt"] == "2026-05-01"
     assert result["earningsSeries"][0]["actualEps"] == 2.3
     assert result["performanceSeries"][0]["candles"][0]["timestamp"] == "2026-07-13T04:00:00Z"
@@ -592,9 +608,13 @@ def test_company_journal_evidence_does_not_remove_other_simulation_guards():
     assert requires_point_in_time_data("/api/charts/order-flow/daily", "GET") is True
     assert requires_point_in_time_data("/api/charts/analysis-assets", "DELETE") is True
     assert requires_point_in_time_data("/api/charts/analysis-assets/build", "GET") is True
+    assert requires_point_in_time_data("/api/charts/analysis-assets/build/cab-test", "GET") is False
+    assert requires_point_in_time_data("/api/charts/analysis-assets/coverage", "GET") is False
     assert requires_point_in_time_data("/api/company-journal/NVDA/evidence") is False
     assert requires_point_in_time_data("/api/company-journal/NVDA") is False
     assert requires_point_in_time_data("/api/company-journal/NVDA", "POST") is True
     assert supports_cutoff_safe_simulation_read("/api/company-journal/NVDA/evidence") is True
+    assert supports_cutoff_safe_simulation_read("/api/charts/analysis-assets/build", "POST") is True
+    assert supports_cutoff_safe_simulation_read("/api/charts/analysis-assets/build/cab-test/cancel", "POST") is True
     assert supports_cutoff_safe_simulation_read("/api/company-journal/NVDA/evidence", "POST") is False
     assert supports_cutoff_safe_simulation_read("/api/company-journal/NVDA") is False

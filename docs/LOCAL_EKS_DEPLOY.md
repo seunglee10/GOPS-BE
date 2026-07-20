@@ -112,8 +112,9 @@ agent-orchestrator
 
 이 경로는 `chart-asset-builder`를 갱신하지 않으므로 commentary writer/prompt 변경을
 검증하거나 개발 패널에서 자산을 재생성하는 용도로 사용하지 않는다. writer 변경은 일반
-`agent-orchestrator` 배포로 builder까지 rollout한 뒤
-`scripts/aws/preflight-chart-commentary-aws.sh`를 통과시킨다.
+`agent-orchestrator` 일반 배포는 builder rollout 직후
+`scripts/aws/preflight-chart-commentary-aws.sh`를 자동 실행하며, 현재 image tag와
+`chart-commentary.ko.v5` runtime 계약이 맞지 않으면 기존 rollback 경로로 실패한다.
 
 따라서 같은 agent image를 공유하는 `chart-asset-builder`, `chart-geometry-build`
 CronJob, migration/maintenance Job과 다른 agent workload는 변경하지 않는다. 이 모드는

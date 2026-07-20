@@ -118,10 +118,10 @@ limit-only 계약을 유지한다. 주문 상태는 `/ws/orders/{order_id}`의 S
 번들된 검증 fixed replay provider를 사용하므로 `simulation_data_unavailable`을 표시하지 않는다.
 서버는 활성 SIM `runId`와 시각이 검증된 최신 paper
 portfolio로 추천을 다시 계산할 수 있으며, 프런트는 계좌와 추천 item을 직접 합치지 않는다.
-차트 자동 작도는 현재 symbol과 interval을
-`GET /api/charts/analysis-assets`에 보내며, 서버가 replay cursor까지의 실제 완료 봉으로
-만든 비영속 Geometry 자산만 표시한다. 저장된 자산의 `asOf`가 cursor보다 미래이면
-표시하지 않는다. 기업정보 등 point-in-time 데이터가 없는 나머지 기능은 기존 최신값이나
+차트 자동 작도는 현재 symbol과 interval을 `GET /api/charts/analysis-assets`에 보내며,
+현재 dataset 시작 기준으로 개발 패널에서 사전 생성한 PostgreSQL snapshot만 표시한다.
+snapshot이 없거나 현재 algorithm과 다르면 생성 필요 상태를 표시하고 LIVE 자산으로
+fallback하거나 replay cursor마다 다시 계산하지 않는다. 기업정보 등 point-in-time 데이터가 없는 나머지 기능은 기존 최신값이나
 fixture를 남기지 않고 `simulation_data_unavailable` 상태를 표시한다. AI 투자 코치는
 예외로, LIVE에서 선택된 동일한 계좌 리포트를 SIM 전환 뒤에도 유지하며 시뮬레이션
 모드만을 이유로 숨기거나 다른 리포트로 교체하지 않는다. 프런트는 합성
@@ -138,7 +138,8 @@ Order Flow 패널과 Bid/Ask 차트는 SIM에서 기존 intraday API와
 `/ws/charts?orderFlow=true`를 사용한다. 캐시는 `mode + datasetId + runId + virtual NY
 date + symbol`로 격리하고 mode/run 변경 시 폐기한다. 새 `sessionDate`가 오면 이전
 minute map을 먼저 비우며, Bid/Ask 캔들은 해당 세션의 정규장 구간만 표시한다.
-오더플로우 조회 실패는 빈 데이터가 아니라 명시적 error 상태로 렌더링한다.
+SIM 심볼 목록은 502개 replay universe 전체를 반환하므로 뒤쪽 심볼도 unsupported로
+오판하지 않는다. 오더플로우 조회 실패는 빈 데이터가 아니라 명시적 error 상태로 렌더링한다.
 
 차트의 실적·뉴스 DOM 마커는 Canvas scene 좌표를 chart container의 local 좌표로
 환산하고 대응 봉의 x 중심을 그대로 사용한다. 같은 봉의 여러 이벤트는 좌우로 벌리지
@@ -203,7 +204,9 @@ backoff를 초기화한다. `simulation_quote_not_ready`, `simulation_quote_time
 비교 평가금을 동일한 금액 축으로 표시한다. 금액 이력이 없는 기존 응답은
 `returnPercent` 기반 포트폴리오·S&P 500 퍼센트 차트를 유지해 배포 전 snapshot을 빈 화면으로
 바꾸지 않는다. 시작 원금은 보유종목 매입원가와 다르며 과거 generation이나 SIM 가상시각에
-현재 값을 소급하지 않는다.
+현재 값을 소급하지 않는다. 평가금과 투자 원금 사이의 간극은 밴드로 표시한다. 투자 원금이
+평가금보다 높은 손실 간극은 파랑, 투자 원금이 평가금보다 낮은 수익 간극은 빨강이며 두 선이
+교차하는 시점에서 밴드 색도 나뉜다.
 SIM의 S&P 500 비교선은 simulator에 고정한 replay 시작 전 FRED 실제 일봉과 실제 5분
 지수 관측값으로 만든 point-in-time-safe benchmark만 사용한다. benchmark point가 부족하면 응답 warning을
 성과 toolbar에 표시하고 임의 선을 만들지 않는다. 성과 최초 조회는 다른 포트폴리오 패널과
@@ -1035,10 +1038,11 @@ LIVE와 SIM 모두 현재 chart의 canonical candle snapshot과 첫 Canvas scene
 현재 symbol+interval 자산을 후순위로 조회한다. ChartPanel이 요청을 단독 소유하고 연결된
 차트 해설 패널은 document runtime snapshot을 공유하므로 전체 interval 또는 중복 GET을
 보내지 않는다. 자산 조회가 느리거나 실패해도 이미 렌더된 candle chart는 유지한다.
-SIM에서는 차트가 현재 interval을 GET query에 포함하고 symbol+interval별로 cache한다.
-mode/run 또는 interval이 바뀌면 다시 조회하며, 응답의 `meta.simulation=true` 자산도
-동일한 layer/controller 계약으로 적용한다. 이 자산은 서버 메모리 응답일 뿐 build job,
-PostgreSQL 저장, 운영 패널의 coverage 목록에는 추가되지 않는다.
+SIM에서는 cache identity에 dataset ID를 포함한다. mode/dataset/run 또는 interval이 바뀌면
+다시 조회하고 current dataset의 저장 snapshot을 같은 layer/controller 계약으로 적용한다.
+개발 패널은 SIM에서 dataset 시작 기준을 기본 선택하며 개별 symbol의 `1m/1D` snapshot만
+수동 생성한다. replay 진행은 snapshot을 재조회하거나 재계산하지 않으며 LIVE 복귀 시
+latest LIVE 자산으로 전환한다.
 단, Geometry 지지·저항 `horizontalLine`은 가격 자체가 핵심인 무한 수평선이므로
 저장된 과거 접촉 봉이 아직 차트에 로드되지 않았으면 현재 로드된 첫·마지막 canonical
 candle timestamp에 presentation anchor를 투영해 즉시 표시한다. PostgreSQL 원본
@@ -1079,18 +1083,19 @@ opacity의 65%로 낮춘다. 캔들과 사용자 drawing은 분석 작도보다 
 기존 7개 interval 자산은 계속 표시할 수 있지만 새 빌드 선택지는 `1m/1D` 두 개뿐이며
 둘 다 기본 선택한다. 동일 실행 중 요청에 합쳐진 경우 이를 안내하고 polling은 기존
 job URL을 사용한다. 상태 화면은 수동 우선 작업과 정기 작업을 구분해 표시한다.
-완전한 서버 `tradePlan`이 있으면 우선해 `buy_candidate/long`은 조건부 매수 검토,
-`sell_candidate/exit_long`은 보유분의 조건부 매도 검토로 표시한다. 숏 신규 포지션
-계약은 없다. `[entry, stop, target]` 순서의 `riskRewardBox`는 가격축 pill과 내부 설명
+서버 `tradePlan`의 하락 구조는 해설에만 유지하고 신규 포지션 `riskRewardBox`는
+`buy_candidate/long`만 표시한다. 숏 신규 포지션 계약은 없다. `[entry, stop, target]` 순서의 `riskRewardBox`는 가격축 pill과 내부 설명
 chip 없이 렌더링하고 세 가격은 오른쪽 DOM 버튼으로 표시한다. DOM 위치는 Canvas scene과
 같은 프레임에 동기화하고 박스 오른쪽 lane에만 둔다. 가격 간격이 좁으면 24px 간격으로
-분산하되 원래 가격선과 elbow connector로 연결한다. 서버 플랜이 없으면 현재 또는 가까운 저장 주기의 패턴·지지·저항만으로
-조건부 매수/매도 setup을 만든다. 종목별 분기, ATR 재계산, 레벨 재병합, 가짜 candle은
-허용하지 않는다. 손익비가 기준 미만인 `no_trade`와 미확정 `watch`는 서버 확정 플랜을
-만들지 않는다.
+분산하되 원래 가격선과 elbow connector로 연결한다. 서버 가격을 복사하지 않고 현재 interval의
+상승 패턴, 완전한 최종 H-line, 활성 평행 채널을 순서대로 가격화한다. 부족하면
+stale/breach/invalidation이 없는 hard-pass level 후보, 확인 피벗과 최종 level/추세를
+제한적으로 조합하고 비최종 가격에는 proposal 전용 guide를 표시한다. 세 가격의 순서와
+point-in-time 출처를 증명하지 못하면 만들지 않는다. 종목별 분기, 최근 종가, 임의 2R,
+다른 interval, ATR 재계산, 레벨 재병합, 가짜 candle은 허용하지 않는다.
 박스의 Entry는 실제 확인 봉 timestamp를 사용하고 Stop/Target의 미래 끝점은 자산에
 저장하지 않는 logical index 투영만 사용해 가짜 candle timestamp를 만들지 않는다.
-진입 점선은 확인 봉부터, fill과 목표·손절 또는 예상 하단·재검토 경계는 마지막 완료 봉 다음 슬롯부터 시작한다.
+기준선은 확인 봉부터, fill과 `수익 실현 검토`·`손실 제한 검토` 경계는 마지막 완료 봉 다음 슬롯부터 시작한다.
 제안이 보이는 동안 세 가격을 Y축 자동 범위에 포함한다. `DrawingStyle.labelPlacement`와
 `zoneSplit`은 command add/update/undo/redo에서 보존하며 값이 없으면 기존 수동 drawing의
 inline·axis label과 risk/reward geometry를 유지한다.
@@ -1100,7 +1105,7 @@ inline·axis label과 risk/reward geometry를 유지한다.
 registry는 해당 문서의 심볼·주기 변경, 자산 제거, unmount에서만 clear하고 제안 레이어
 숨김에는 유지한다. `gops:trade-plan-updated` detail은 `{ chartDocumentId, plan }`이며
 clear에는 `plan:null`을 사용한다. primary chart 해설은 같은 document ID의 projection으로
-근거→진입/매도→목표/예상 하단→손절/재검토→action·손익비 단계를 만들고 카드 hover/focus와
+근거→매수 검토→수익 실현 검토→손실 제한 검토 단계를 만들고 카드 hover/focus와
 click spotlight 동안 해당 문서만 강조한다. 시나리오 자체는 keyboard button이며 hover/focus는
 비영속 spotlight, click은 해당 문서의 proposal 레이어 external toggle로 처리한다. 가격
 DOM 버튼과 가격축 click은 같은 `ChartPriceSelection.v1` 생성 경로를 사용한다. 수동 drawing 선 두께는 1~5 범위에서 0.5
@@ -1221,8 +1226,9 @@ projection이 없거나 24시간이 지나면 기존 empty state를 표시한다
 기준선에 맞춘다. 투자사 의견은 읽기 쉬운 큰 본문으로 표시하되 의견 날짜는 숨기고, 시장 대비
 차트와 같은 독립 섹션으로 렌더링해 카드 배경·강조 테두리를 두지 않는다. 시장 대비 차트 제목
 아래의 기간·기준 설명도 표시하지 않는다. 기업저널 내부 뉴스 탭은 두지
-않지만 뉴스는 저장형 문장을 만드는 입력 근거로 계속 사용할 수 있다. 오른쪽 설명의 hover/focus는
-관련 차트 계열을 강조하며 선택된 재무 용어는 공통 사전 tooltip으로 설명한다. 안정성 탭의
+않지만 뉴스는 저장형 문장을 만드는 입력 근거로 계속 사용할 수 있다. 오른쪽 설명이나 지표 chip을
+선택하면 관련 최신 점뿐 아니라 해당 차트 카드 전체를 파란빛으로 강조하며, 설명이 두 차트를 함께
+참조하면 두 카드 모두 강조한다. 선택된 재무 용어는 공통 사전 tooltip으로 설명한다. 안정성 탭의
 기간별 수치표는 차트의 실제 높이 바로 다음에 배치하고 고정 카드 높이로 빈 공간을 만들지 않는다.
 실적·가치·매출·수익·안정성 탭의 제목, 차트, 표는 evidence 영역의 같은 왼쪽 기준선을 사용하며
 중첩된 fundamental section이나 chart card가 별도 수평 패딩을 더하지 않는다.
@@ -1237,12 +1243,28 @@ SIM에서는 `CompanySummaryPanel`과 상대수익률 chart의 별도 fundamenta
 기존 universe item은 회사명·sector·
 industry 같은 식별 정보만 남기고 현재 가격·시가총액·재무·등락률은 제거한 뒤 시점 evidence로
 다시 채운다. 적격 자료가 없으면 최신값이나 preview fixture로 대체하지 않고 자료 부족 상태를 표시한다.
-투자사 의견은 LIVE와 SIM 모두 evidence의 `analystSummary`만 사용한다. 이 projection은
-`collectedAt` 기준 24시간 안이면 simulator cutoff와 무관하게 현재 overlay로 반환한다. 실적
-projection도 동일하게 `currentProjectionSources`로 구분하며, 과거 SIM을 위해 이력을 쌓거나
-현재 문장을 과거 사실로 가장하지 않는다. 같은 분기가 SEC chart series와 evidence에 모두 있으면
-evidence의 Yahoo 보정 실제 EPS와 정규화 매출을 먼저 채우고 SEC 중복값으로 덮어쓰지 않는다.
-SIM의 결정론적 report에도 복제하지 않는다.
+투자사 의견은 LIVE와 SIM 모두 evidence의 `analystSummary`만 사용한다. LIVE는 24시간 현재 문장,
+SIM은 서버가 `replay_cutoff/sourceAsOf <= virtualTime`을 검증한 고정 replay 직전 문장을 받는다.
+프런트는 두 문장을 합치거나 가상시각을 query로 보내지 않는다. 실적도 서버가 cutoff를 통과시킨
+분기 예상치·보고 EVENT·SEC 실제치만 렌더링하며, 실적 탭의 실적 내역만 기본·재진입 모두 최근 12개
+분기로 표시한다. 가치·매출/수익·안정성 탭은 연도별 시계열로 고정하고 분기 전환 UI를 표시하지 않는다.
+같은 분기가 SEC chart series와 evidence에 모두 있으면 evidence의 Yahoo 보정 실제 EPS와
+정규화 매출을 먼저 채우고 SEC 중복값으로 덮어쓰지 않는다. SIM의 결정론적 report에도 복제하지 않는다.
+SIM 진입·종료 시 mode 기반 request key로 `CompanySummaryPanel`을 새로 만들어 이전 mode의 내부
+재무·가격 state를 재사용하지 않는다. request key가 바뀌면 report/evidence를 비우고 해당 시점
+데이터로 다시 조회한다.
+
+기업저널 상단 네 탭의 중립 상태 신호는 회색이며 파란색을 긍정 의미로 사용하지 않는다. 넓은 화면의
+근거 영역과 오른쪽 AI 해석 영역은 `2:1` 비율을 사용하고, 960px 이하에서는 기존처럼 한 열로 쌓는다.
+상단 기업 요약은 넓은 화면에서 최대 두 줄에 들어오도록 충분한 본문 폭을 사용한다. 투자사 의견은
+실적 근거 영역 가운데에 큰 본문으로 배치하고, 오른쪽 `비교해서 볼 항목` 버튼은 다른 지표 chip보다
+큰 글자와 클릭 높이를 사용한다.
+
+가치 화면의 `PER / PBR / PSR / FCF Yield` 색상 범례는 `가치배수 추이` 아래에서 반복하지 않고
+`현재 가치배수`의 각 행 앞 색상점과 값 색상으로 통합한다. 색은 역사 차트 계열과 정확히 같아야 한다.
+가치 화면의 EPS/BPS/SPS/CPS 묶음 막대는 서로 붙지 않도록 각 막대 사이에 작은 고정 간격을 둔다.
+가치·매출/수익·안정성의 각 차트와 바로 뒤 수치표는 중복 세로 여백을 만들지 않고 작은 구분선
+간격만 유지한다. `현재 가치배수`의 용어 링크는 제목의 나머지 글자와 같은 크기와 굵기를 사용한다.
 
 어려운 재무 용어는 공통 `GlossaryText`를 사용하므로 hover, focus, Enter/Space에서 같은
 설명을 제공한다. `companyJournalPreview=1` fixture는 `import.meta.env.DEV`일 때만 활성화된다.

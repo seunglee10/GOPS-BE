@@ -1,5 +1,5 @@
-# 역할: AWS/EKS에서 Yahoo Finance EPS/매출 컨센서스와 24시간 analyst 문장 projection을 갱신합니다.
-# schedule은 Kubernetes controller 기준 UTC입니다. 24시간 analyst projection을 유지하도록 매일 22:30 UTC에 실행합니다.
+# 역할: AWS/EKS에서 Yahoo Finance EPS/매출 컨센서스와 현재/replay 24시간 analyst 문장 projection을 갱신합니다.
+# schedule은 Kubernetes controller 기준 UTC입니다. 원본 analyst 행은 저장하지 않고 두 문장 projection만 매일 22:30 UTC에 교체합니다.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -43,6 +43,8 @@ spec:
                   value: "0"
                 - name: YAHOO_ESTIMATES_BATCH_SIZE
                   value: "500"
+                - name: YAHOO_ANALYST_REPLAY_CUTOFF
+                  value: "2026-07-14T15:00:00Z"
               envFrom:
                 - configMapRef:
                     name: alfaka-market-data-config

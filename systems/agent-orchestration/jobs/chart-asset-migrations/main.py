@@ -13,6 +13,7 @@ from gops_agents.chart_assets.storage import _database_conninfo
 SQL_PATHS = (
     Path(__file__).parent / "003_geometry_assets.sql",
     Path(__file__).parent / "004_chart_asset_queue_priority.sql",
+    Path(__file__).parent / "005_geometry_asset_simulation_snapshots.sql",
 )
 
 

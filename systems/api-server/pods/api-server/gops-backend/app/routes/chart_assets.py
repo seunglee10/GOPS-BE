@@ -13,12 +13,10 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
-from app.routes import charts as charts_routes
 from app.routes.simulator import simulator_gateway_from_app
 from app.services.alfaka_market_data import configured_universe_symbols, normalize_market_symbol, sp500_universe_symbols
 from app.services.simulator_gateway import SimulatorUnavailable
-from alfaka.analytics.analysis_candles import analysis_input_digest, compute_analysis_coverage, merge_canonical_candles
-from alfaka.analytics import geometry as geometry_analysis
+from alfaka.analytics.geometry import ALGORITHM_VERSION
 from gops_agents.chart_assets.envelope import ALLOWED_INTERVALS, BUILD_INTERVALS, ChartAssetBuildEnvelope, utc_now_iso
 from gops_agents.chart_assets.progress import build_progress_store_from_env
 from gops_agents.chart_assets.queue import build_chart_asset_queue_from_env
@@ -29,6 +27,7 @@ router = APIRouter()
 JOB_ID_PATTERN = r"^cab-[A-Za-z0-9-]{8,64}$"
 # Requested demo-only exception. It is projected in the SIM response and is never persisted.
 NVDA_SIMULATION_DEMO_AS_OF = "2026-07-14T04:00:00.000Z"
+NVDA_SIMULATION_DEMO_DATASET_ID = "sp500-full-20260715-kst-v3"
 NVDA_SIMULATION_DEMO_SYMBOL = "NVDA"
 NVDA_SIMULATION_DEMO_INTERVAL = "1D"
 
@@ -37,6 +36,7 @@ class ChartAssetBuildRequest(BaseModel):
     symbols: list[str] | Literal["sp500"]
     intervals: list[str] = Field(default_factory=lambda: list(BUILD_INTERVALS))
     force: bool = False
+    target: Literal["live", "simulation"] = "live"
 
     @field_validator("intervals")
     @classmethod
@@ -54,47 +54,58 @@ def chart_analysis_assets(
     interval: str | None = Query(default=None, pattern="^(1m|5m|10m|1h|4h|1D|1W)$"),
 ) -> dict[str, Any]:
     normalized = normalize_market_symbol(symbol)
+    simulation = _simulation_asset_context(request)
     try:
         storage = chart_asset_storage()
-        assets = {interval: storage.get(normalized, interval)} if interval else storage.get_symbol_assets(normalized)
+        if simulation:
+            assets = (
+                {interval: storage.get_snapshot(simulation["datasetId"], normalized, interval, simulation["virtualTime"])}
+                if interval
+                else storage.get_symbol_snapshots(simulation["datasetId"], normalized, simulation["virtualTime"])
+            )
+        else:
+            assets = {interval: storage.get(normalized, interval)} if interval else storage.get_symbol_assets(normalized)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Chart analysis asset storage is unavailable.") from exc
-    meta: dict[str, Any] = {"servedAt": utc_now_iso()}
-    try:
-        simulator_status = simulator_gateway_from_app(request.app).status()
-    except SimulatorUnavailable:
-        simulator_status = {"mode": "live"}
-    if simulator_status.get("mode") == "simulation":
-        persisted_interval_asset = assets.get(interval) if interval is not None else None
-        cutoff_value = str(simulator_status.get("virtualTime") or "")
-        cutoff = _parse_timestamp(cutoff_value)
-        assets = _assets_at_or_before(assets, cutoff, [interval] if interval else ALLOWED_INTERVALS)
-        dynamic_status = "not_requested"
+    meta: dict[str, Any] = {"servedAt": utc_now_iso(), "assetContext": "simulation" if simulation else "live"}
+    if simulation:
+        raw_assets = assets
         demo_override = False
-        if interval is not None:
+        if (
+            simulation["datasetId"] == NVDA_SIMULATION_DEMO_DATASET_ID
+            and normalized == NVDA_SIMULATION_DEMO_SYMBOL
+            and interval == NVDA_SIMULATION_DEMO_INTERVAL
+        ):
             try:
-                dynamic_asset = _build_simulation_analysis_asset(request, normalized, interval, cutoff)
-                dynamic_status = "ready" if dynamic_asset is not None else "data_insufficient"
+                persisted_demo_asset = storage.get(normalized, interval)
             except Exception:
-                dynamic_asset = None
-                dynamic_status = "unavailable"
-            if dynamic_asset is not None:
-                assets[interval] = dynamic_asset
+                persisted_demo_asset = None
             demo_asset = _build_nvda_simulation_demo_asset(
                 symbol=normalized,
                 interval=interval,
-                persisted_asset=persisted_interval_asset,
-                cutoff=cutoff,
+                persisted_asset=persisted_demo_asset,
+                cutoff=_parse_timestamp(simulation["virtualTime"]),
             )
-            if demo_asset is not None:
-                assets[interval] = demo_asset
+            if demo_asset is not None and demo_asset.get("algorithmVersion") == ALGORITHM_VERSION:
+                raw_assets = {**raw_assets, interval: demo_asset}
                 demo_override = True
+        assets = {
+            key: asset if isinstance(asset, dict) and asset.get("algorithmVersion") == ALGORITHM_VERSION else None
+            for key, asset in raw_assets.items()
+        }
+        selected = raw_assets.get(interval) if interval else next((asset for asset in raw_assets.values() if asset), None)
+        snapshot_status = (
+            "missing" if selected is None
+            else "ready" if selected.get("algorithmVersion") == ALGORITHM_VERSION
+            else "regeneration_required"
+        )
         meta.update({
             "simulation": True,
-            "cutoff": cutoff_value,
-            "runId": simulator_status.get("runId"),
-            "dynamicInterval": interval,
-            "dynamicStatus": dynamic_status,
+            "cutoff": simulation["virtualTime"],
+            "runId": simulation.get("runId"),
+            "datasetId": simulation["datasetId"],
+            "snapshotCutoff": simulation["snapshotCutoff"],
+            "snapshotStatus": snapshot_status,
             "demoOverride": demo_override,
             "demoOverrideAsOf": NVDA_SIMULATION_DEMO_AS_OF if demo_override else None,
         })
@@ -108,35 +119,56 @@ def chart_analysis_asset_commentary(
     interval: str = Query(pattern="^(1m|5m|10m|1h|4h|1D|1W)$"),
 ) -> dict[str, Any]:
     normalized = normalize_market_symbol(symbol)
+    simulation = _simulation_asset_context(request)
     try:
-        asset = chart_asset_storage().get_commentary(normalized, interval)
+        storage = chart_asset_storage()
+        asset = (
+            storage.get_snapshot_commentary(simulation["datasetId"], normalized, interval, simulation["virtualTime"])
+            if simulation
+            else storage.get_commentary(normalized, interval)
+        )
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Chart commentary asset storage is unavailable.") from exc
-    meta: dict[str, Any] = {"servedAt": utc_now_iso()}
-    try:
-        simulator_status = simulator_gateway_from_app(request.app).status()
-    except SimulatorUnavailable:
-        simulator_status = {"mode": "live"}
-    if simulator_status.get("mode") == "simulation":
-        cutoff_value = str(simulator_status.get("virtualTime") or "")
-        cutoff = _parse_timestamp(cutoff_value)
-        asset = _assets_at_or_before({interval: asset}, cutoff, [interval])[interval]
+    meta: dict[str, Any] = {"servedAt": utc_now_iso(), "assetContext": "simulation" if simulation else "live"}
+    if simulation:
+        snapshot_status = (
+            "missing" if asset is None
+            else "ready" if asset.get("algorithmVersion") == ALGORITHM_VERSION
+            else "regeneration_required"
+        )
+        if snapshot_status != "ready":
+            asset = None
         meta.update({
             "simulation": True,
-            "cutoff": cutoff_value,
-            "runId": simulator_status.get("runId"),
+            "cutoff": simulation["virtualTime"],
+            "runId": simulation.get("runId"),
+            "datasetId": simulation["datasetId"],
+            "snapshotCutoff": simulation["snapshotCutoff"],
+            "snapshotStatus": snapshot_status,
         })
     return {"symbol": normalized, "interval": interval, "asset": asset, "meta": meta}
 
 
 @router.get("/api/charts/analysis-assets/coverage")
-def chart_analysis_asset_coverage(symbols: str | None = Query(default=None, max_length=4096)) -> dict[str, Any]:
+def chart_analysis_asset_coverage(
+    request: Request,
+    symbols: str | None = Query(default=None, max_length=4096),
+    target: Literal["live", "simulation"] = Query(default="live"),
+) -> dict[str, Any]:
     selected = _parse_symbol_csv(symbols) if symbols else None
+    simulation = _require_simulation_asset_context(request) if target == "simulation" else None
     try:
-        items = chart_asset_storage().coverage(selected)
+        items = (
+            chart_asset_storage().coverage(selected, simulation["datasetId"])
+            if simulation
+            else chart_asset_storage().coverage(selected)
+        )
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Chart analysis asset coverage is unavailable.") from exc
-    return {"items": items, "total": len(items)}
+    return {
+        "items": items, "total": len(items), "target": target,
+        **({"datasetId": simulation["datasetId"], "snapshotCutoff": simulation["snapshotCutoff"]} if simulation else {}),
+    }
 
 
 @router.delete("/api/charts/analysis-assets")
@@ -160,21 +192,26 @@ def delete_chart_analysis_assets(
 
 @router.post("/api/charts/analysis-assets/build", status_code=202)
 def build_chart_analysis_assets(
-    request: ChartAssetBuildRequest,
+    payload: ChartAssetBuildRequest,
+    request: Request,
     response: Response,
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     if _storage_maintenance_enabled():
         raise HTTPException(status_code=503, detail="Chart analysis asset storage migration is in progress.")
-    if request.symbols == "sp500" and request.force:
+    if payload.symbols == "sp500" and payload.force:
         raise HTTPException(status_code=400, detail="S&P 500 force refresh is not supported.")
-    symbols = _requested_symbols(request.symbols)
+    symbols = _requested_symbols(payload.symbols)
+    simulation = _require_simulation_asset_context(request) if payload.target == "simulation" else None
     envelope = ChartAssetBuildEnvelope.create(
         requested_by=hashlib.sha256(user.sub.encode("utf-8")).hexdigest()[:24],
         symbols=symbols,
-        intervals=request.intervals,
-        force=request.force,
+        intervals=payload.intervals,
+        force=payload.force,
         source="manual",
+        target=payload.target,
+        dataset_id=simulation["datasetId"] if simulation else None,
+        snapshot_cutoff=simulation["snapshotCutoff"] if simulation else None,
     )
     progress = chart_asset_progress_store()
     state = progress.initialize(envelope)
@@ -247,22 +284,6 @@ def _parse_intervals_csv(value: str) -> list[str]:
     return intervals
 
 
-def _assets_at_or_before(
-    assets: dict[str, dict[str, Any] | None],
-    cutoff: datetime | None,
-    intervals: list[str] | tuple[str, ...] = ALLOWED_INTERVALS,
-) -> dict[str, dict[str, Any] | None]:
-    filtered = {interval: None for interval in intervals}
-    if cutoff is None:
-        return filtered
-    for interval in intervals:
-        asset = assets.get(interval)
-        as_of = _parse_timestamp(asset.get("asOf")) if isinstance(asset, dict) else None
-        if as_of is not None and as_of <= cutoff:
-            filtered[interval] = asset
-    return filtered
-
-
 def _build_nvda_simulation_demo_asset(
     *,
     symbol: str,
@@ -321,80 +342,31 @@ def _clamp_demo_dates(value: Any, cutoff: datetime) -> Any:
     return deepcopy(value)
 
 
-def _build_simulation_analysis_asset(
-    request: Request,
-    symbol: str,
-    interval: str,
-    cutoff: datetime | None,
-) -> dict[str, Any] | None:
-    if cutoff is None:
+def _simulation_asset_context(request: Request) -> dict[str, str | None] | None:
+    try:
+        status = simulator_gateway_from_app(request.app).status()
+    except SimulatorUnavailable:
         return None
-    limit = charts_routes.PUBLIC_CHART_CANDLE_LIMIT
-    replay = simulator_gateway_from_app(request.app).candles(symbol, interval, limit)
-    historical = charts_routes.get_query_service().candle_snapshot(
-        symbol,
-        interval,
-        "",
-        limit,
-        to_time=charts_routes.SIMULATION_REPLAY_START.isoformat().replace("+00:00", "Z"),
-    )
-    merged = charts_routes._merge_simulation_candles(historical, replay, limit)
-    rows = merge_canonical_candles(
-        (
-            dict(row)
-            for row in merged.get("candles") or []
-            if isinstance(row, dict)
-            and row.get("isClosed", row.get("is_closed", True)) is not False
-            and (_parse_timestamp(row.get("timestamp")) or datetime.max.replace(tzinfo=UTC)) <= cutoff
-        ),
-        interval=interval,
-        view="chart_completed",
-    )
-    target_bars = geometry_analysis.TARGET_BARS[interval]
-    rows = rows[-target_bars:]
-    coverage = compute_analysis_coverage(rows, interval, display_bars=target_bars, now=cutoff)
-    if len(rows) < geometry_analysis.MINIMUM_BARS or coverage.get("coverageState") == "data_insufficient":
+    if status.get("mode") != "simulation":
         return None
-    result = geometry_analysis.analyze_geometry(symbol, interval, rows)
-    geometry = {
-        "drawings": result["drawings"],
-        "supports": result["supports"],
-        "resistances": result["resistances"],
-        "patterns": result["patterns"],
-        "primaryPattern": result["primaryPattern"],
-        "tradePlan": result["tradePlan"],
-        "primaryTriangle": result["primaryTriangle"],
-        "historicalTriangle": result["historicalTriangle"],
-        "evidence": result["evidence"],
-    }
-    for optional_field in ("trends", "primaryTrend", "drawingGroups", "analysisTrace"):
-        if optional_field in result:
-            geometry[optional_field] = result[optional_field]
-    as_of = str(rows[-1]["timestamp"])
-    actual_bars = len(rows)
+    dataset_id = str(status.get("datasetId") or "").strip()
+    start_time = str(status.get("startTime") or "").strip()
+    virtual_time = str(status.get("virtualTime") or "").strip()
+    if not dataset_id or _parse_timestamp(start_time) is None or _parse_timestamp(virtual_time) is None:
+        return None
     return {
-        "assetVersion": "geometry",
-        "algorithmVersion": geometry_analysis.ALGORITHM_VERSION,
-        "symbol": symbol,
-        "interval": interval,
-        "sourceInterval": interval,
-        "asOf": as_of,
-        "generatedAt": utc_now_iso(),
-        "status": "ready",
-        "inputDigest": analysis_input_digest(symbol, interval, rows),
-        "coverage": {
-            "state": "full" if actual_bars >= target_bars and coverage.get("missingBars") == 0 else "partial",
-            "targetBars": target_bars,
-            "actualBars": actual_bars,
-            "contiguousBars": int(coverage.get("recentContiguousBars") or 0),
-            "missingBars": int(coverage.get("missingBars") or 0),
-            "lastExpectedClosedAt": coverage.get("lastExpectedClosedAt"),
-            "lastActualClosedAt": coverage.get("lastActualClosedAt") or as_of,
-            "qualityFlags": [*list(coverage.get("qualityFlags") or []), "simulation_replay"],
-        },
-        "geometry": geometry,
-        "indicators": result["indicators"],
+        "datasetId": dataset_id,
+        "snapshotCutoff": start_time,
+        "virtualTime": virtual_time,
+        "runId": str(status.get("runId") or "").strip() or None,
     }
+
+
+def _require_simulation_asset_context(request: Request) -> dict[str, str | None]:
+    context = _simulation_asset_context(request)
+    if context is None:
+        raise HTTPException(status_code=409, detail="simulation_context_unavailable")
+    return context
 
 
 def _parse_timestamp(value: Any) -> datetime | None:

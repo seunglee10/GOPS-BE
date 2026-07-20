@@ -310,6 +310,14 @@ class CompanyJournalRepository:
                 OR (fiscal_period = 'EVENT' AND metric = 'eps' AND event_status = 'reported')
               )
               AND period_end >= toDate('{start_year}-01-01')
+              AND (
+                (fiscal_period = 'EVENT'
+                  AND event_status = 'reported'
+                  AND event_at <= parseDateTime64BestEffort({{cutoff:String}}))
+                OR
+                (fiscal_period != 'EVENT'
+                  AND collected_at <= parseDateTime64BestEffort({{cutoff:String}}))
+              )
             ORDER BY metric ASC, period_end DESC, collected_at DESC
             LIMIT 1 BY metric, fiscal_year, fiscal_period, period_end
             FORMAT JSONEachRow
@@ -323,19 +331,40 @@ class CompanyJournalRepository:
         symbol: str,
         cutoff: datetime | None = None,
     ) -> dict[str, Any] | None:
-        """Read the current one-row Yahoo sentence, including during replay."""
+        """Read one compact current sentence or the fixed replay-cutoff sentence."""
 
+        if cutoff is None:
+            return self._safe_one(
+                f"""
+                SELECT statement, tone, source_as_of, source, collected_at
+                FROM {self.database}.yahoo_analyst_summaries FINAL
+                WHERE symbol = {{symbol:String}}
+                  AND statement != ''
+                  AND collected_at >= now64(3) - INTERVAL 1 DAY
+                ORDER BY collected_at DESC
+                LIMIT 1
+                FORMAT JSONEachRow
+                """,
+                {"symbol": symbol},
+            )
         return self._safe_one(
             f"""
-            SELECT statement, tone, source_as_of, source, collected_at
+            SELECT replay_statement AS statement,
+                   replay_tone AS tone,
+                   replay_source_as_of AS source_as_of,
+                   source,
+                   collected_at
             FROM {self.database}.yahoo_analyst_summaries FINAL
             WHERE symbol = {{symbol:String}}
+              AND replay_statement != ''
               AND collected_at >= now64(3) - INTERVAL 1 DAY
+              AND replay_cutoff <= parseDateTime64BestEffort({{cutoff:String}})
+              AND replay_source_as_of <= parseDateTime64BestEffort({{cutoff:String}})
             ORDER BY collected_at DESC
             LIMIT 1
             FORMAT JSONEachRow
             """,
-            {"symbol": symbol},
+            {"symbol": symbol, "cutoff": cutoff.astimezone(timezone.utc).isoformat()},
         )
 
     def load_performance_series(

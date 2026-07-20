@@ -360,6 +360,54 @@ def test_score_profile_prompt_uses_llm_structured_output_after_retrieval(recomme
     assert client.post("/api/recommendations/score-profiles/suggestions", json={"query": "x"}).status_code == 422
 
 
+def test_named_quick_query_reuses_user_scoped_suggestion_cache(recommendation_app) -> None:
+    client = TestClient(recommendation_app)
+    balanced = client.get("/api/recommendations/score-profiles").json()["presets"][1]
+    calls = 0
+
+    def provider(payload):
+        nonlocal calls
+        calls += 1
+        return {
+            "name": "거래 참여 추세",
+            "rationale": "거래 참여와 추세 지속성을 함께 확인했습니다.",
+            "confidence": 0.83,
+            "evidenceRefs": [],
+            "profile": {
+                "blockWeights": balanced["blockWeights"],
+                "factorWeights": balanced["factorWeights"],
+                "portfolioWeight": balanced["portfolioWeight"],
+                "portfolioFactorWeights": balanced["portfolioFactorWeights"],
+            },
+        }
+
+    class MemorySuggestionCache:
+        def __init__(self) -> None:
+            self.value = None
+            self.puts = 0
+
+        def get(self, user_sub, query):
+            return self.value
+
+        def put(self, user_sub, query, suggestion):
+            self.value = suggestion
+            self.puts += 1
+
+    cache = MemorySuggestionCache()
+    recommendation_app.state.recommendation_profile_suggestion_provider = provider
+    recommendation_app.state.recommendation_profile_suggestion_cache = cache
+    body = {"query": "거래대금이 강하고 추세가 이어지는 종목"}
+
+    first = client.post("/api/recommendations/score-profiles/suggestions", json=body)
+    second = client.post("/api/recommendations/score-profiles/suggestions", json=body)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json() == first.json()
+    assert calls == 1
+    assert cache.puts == 1
+
+
 def test_refresh_is_idempotent_within_same_market_slot(recommendation_app) -> None:
     client = TestClient(recommendation_app)
     client.put(

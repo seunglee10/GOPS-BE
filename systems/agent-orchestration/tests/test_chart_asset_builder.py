@@ -92,6 +92,33 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(state["recentItems"][-1]["reason"], "manual_refresh_only")
         self.assertEqual(storage.save_count, 0)
 
+    def test_simulation_build_uses_cutoff_loader_and_snapshot_storage_only(self):
+        rows = _rows(140, "1D")
+        cutoff = rows[129]["timestamp"]
+        storage = MemoryStorage()
+        loader = Loader(rows)
+        builder = ChartAssetBuilder(
+            candle_loader=loader, storage=storage, progress=InMemoryChartAssetProgressStore(),
+            repair_service=RaisingRepair(), concurrency=1,
+        )
+        envelope = ChartAssetBuildEnvelope.create(
+            requested_by="test", symbols=["NVDA"], intervals=["1D"], force=True,
+            target="simulation", dataset_id="dataset-1", snapshot_cutoff=cutoff,
+        )
+
+        state = builder.run(envelope)
+
+        self.assertEqual(state["recentItems"][-1]["status"], "saved")
+        self.assertEqual(storage.save_count, 0, "simulation builds must not mutate the LIVE row")
+        self.assertEqual(storage.snapshot_save_count, 1)
+        snapshot = storage.snapshots[("dataset-1", "NVDA", "1D")]
+        self.assertEqual(snapshot["asOf"], cutoff)
+        self.assertEqual(loader.cutoff_calls, [("NVDA", ("1D",), cutoff)])
+        saved_log = json.loads(state["logs"][-1])
+        self.assertEqual(saved_log["target"], "simulation")
+        self.assertEqual(saved_log["datasetId"], "dataset-1")
+        self.assertEqual(saved_log["snapshotCutoff"], cutoff)
+
     def test_manual_force_is_the_only_path_that_replaces_existing_asset(self):
         rows = _rows(120, "1D")
         storage = MemoryStorage()
@@ -340,7 +367,7 @@ class ChartAssetBuilderTest(unittest.TestCase):
 
 
 class Loader:
-    def __init__(self, rows, coverage=None): self.rows = rows; self.coverage = coverage
+    def __init__(self, rows, coverage=None): self.rows = rows; self.coverage = coverage; self.cutoff_calls = []
     def load_symbol(self, symbol, intervals):
         interval = intervals[0]
         actual = len(self.rows)
@@ -352,6 +379,11 @@ class Loader:
             }},
             digests={interval: f"sha256:{interval}:{actual}"},
         )
+    def load_symbol_at(self, symbol, intervals, cutoff):
+        normalized = cutoff.astimezone(timezone.utc)
+        rows = [row for row in self.rows if datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")) <= normalized]
+        self.cutoff_calls.append((symbol, tuple(intervals), normalized.isoformat(timespec="milliseconds").replace("+00:00", "Z")))
+        return Loader(rows, self.coverage).load_symbol(symbol, intervals)
 
 
 class RaisingLoader:
@@ -381,11 +413,17 @@ class ConfirmedEmptyRepair:
 
 
 class MemoryStorage:
-    def __init__(self): self.assets = {}; self.save_count = 0
+    def __init__(self): self.assets = {}; self.snapshots = {}; self.save_count = 0; self.snapshot_save_count = 0
     def get(self, symbol, interval): return self.assets.get((symbol, interval))
     def save(self, asset):
         self.save_count += 1
         self.assets[(asset["symbol"], asset["interval"])] = asset
+        return True
+    def get_snapshot(self, dataset_id, symbol, interval, _cutoff=None):
+        return self.snapshots.get((dataset_id, symbol, interval))
+    def save_snapshot(self, dataset_id, _snapshot_cutoff, asset):
+        self.snapshot_save_count += 1
+        self.snapshots[(dataset_id, asset["symbol"], asset["interval"])] = asset
         return True
 
 

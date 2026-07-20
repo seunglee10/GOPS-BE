@@ -298,6 +298,13 @@ jobs:
             fi
           done
 
+      - name: Verify chart commentary writer
+        if: steps.changes.outputs.has_services == 'true' && contains(steps.changes.outputs.services, 'agent-orchestrator')
+        env:
+          EXPECTED_IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          EXPECTED_PROMPT_VERSION: chart-commentary.ko.v5
+        run: ./scripts/aws/preflight-chart-commentary-aws.sh
+
       - name: Verify simulator rollout
         if: steps.changes.outputs.has_services == 'true'
         run: |
