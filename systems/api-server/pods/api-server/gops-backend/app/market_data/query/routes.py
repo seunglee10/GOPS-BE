@@ -397,11 +397,15 @@ def chart_order_flow_daily(
 def chart_order_flow_intraday(
     request: Request,
     symbol: str = Query(min_length=1, max_length=12),
+    window_minutes: int | None = Query(default=None, ge=1, le=390, alias="windowMinutes"),
 ) -> dict[str, Any]:
     gateway = simulator_gateway_from_app(request.app)
     try:
         if gateway.status().get("mode") == "simulation":
-            return gateway.order_flow(symbol.strip().upper())
+            normalized_symbol = symbol.strip().upper()
+            if window_minutes is None:
+                return gateway.order_flow(normalized_symbol)
+            return gateway.order_flow(normalized_symbol, window_minutes=window_minutes)
     except SimulatorUnavailable as exc:
         if (getattr(gateway, "last_status", None) or {}).get("mode") == "simulation":
             raise HTTPException(status_code=503, detail=str(exc)) from exc

@@ -248,6 +248,11 @@ legacy default visible-bar query limit.
   immutable `simulation_replay_events` through replay `virtualTime`; they never
   fall through to LIVE Redis. Regular-session profiles retain the most recently
   replayed regular day until the next regular-session trade starts a new profile.
+- SIM consumers send the visible `1/10/60` minute requirement as `windowMinutes`.
+  A cold projection reads only that time window plus the quote-freshness lookback;
+  selecting `session` intentionally expands the same cached symbol projection to
+  the full replay session. This keeps first paint from reconstructing every prior
+  quote and trade while preserving the exact side-classification contract.
 - SIM chart sockets request `orderFlow=true` only for Bid/Ask and OrderFlow
   consumers and receive replay `ORDER_FLOW_BINS_UPDATE` plus `LIVE_QUOTE_UPDATE`.
 - Daily rows are also retained for audit and existing agent chart context.

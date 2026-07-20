@@ -1371,6 +1371,10 @@ SIM Order Flow는 같은 simulator image가 `systems/market-data/shared`의 분�
 읽어 `simulation_replay_events`에서 요청 종목만 cursor-safe하게 투영한다. 최대 8종목
 LRU이며 LIVE Redis/Kafka와 tick table에는 쓰지 않는다. shared 코드 변경은 simulator
 image도 rebuild하며, Bid/Ask/OrderFlow 소켓만 `orderFlow=true`로 이 projection을 구독한다.
+최초 REST와 Order Flow 전용 소켓은 화면에 필요한 1/10/60분만 `windowMinutes`로 요청하고,
+ClickHouse는 해당 시간 범위와 quote freshness lookback만 payload까지 읽는다. `session` 선택만
+전체 세션으로 projection을 확장한다. 일시적인 cold projection 503은 프런트가 한 번만 재시도하며,
+timeout을 늘리거나 LIVE Order Flow로 fallback하지 않는다.
 
 SIM 차트 자동 작도는 runtime 계산용 Deployment나 Job을 추가하지 않는다. chart migration
 gate가 `geometry_asset_snapshots`를 먼저 만들고, 운영자는 활성 dataset에서 개발 패널로

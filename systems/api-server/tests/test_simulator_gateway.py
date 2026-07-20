@@ -26,6 +26,19 @@ class FakeResponse:
 
 
 class SimulatorGatewayDiagnosticsTest(unittest.TestCase):
+    def test_order_flow_forwards_bounded_window_to_simulator(self):
+        gateway = SimulatorGateway("http://simulator.test")
+
+        with patch(
+            "app.services.simulator_gateway.urllib.request.urlopen",
+            return_value=FakeResponse(),
+        ) as urlopen:
+            gateway.order_flow("NVDA", window_minutes=10)
+
+        request = urlopen.call_args.args[0]
+        self.assertIn("symbol=NVDA", request.full_url)
+        self.assertIn("windowMinutes=10", request.full_url)
+
     def test_slow_request_log_contains_only_bounded_request_metadata(self):
         gateway = SimulatorGateway("http://simulator.test")
 

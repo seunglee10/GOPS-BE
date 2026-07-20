@@ -148,6 +148,27 @@ class ClickHouseReplayEventSource:
         )
         return self._replay_events(rows)
 
+    def events_for_symbol_window(
+        self,
+        symbol: str,
+        sequence: int,
+        start: datetime,
+        through: datetime,
+        limit: int,
+    ) -> list[ReplayEvent]:
+        normalized = symbol.strip().upper()
+        if normalized not in REPLAY_SYMBOL_SET:
+            raise ValueError(f"symbol is not available in {self.dataset_id}")
+        rows = self.client.query_rows(
+            "SELECT sequence, event_time, feed, payload FROM market_data.simulation_replay_events "
+            f"PREWHERE dataset_id = {sql_string(self.dataset_id)} AND sequence > {max(0, int(sequence))} "
+            f"AND symbol = {sql_string(normalized)} AND event_type IN ('trade', 'quote') "
+            f"AND event_time >= parseDateTime64BestEffort({sql_string(isoformat_z(start))}, 9) "
+            f"AND event_time <= parseDateTime64BestEffort({sql_string(isoformat_z(through))}, 9) "
+            f"ORDER BY sequence LIMIT {max(1, int(limit))}"
+        )
+        return self._replay_events(rows)
+
     @staticmethod
     def _replay_events(rows: Iterable[dict[str, object]]) -> list[ReplayEvent]:
         return [ReplayEvent(sequence=int(row["sequence"]), timestamp=parse_timestamp(row["event_time"]),

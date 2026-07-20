@@ -188,6 +188,7 @@ def create_app(
         symbol: str = Query(min_length=1, max_length=12),
         afterSequence: int | None = Query(default=None, ge=0),
         latestOnly: bool = Query(default=False),
+        windowMinutes: int | None = Query(default=None, ge=1, le=390),
     ) -> dict[str, object]:
         if controller.mode != "simulation":
             raise HTTPException(status_code=409, detail="simulation mode is not active")
@@ -196,6 +197,7 @@ def create_app(
                 symbol,
                 after_sequence=afterSequence,
                 latest_only=latestOnly,
+                window_minutes=windowMinutes,
             )
         except ReplayRunChangedError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc

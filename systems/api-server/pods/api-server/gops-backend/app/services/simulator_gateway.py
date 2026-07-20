@@ -85,12 +85,15 @@ class SimulatorGateway:
         *,
         after_sequence: int | None = None,
         latest_only: bool = False,
+        window_minutes: int | None = None,
     ) -> dict[str, Any]:
         parameters: dict[str, Any] = {"symbol": symbol}
         if after_sequence is not None:
             parameters["afterSequence"] = max(0, int(after_sequence))
         if latest_only:
             parameters["latestOnly"] = "true"
+        if window_minutes is not None:
+            parameters["windowMinutes"] = max(1, min(int(window_minutes), 390))
         query = urllib.parse.urlencode(parameters)
         return self._request("GET", f"/api/control/order-flow?{query}", timeout_seconds=10.0)
 

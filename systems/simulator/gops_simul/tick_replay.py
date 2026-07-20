@@ -84,6 +84,14 @@ class ReplayEventSource(Protocol):
     def events_after(self, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]: ...
     def events_between(self, after_sequence: int, through_sequence: int, limit: int) -> list[ReplayEvent]: ...
     def events_for_symbol_after(self, symbol: str, sequence: int, through: datetime, limit: int) -> list[ReplayEvent]: ...
+    def events_for_symbol_window(
+        self,
+        symbol: str,
+        sequence: int,
+        start: datetime,
+        through: datetime,
+        limit: int,
+    ) -> list[ReplayEvent]: ...
     def candle_snapshot(self, symbol: str, interval: str, through: datetime, limit: int) -> dict[str, object]: ...
 
 
@@ -134,6 +142,23 @@ class InMemoryReplayEventSource:
             event for event in self._events
             if event.sequence > sequence
             and event.timestamp <= through
+            and str(event.payload.get("S") or "").upper() == normalized
+            and event.payload.get("T") in {"q", "t"}
+        ][:limit]
+
+    def events_for_symbol_window(
+        self,
+        symbol: str,
+        sequence: int,
+        start: datetime,
+        through: datetime,
+        limit: int,
+    ) -> list[ReplayEvent]:
+        normalized = symbol.strip().upper()
+        return [
+            event for event in self._events
+            if event.sequence > sequence
+            and start <= event.timestamp <= through
             and str(event.payload.get("S") or "").upper() == normalized
             and event.payload.get("T") in {"q", "t"}
         ][:limit]
@@ -361,6 +386,7 @@ class ReplayController:
         *,
         after_sequence: int | None = None,
         latest_only: bool = False,
+        window_minutes: int | None = None,
     ) -> dict[str, object]:
         snapshot = self._read_snapshot
         self._require_read_snapshot_simulation(snapshot)
@@ -371,6 +397,7 @@ class ReplayController:
                 run_id=str(snapshot.run_id),
                 after_sequence=after_sequence,
                 latest_only=latest_only,
+                window_minutes=window_minutes,
             )
         self._ensure_read_snapshot_run(snapshot)
         return payload

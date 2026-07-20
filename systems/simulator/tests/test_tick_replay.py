@@ -95,6 +95,30 @@ def trade(sequence: int, seconds: float, symbol: str, price: float) -> ReplayEve
 
 
 class DatasetContractTests(unittest.TestCase):
+    def test_clickhouse_order_flow_window_pushes_time_bound_before_payload_read(self):
+        class FakeClickHouseClient:
+            def __init__(self):
+                self.queries = []
+
+            def query_rows(self, sql):
+                self.queries.append(sql)
+                if "simulation_replay_datasets" in sql:
+                    return [{"status": "READY", "total_events": 10}]
+                return []
+
+        client = FakeClickHouseClient()
+        source = ClickHouseReplayEventSource(client)
+        start = DATASET_START + timedelta(minutes=9)
+        through = DATASET_START + timedelta(minutes=10)
+
+        source.events_for_symbol_window("NVDA", 0, start, through, 50_000)
+
+        query = client.queries[-1]
+        self.assertIn("PREWHERE dataset_id", query)
+        self.assertIn("event_time >=", query)
+        self.assertIn("event_time <=", query)
+        self.assertIn("symbol = 'NVDA'", query)
+
     def test_clickhouse_materialization_uses_bounded_contiguous_windows(self):
         windows = list(import_alpaca._materialization_windows())
 
@@ -559,6 +583,67 @@ class ReplayOrderFlowProjectionTests(unittest.TestCase):
         self.assertEqual(second["minutes"][0]["bins"][0]["askTradeCount"], 2)
         self.assertEqual(delta["minutes"][0]["bins"][0]["askTradeCount"], 2)
         self.assertEqual(delta["nextSequence"], 4)
+
+    def test_bounded_snapshot_reads_only_requested_recent_minutes(self):
+        class RecordingSource(InMemoryReplayEventSource):
+            def __init__(self, events):
+                super().__init__(events)
+                self.window_calls = []
+
+            def events_for_symbol_window(self, symbol, sequence, start, through, limit):
+                self.window_calls.append((symbol, sequence, start, through, limit))
+                return super().events_for_symbol_window(symbol, sequence, start, through, limit)
+
+        source = RecordingSource([
+            quote(1, 1, "NVDA", 100.0, 101.0),
+            trade(2, 2, "NVDA", 101.0),
+            quote(3, 9 * 60, "NVDA", 110.0, 111.0),
+            trade(4, 9 * 60 + 1, "NVDA", 111.0),
+            quote(5, 10 * 60, "NVDA", 120.0, 121.0),
+            trade(6, 10 * 60 + 1, "NVDA", 121.0),
+        ])
+
+        payload = ReplayOrderFlowProjection(source).snapshot(
+            "NVDA",
+            through=DATASET_START + timedelta(minutes=10, seconds=30),
+            run_id="run-1",
+            window_minutes=2,
+        )
+
+        self.assertEqual([item["eventMinute"] for item in payload["minutes"]], [
+            "2026-07-14T15:09:00Z",
+            "2026-07-14T15:10:00Z",
+        ])
+        self.assertEqual(len(source.window_calls), 1)
+        self.assertGreaterEqual(source.window_calls[0][2], DATASET_START + timedelta(minutes=8, seconds=57))
+
+    def test_widening_bounded_snapshot_rebuilds_earlier_minutes(self):
+        source = InMemoryReplayEventSource([
+            quote(1, 2 * 60, "NVDA", 100.0, 101.0),
+            trade(2, 2 * 60 + 1, "NVDA", 101.0),
+            quote(3, 10 * 60, "NVDA", 110.0, 111.0),
+            trade(4, 10 * 60 + 1, "NVDA", 111.0),
+        ])
+        projection = ReplayOrderFlowProjection(source)
+
+        latest = projection.snapshot(
+            "NVDA",
+            through=DATASET_START + timedelta(minutes=10, seconds=30),
+            run_id="run-1",
+            latest_only=True,
+        )
+        widened = projection.snapshot(
+            "NVDA",
+            through=DATASET_START + timedelta(minutes=10, seconds=30),
+            run_id="run-1",
+            window_minutes=10,
+        )
+
+        self.assertEqual(len(latest["minutes"]), 1)
+        self.assertEqual([item["eventMinute"] for item in widened["minutes"]], [
+            "2026-07-14T15:02:00Z",
+            "2026-07-14T15:10:00Z",
+        ])
 
     def test_after_hours_keeps_previous_regular_profile_until_next_regular_trade(self):
         next_regular_seconds = 22 * 60 * 60 + 30 * 60

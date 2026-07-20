@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
@@ -45,6 +45,15 @@ class ReplayOrderFlowSource(Protocol):
         limit: int,
     ) -> list[ReplayOrderFlowEvent]: ...
 
+    def events_for_symbol_window(
+        self,
+        symbol: str,
+        sequence: int,
+        start: datetime,
+        through: datetime,
+        limit: int,
+    ) -> list[ReplayOrderFlowEvent]: ...
+
 
 @dataclass
 class _MinuteProfile:
@@ -59,6 +68,7 @@ class _SymbolProjection:
     latest_quote: dict[str, object] | None = None
     session_date: str | None = None
     minutes: dict[str, _MinuteProfile] = field(default_factory=dict)
+    coverage_start: datetime | None = None
 
 
 class ReplayOrderFlowProjection:
@@ -92,6 +102,7 @@ class ReplayOrderFlowProjection:
         run_id: str,
         after_sequence: int | None = None,
         latest_only: bool = False,
+        window_minutes: int | None = None,
     ) -> dict[str, object]:
         normalized = str(symbol or "").strip().upper()
         virtual_session_date = through.astimezone(MARKET_TIMEZONE).date().isoformat()
@@ -109,13 +120,23 @@ class ReplayOrderFlowProjection:
 
         if self._run_id != run_id:
             self.reset(run_id)
-        state = self._states.pop(normalized, None) or _SymbolProjection()
-        self._advance(normalized, state, through)
+        requested_window_minutes = 10 if latest_only else _normalized_window_minutes(window_minutes)
+        visible_start = _window_start(through, requested_window_minutes)
+        state = self._states.pop(normalized, None) or _SymbolProjection(coverage_start=visible_start)
+        if _requires_wider_projection(state.coverage_start, visible_start):
+            state = _SymbolProjection(coverage_start=visible_start)
+        query_start = None
+        if state.last_sequence <= 0 and state.coverage_start is not None:
+            query_start = state.coverage_start - timedelta(milliseconds=self.quote_max_age_ms)
+        self._advance(normalized, state, through, start=query_start)
         self._states[normalized] = state
         while len(self._states) > self.cache_symbol_limit:
             self._states.popitem(last=False)
 
         selected_minutes = sorted(state.minutes.items())
+        if visible_start is not None:
+            visible_start_key = _isoformat_minute(visible_start)
+            selected_minutes = [item for item in selected_minutes if item[0] >= visible_start_key]
         if latest_only:
             selected_minutes = selected_minutes[-1:]
         elif after_sequence is not None:
@@ -142,14 +163,30 @@ class ReplayOrderFlowProjection:
             next_sequence=state.last_sequence,
         )
 
-    def _advance(self, symbol: str, state: _SymbolProjection, through: datetime) -> None:
+    def _advance(
+        self,
+        symbol: str,
+        state: _SymbolProjection,
+        through: datetime,
+        *,
+        start: datetime | None = None,
+    ) -> None:
         while True:
-            events = self.source.events_for_symbol_after(
-                symbol,
-                state.last_sequence,
-                through,
-                self.page_size,
-            )
+            if start is None:
+                events = self.source.events_for_symbol_after(
+                    symbol,
+                    state.last_sequence,
+                    through,
+                    self.page_size,
+                )
+            else:
+                events = self.source.events_for_symbol_window(
+                    symbol,
+                    state.last_sequence,
+                    start,
+                    through,
+                    self.page_size,
+                )
             if not events:
                 return
             for event in events:
@@ -290,3 +327,25 @@ def _isoformat_milliseconds(value: datetime) -> str:
 
 def _isoformat_minute(value: datetime) -> str:
     return value.astimezone(UTC).replace(second=0, microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _normalized_window_minutes(value: int | None) -> int | None:
+    if value is None:
+        return None
+    return max(1, min(390, int(value)))
+
+
+def _window_start(through: datetime, window_minutes: int | None) -> datetime | None:
+    if window_minutes is None:
+        return None
+    current_minute = through.astimezone(UTC).replace(second=0, microsecond=0)
+    return current_minute - timedelta(minutes=max(0, window_minutes - 1))
+
+
+def _requires_wider_projection(
+    coverage_start: datetime | None,
+    requested_start: datetime | None,
+) -> bool:
+    if requested_start is None:
+        return coverage_start is not None
+    return coverage_start is not None and requested_start < coverage_start

@@ -164,8 +164,8 @@ class FakeSimulatorGateway:
             "virtualTime": self.virtual_time,
         }
 
-    def order_flow(self, symbol):
-        self.calls.append(("order-flow", symbol))
+    def order_flow(self, symbol, **kwargs):
+        self.calls.append(("order-flow", symbol, kwargs.get("window_minutes")))
         return {
             "symbol": symbol,
             "sessionDate": "2026-07-14",
@@ -449,7 +449,7 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.gateway.mode = "simulation"
 
         symbols = self.client.get("/api/charts/order-flow/symbols")
-        intraday = self.client.get("/api/charts/order-flow/intraday?symbol=NVDA")
+        intraday = self.client.get("/api/charts/order-flow/intraday?symbol=NVDA&windowMinutes=10")
         daily = self.client.get("/api/charts/order-flow/daily?symbol=NVDA&from=2026-07-14&to=2026-07-14")
 
         self.assertEqual(symbols.status_code, 200)
@@ -459,7 +459,7 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(intraday.status_code, 200)
         self.assertEqual(intraday.json()["sessionDate"], "2026-07-14")
         self.assertEqual(intraday.json()["minutes"][0]["bins"][0]["askVolume"], 10)
-        self.assertIn(("order-flow", "NVDA"), self.gateway.calls)
+        self.assertIn(("order-flow", "NVDA", 10), self.gateway.calls)
         self.assertEqual(daily.status_code, 409)
         self.assertEqual(daily.json()["detail"], "simulation_data_unavailable")
 
