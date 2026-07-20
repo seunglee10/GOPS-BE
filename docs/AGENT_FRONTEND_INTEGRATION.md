@@ -135,6 +135,8 @@ fixture를 남기지 않고 `simulation_data_unavailable` 상태를 표시한다
 준비된 뒤 활성화한다. 해설 panel은 별도 전체 자산 요청을 만들지 않고 chart document별
 runtime snapshot을 구독한다. 해설 상단의 종목·주기 identity는 기업 로고를 왼쪽에
 표시하고, 로고 이미지를 사용할 수 없으면 공통 `StockLogo`의 티커 이니셜 fallback을 사용한다.
+바로 아래 보유 현황 표의 `보유 상태 / 평균 매입가 / 보유 수량` 머리글은 primary text
+색상과 굵은 caption으로 표시하고 값 행의 typography는 유지한다.
 
 Order Flow 패널과 Bid/Ask 차트는 SIM에서 기존 intraday API와
 `/ws/charts?orderFlow=true`를 사용한다. 독립 Order Flow 패널은 초기 intraday REST 요청이
