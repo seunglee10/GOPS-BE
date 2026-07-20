@@ -206,8 +206,9 @@ backoff를 초기화한다. `simulation_quote_not_ready`, `simulation_quote_time
 `returnPercent` 기반 포트폴리오·S&P 500 퍼센트 차트를 유지해 배포 전 snapshot을 빈 화면으로
 바꾸지 않는다. 시작 원금은 보유종목 매입원가와 다르며 과거 generation이나 SIM 가상시각에
 현재 값을 소급하지 않는다. 평가금과 투자 원금 사이의 간극은 밴드로 표시한다. 투자 원금이
-평가금보다 높은 손실 간극은 파랑, 투자 원금이 평가금보다 낮은 수익 간극은 빨강이며 두 선이
-교차하는 시점에서 밴드 색도 나뉜다.
+평가금보다 높은 손실 간극은 빨강, 투자 원금이 평가금보다 낮은 수익 간극은 초록이며 두 선이
+교차하는 시점에서 밴드 색도 나뉜다. 성과 기간의 최초 선택은 `전체`이고, 성과 패널 제목은
+공통 `title-sm` 크기를 사용한다.
 SIM의 S&P 500 비교선은 simulator에 고정한 replay 시작 전 FRED 실제 일봉과 실제 5분
 지수 관측값으로 만든 point-in-time-safe benchmark만 사용한다. benchmark point가 부족하면 응답 warning을
 성과 toolbar에 표시하고 임의 선을 만들지 않는다. 성과 최초 조회는 다른 포트폴리오 패널과
@@ -854,9 +855,12 @@ canonical timestamp가 현재 candle에 있을 때만 focus한다. 이 상태는
 순부채를 같은 기간 시계열로 제공하며 실적 예상치 차트를 섞지 않는다. 가치 탭은 EPS/BPS/SPS/CPS 시계열·YoY와 현재 가격 기준 가치지표를
 표시하며, 실적 화면과 가치 화면을 다시 한 탭 안의 숨겨진 페이지로 합치지 않는다.
 
-EPS/BPS/SPS/CPS와 최신 PER/PBR/PSR/FCF Yield를 표시한다. 과거 PER/PBR/PSR은
-`/api/charts/candles`의 일봉에서 각 재무 결산일 이전 가장 가까운 거래일 종가를
-선택해 당시 EPS/BPS/SPS와 결합한다. 결산일 가격이 없으면 해당 점을 생략하며 현재가를
+EPS/BPS/SPS/CPS와 최신 PER/PBR/PSR/FCF Yield를 표시한다. EPS는 SEC EPS 또는
+SEC 순이익/발행주식수, BPS는 SEC 자본/발행주식수, SPS는 SEC 매출/발행주식수,
+CPS는 SEC 영업현금흐름/발행주식수로 계산한다. PER/PBR/PSR은 각각 결산일 종가를 이 세 주당값으로
+나누고 FCF Yield는 SEC FCF를 결산일 종가×SEC 발행주식수로 나눈다. LIVE는
+`/api/charts/candles`, SIM은 evidence의 `valuationPriceSeries`에서 각 재무 결산일 이전 가장 가까운
+실제 거래일 종가를 선택한다. 결산일 가격이 없으면 해당 점을 생략하며 현재가를
 과거 구간에 재사용하지 않는다. 투자자본 계약이 없는 ROIC는 추정하지 않는다.
 로컬 고정 자료는 `import.meta.env.DEV`와
 `companyJournalPreview=1`을 모두 만족할 때만 사용하며 `DEV PREVIEW`를 표시한다.
@@ -1245,6 +1249,11 @@ replay simulation에서도 report와 evidence route를 모두 다시 조회한�
 이전 report와 evidence를 먼저 지우고 다시 요청하되 실행 중 매 tick마다 재요청하지 않는다.
 SIM에서는 `CompanySummaryPanel`과 상대수익률 chart의 별도 fundamentals/candle fetch를 끄고,
 `/evidence`가 반환한 시점 재무·완료 일봉과 명시된 현재 Yahoo 실적 projection만 렌더링한다.
+개발 URL에 `companyJournalPreview=1`이 남아 있어도 SIM에서는 preview fixture를 강제로 끄며,
+화면에 `DEV PREVIEW` 값이나 문장을 섞지 않는다.
+상대수익률의 최대 2년 `performanceSeries`와 별도로 받은 `valuationPriceSeries`를 병합해
+2021년 이후 모든 결산연도의 PER/PBR/PSR/FCF Yield를 계산한다. 결산일 가격 projection은
+종목별 해당 결산일 직전 종가만 담으며, SIM cutoff 이후 가격이나 현재가로 빈 연도를 채우지 않는다.
 기존 universe item은 회사명·sector·
 industry 같은 식별 정보만 남기고 현재 가격·시가총액·재무·등락률은 제거한 뒤 시점 evidence로
 다시 채운다. 적격 자료가 없으면 최신값이나 preview fixture로 대체하지 않고 자료 부족 상태를 표시한다.

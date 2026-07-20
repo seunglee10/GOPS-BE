@@ -998,12 +998,14 @@ route 자체를 실패시키지 않고 missing data로 남기며, 검증된 문�
 메모리에서 기업별 한 문장으로 조합하고 원본 row/JSON을 폐기한다. 문장은 별도
 `yahoo_analyst_summaries` projection에만 24시간 보관하므로 report·receipt·OpenAI 입력에 복제하지 않는다.
 
-`/evidence`는 기업저널 panel 전용 읽기 계약으로 분기 재무, SEC/Yahoo 실적, 최대 520개 일봉을
-한 번에 반환한다. replay simulation에서는 두 GET route가 simulator status의 `virtualTime`을
+`/evidence`는 기업저널 panel 전용 읽기 계약으로 분기 재무, SEC/Yahoo 실적, 최대 520개 상대수익률
+일봉을 한 번에 반환한다. 가치배수에는 이 2년 제한을 재사용하지 않고, 2021년 이후 각 SEC 결산일
+이전 10일 안의 가장 가까운 종가만 `valuationPriceSeries`로 작게 반환한다. replay simulation에서는
+두 GET route가 simulator status의 `virtualTime`을
 서버 내부 cutoff로 사용한다. report route는 최신 LIVE 보고서를 읽거나 생성 queue에 넣지 않고,
 cutoff 이전 완료 일봉·이전 날짜에 공개된 SEC 실적·cutoff까지 실제 수집된 Yahoo snapshot만으로
 결정론적 `sourceMode=historical_reconstruction` 보고서를 즉시 만든다. `/evidence`의 가격·SEC
-재무와 실제 실적에는 같은 cutoff를 적용하고 응답은 `simulation`, `cutoff`, `sourceMode`
+재무·실제 실적·`valuationPriceSeries`에는 같은 cutoff를 적용하고 응답은 `simulation`, `cutoff`, `sourceMode`
 provenance를 포함한다. SEC는 시간 정밀도가 날짜뿐이므로 replay 당일 filing을 제외한다. 완료
 일봉은 New York 기준 현재 replay 날짜보다 이전 session만 선택한다. 적격 row가
 없으면 결측으로 남기며 최신 report, live fundamentals adapter, 현재 candle로 fallback하지 않는다.

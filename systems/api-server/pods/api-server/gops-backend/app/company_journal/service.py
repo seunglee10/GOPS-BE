@@ -203,6 +203,12 @@ class CompanyJournalService:
             if cutoff is None
             else self.repository.load_performance_series([symbol, *benchmark_symbols], cutoff=cutoff)
         )
+        valuation_price_loader = getattr(self.repository, "load_valuation_price_series", None)
+        valuation_prices = valuation_price_loader(
+            symbol,
+            [str(point.periodEndDate) for point in financial if point.periodEndDate],
+            cutoff=cutoff,
+        ) if callable(valuation_price_loader) else []
         analyst_summary = compact_analyst_summary(
             self.repository.load_analyst_summary(symbol, cutoff=cutoff) or {}
         )
@@ -213,6 +219,8 @@ class CompanyJournalService:
             missing.append("sec_yahoo_earnings_series")
         if not any(series.get("symbol") == symbol and series.get("candles") for series in performance):
             missing.append("company_daily_prices")
+        if financial and not valuation_prices:
+            missing.append("valuation_period_end_prices")
         if analyst_summary is None:
             missing.append("yahoo_analyst_summary")
         source_dates = [
@@ -243,6 +251,7 @@ class CompanyJournalService:
             "financialSeries": [point.to_public_dict() for point in financial],
             "earningsSeries": [point.to_public_dict() for point in earnings],
             "performanceSeries": performance,
+            "valuationPriceSeries": valuation_prices,
             "analystSummary": analyst_summary,
             "missingData": missing,
         }

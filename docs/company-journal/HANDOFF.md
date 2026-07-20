@@ -32,6 +32,8 @@ ClickHouse 원천 serving tables
   `current`로 안전하게 대체한다.
 - 실적 탭은 SEC 실제치와 Yahoo 예상치를 비교하고, 기존 캔들 API의 최대 2년 일봉으로
   종목·S&P 500·섹터 ETF 상대수익률 및 거래량을 표시한다.
+- 가치배수 추이는 상대수익률용 2년 일봉에 제한되지 않는다. evidence의 `valuationPriceSeries`가
+  2021년 이후 SEC 결산일별 직전 종가만 전달하므로 LIVE와 SIM 모두 같은 전체 연도를 표시한다.
 - AWS replay simulation이 일반 `/api/market/*`를 point-in-time 안전 때문에 차단해도 기업저널은
   전용 읽기 전용 `/api/company-journal/{symbol}/evidence`에서 저장된 SEC/Yahoo/일봉 근거를
   한 번에 읽는다. 주문·추천·agent·일반 차트의 simulation guard는 그대로 유지한다.
