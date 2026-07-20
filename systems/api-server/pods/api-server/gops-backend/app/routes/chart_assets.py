@@ -395,17 +395,25 @@ def _commentary_projection_from_asset(asset: dict[str, Any] | None) -> dict[str,
 
 
 def _simulation_asset_context(request: Request) -> dict[str, str | None] | None:
+    gateway = simulator_gateway_from_app(request.app)
     try:
-        status = simulator_gateway_from_app(request.app).status()
-    except SimulatorUnavailable:
+        status = gateway.status()
+    except SimulatorUnavailable as exc:
+        raw_last_status = getattr(gateway, "last_status", None)
+        last_status = raw_last_status if isinstance(raw_last_status, dict) else None
+        if last_status and last_status.get("mode") == "live":
+            return None
+        raise HTTPException(status_code=503, detail="simulation_service_unavailable") from exc
+    mode = status.get("mode")
+    if mode == "live":
         return None
-    if status.get("mode") != "simulation":
-        return None
+    if mode != "simulation":
+        raise HTTPException(status_code=503, detail="simulation_service_unavailable")
     dataset_id = str(status.get("datasetId") or "").strip()
     start_time = str(status.get("startTime") or "").strip()
     virtual_time = str(status.get("virtualTime") or "").strip()
     if not dataset_id or _parse_timestamp(start_time) is None or _parse_timestamp(virtual_time) is None:
-        return None
+        raise HTTPException(status_code=503, detail="simulation_service_unavailable")
     return {
         "datasetId": dataset_id,
         "snapshotCutoff": start_time,

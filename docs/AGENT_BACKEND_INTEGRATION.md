@@ -160,7 +160,12 @@ WebSocket 경로를 사용하지 않는다. SIM 심볼 검색은 manifest의 502
 simulator의 종목별 replay projection을 사용한다. projection은 원본 quote/trade를
 `virtualTime`까지만 sequence 순서로 읽고 정규장 체결만 `orderflow-estimated-v2`로
 집계한다. `/api/charts/order-flow/daily`는 cutoff-safe SIM 구현이 없으므로 계속 409다.
-`/ws/charts?orderFlow=true`는 SIM minute/quote 변경만 replay provenance와 함께 전송한다.
+`/ws/charts?orderFlow=true`는 SIM minute/quote 변경을 replay provenance와 함께 전송한다.
+독립 Order Flow 패널은 초기 REST snapshot이 끝난 뒤
+`/ws/charts?orderFlow=true&candles=false`로 연결해 candle snapshot을 중복 조회하지 않는다.
+일반 차트와 Bid/Ask 차트는 기본값인 `candles=true`를 유지한다. replay candle과 Order Flow
+projection은 완료된 replay cursor snapshot을 캡처한 뒤 전역 pump lock 밖에서 읽으며, 조회 중
+run이 바뀐 결과는 폐기한다.
 빠른 주문은 `GET /api/simulator/quote`로 현재 replay bid/ask를 읽고 기존
 `POST /api/orders`를 통해 공통 paper 주문 원장에 `execution_mode=simulation`과
 `runId`를 붙여 기록한다. SIM에 존재하지 않는
@@ -170,6 +175,8 @@ simulator의 종목별 replay projection을 사용한다. projection은 원본 q
 준비되고 replay `virtualTime`이 artifact의 `evidenceAsOf`에 도달한 경우에만 기존
 recommendation route를 허용한다. 그 전에는 미래 추천으로 취급해 409를 반환한다. 자동 작도
 full/commentary 조회와 개발 패널의 snapshot build·status·coverage·cancel은 SIM safe route다.
+simulator status 확인이 실패하면 마지막 확정 상태가 LIVE인 경우에만 LIVE asset을 읽고,
+SIM 또는 상태 미확정이면 `503 simulation_service_unavailable`을 반환해 LIVE 해설을 섞지 않는다.
 build는 현재 simulator의 dataset ID와 시작 시각을 서버가 주입하며 클라이언트 cutoff는
 받지 않는다. DELETE는 계속 차단한다.
 저장된 종합 해설은 `GET /api/charts/analysis-assets/commentary?symbol&interval`에서

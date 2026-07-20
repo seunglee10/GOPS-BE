@@ -22,6 +22,7 @@ async def chart_stream(
     interval: str = Query(default="1m", pattern=CHART_INTERVAL_PATTERN),
     cursor: str | None = Query(default=None),
     order_flow: bool = Query(default=False, alias="orderFlow"),
+    candles: bool = Query(default=True),
 ) -> None:
     try:
         user = optional_websocket_user(websocket)
@@ -47,7 +48,14 @@ async def chart_stream(
 
     try:
         if await asyncio.to_thread(simulator_mode_active, websocket.app):
-            await _serve_simulation_chart(websocket, symbol, interval, cursor, order_flow=order_flow)
+            await _serve_simulation_chart(
+                websocket,
+                symbol,
+                interval,
+                cursor,
+                order_flow=order_flow,
+                candles=candles,
+            )
             return
         await WebSocketSessionManager().serve_chart(
             websocket,
@@ -67,6 +75,7 @@ async def _serve_simulation_chart(
     cursor: str | None,
     *,
     order_flow: bool = False,
+    candles: bool = True,
 ) -> None:
     await websocket.accept()
     gateway = simulator_gateway_from_app(websocket.app)
@@ -81,33 +90,34 @@ async def _serve_simulation_chart(
         if not await asyncio.to_thread(simulator_mode_active, websocket.app):
             await websocket.close(code=1012)
             return
-        payload = await asyncio.to_thread(gateway.candles, symbol, interval, 500)
-        candles = payload.get("candles") if isinstance(payload, dict) else []
-        for candle in candles if isinstance(candles, list) else []:
-            if not isinstance(candle, dict):
-                continue
-            timestamp = str(candle.get("timestamp") or "")
-            if cursor and timestamp and timestamp < cursor:
-                continue
-            fingerprint = json.dumps(candle, ensure_ascii=False, sort_keys=True, default=str)
-            if fingerprints_by_timestamp.get(timestamp) == fingerprint:
-                continue
-            event_type = "CANDLE_CLOSED" if candle.get("isClosed") else "LIVE_CANDLE_UPDATE"
-            await websocket.send_json(
-                websocket_event(
-                    event_type,
-                    symbol,
-                    interval,
-                    candle,
-                    source="simulation_replay",
-                    feed=str(candle.get("feed") or "mixed"),
+        if candles:
+            payload = await asyncio.to_thread(gateway.candles, symbol, interval, 500)
+            candle_rows = payload.get("candles") if isinstance(payload, dict) else []
+            for candle in candle_rows if isinstance(candle_rows, list) else []:
+                if not isinstance(candle, dict):
+                    continue
+                timestamp = str(candle.get("timestamp") or "")
+                if cursor and timestamp and timestamp < cursor:
+                    continue
+                fingerprint = json.dumps(candle, ensure_ascii=False, sort_keys=True, default=str)
+                if fingerprints_by_timestamp.get(timestamp) == fingerprint:
+                    continue
+                event_type = "CANDLE_CLOSED" if candle.get("isClosed") else "LIVE_CANDLE_UPDATE"
+                await websocket.send_json(
+                    websocket_event(
+                        event_type,
+                        symbol,
+                        interval,
+                        candle,
+                        source="simulation_replay",
+                        feed=str(candle.get("feed") or "mixed"),
+                    )
                 )
-            )
-            fingerprints_by_timestamp[timestamp] = fingerprint
-            cursor = timestamp or cursor
-        if len(fingerprints_by_timestamp) > 1_000:
-            for expired in sorted(fingerprints_by_timestamp)[:-500]:
-                fingerprints_by_timestamp.pop(expired, None)
+                fingerprints_by_timestamp[timestamp] = fingerprint
+                cursor = timestamp or cursor
+            if len(fingerprints_by_timestamp) > 1_000:
+                for expired in sorted(fingerprints_by_timestamp)[:-500]:
+                    fingerprints_by_timestamp.pop(expired, None)
         if order_flow:
             order_flow_payload = await asyncio.to_thread(
                 gateway.order_flow,
@@ -180,4 +190,4 @@ async def _serve_simulation_chart(
         if now - last_heartbeat >= 5:
             await websocket.send_json({"type": "HEARTBEAT", "symbol": symbol, "interval": interval, "simulation": True})
             last_heartbeat = now
-        await asyncio.sleep(0.25)
+        await asyncio.sleep(1.0 if order_flow and not candles else 0.25)

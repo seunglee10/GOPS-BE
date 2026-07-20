@@ -13,7 +13,7 @@ from gops_simul.clickhouse import ClickHouseHttpClient, ClickHouseReplayEventSou
 from gops_simul.config import Settings
 from gops_simul.dataset import ALLOWED_SPEEDS, DATASET_ID, REPLAY_SYMBOLS
 from gops_simul.index_snapshot import replay_index_performance, replay_index_snapshot
-from gops_simul.tick_replay import InMemoryReplayEventSource, ReplayController
+from gops_simul.tick_replay import InMemoryReplayEventSource, ReplayController, ReplayRunChangedError
 from gops_simul.state_store import RedisReplayStateStore
 
 
@@ -178,6 +178,8 @@ def create_app(
             raise HTTPException(status_code=409, detail="simulation mode is not active")
         try:
             return controller.candle_snapshot(symbol, interval, limit)
+        except ReplayRunChangedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -195,6 +197,8 @@ def create_app(
                 after_sequence=afterSequence,
                 latest_only=latestOnly,
             )
+        except ReplayRunChangedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

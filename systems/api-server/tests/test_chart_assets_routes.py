@@ -20,6 +20,7 @@ for path in (
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import create_app  # noqa: E402
+from app.services.simulator_gateway import SimulatorUnavailable  # noqa: E402
 from gops_agents.chart_assets.progress import InMemoryChartAssetProgressStore  # noqa: E402
 from gops_agents.chart_assets.queue import InMemoryChartAssetBuildQueue  # noqa: E402
 
@@ -94,14 +95,24 @@ class FailingStorage:
 class FakeSimulatorGateway:
     def __init__(self, mode="live"):
         self.mode = mode
+        self.last_status = None
 
     def status(self):
-        return {
+        self.last_status = {
             "available": True, "mode": self.mode, "state": "paused",
             "datasetId": "dataset-20260715", "runId": "run-1" if self.mode == "simulation" else None,
             "startTime": "2026-07-15T00:00:00.000Z",
             "virtualTime": "2026-07-15T14:00:00.000Z",
         }
+        return self.last_status
+
+
+class FailingSimulatorGateway:
+    def __init__(self, last_mode=None):
+        self.last_status = {"mode": last_mode} if last_mode else None
+
+    def status(self):
+        raise SimulatorUnavailable("simulator timed out")
 
 
 class ChartAssetsRoutesTest(unittest.TestCase):
@@ -119,6 +130,7 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         ]
         for current in self.patches: current.start()
         self.client = TestClient(create_app())
+        self.client.app.state.simulator_gateway = FakeSimulatorGateway("live")
 
     def tearDown(self):
         for current in reversed(self.patches): current.stop()
@@ -202,6 +214,34 @@ class ChartAssetsRoutesTest(unittest.TestCase):
         self.assertIsNone(response.json()["assets"]["1D"])
         self.assertEqual(response.json()["meta"]["snapshotStatus"], "missing")
         self.assertEqual(self.storage.get_calls, [])
+
+    def test_simulator_status_failure_never_falls_back_to_live_from_sim_or_unknown(self):
+        for last_mode in ("simulation", None):
+            with self.subTest(last_mode=last_mode):
+                self.client.app.state.simulator_gateway = FailingSimulatorGateway(last_mode)
+                full = self.client.get(
+                    "/api/charts/analysis-assets", params={"symbol": "NVDA", "interval": "1D"},
+                )
+                commentary = self.client.get(
+                    "/api/charts/analysis-assets/commentary",
+                    params={"symbol": "NVDA", "interval": "1D"},
+                )
+                self.assertEqual(full.status_code, 503)
+                self.assertEqual(commentary.status_code, 503)
+                self.assertEqual(full.json()["detail"], "simulation_service_unavailable")
+        self.assertEqual(self.storage.get_calls, [])
+        self.assertEqual(self.storage.get_commentary_calls, [])
+
+    def test_simulator_status_failure_can_use_live_only_after_explicit_live_status(self):
+        self.client.app.state.simulator_gateway = FailingSimulatorGateway("live")
+
+        response = self.client.get(
+            "/api/charts/analysis-assets", params={"symbol": "NVDA", "interval": "1D"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["meta"]["assetContext"], "live")
+        self.assertEqual(self.storage.get_calls, [("NVDA", "1D")])
 
     def test_simulation_build_freezes_server_dataset_start_context(self):
         self.client.app.state.simulator_gateway = FakeSimulatorGateway("simulation")

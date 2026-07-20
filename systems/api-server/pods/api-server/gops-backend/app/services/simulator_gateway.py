@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
 from typing import Any
+
+
+logger = logging.getLogger(__name__)
+SLOW_SIMULATOR_REQUEST_SECONDS = 1.0
 
 
 class SimulatorUnavailable(RuntimeError):
@@ -110,6 +116,8 @@ class SimulatorGateway:
         *,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
+        started_at = time.monotonic()
+        outcome = "success"
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             f"{self.base_url}{path}",
@@ -120,7 +128,11 @@ class SimulatorGateway:
         try:
             with urllib.request.urlopen(request, timeout=timeout_seconds or self.timeout_seconds) as response:
                 parsed = json.loads(response.read().decode("utf-8"))
+            if not isinstance(parsed, dict):
+                outcome = "invalid_response"
+                raise SimulatorUnavailable("GOPS simulator returned an invalid response")
         except urllib.error.HTTPError as exc:
+            outcome = f"http_{exc.code}"
             detail = exc.reason
             try:
                 error_payload = json.loads(exc.read().decode("utf-8"))
@@ -130,13 +142,28 @@ class SimulatorGateway:
             error_type = SimulatorDataUnavailable if exc.code == 404 else SimulatorUnavailable
             raise error_type(str(detail)) from exc
         except TimeoutError as exc:
+            outcome = "timeout"
             raise SimulatorTimeout(f"GOPS simulator timed out at {self.base_url}") from exc
         except urllib.error.URLError as exc:
             if isinstance(exc.reason, TimeoutError):
+                outcome = "timeout"
                 raise SimulatorTimeout(f"GOPS simulator timed out at {self.base_url}") from exc
+            outcome = "unavailable"
             raise SimulatorUnavailable(f"GOPS simulator unavailable at {self.base_url}") from exc
         except (OSError, ValueError) as exc:
+            outcome = "invalid_response"
             raise SimulatorUnavailable(f"GOPS simulator unavailable at {self.base_url}") from exc
-        if not isinstance(parsed, dict):
-            raise SimulatorUnavailable("GOPS simulator returned an invalid response")
+        finally:
+            duration_seconds = time.monotonic() - started_at
+            if duration_seconds >= SLOW_SIMULATOR_REQUEST_SECONDS or outcome == "timeout":
+                parsed_path = urllib.parse.urlsplit(path)
+                query = urllib.parse.parse_qs(parsed_path.query)
+                logger.warning(
+                    "simulator_gateway_request path=%s durationMs=%d outcome=%s symbol=%s interval=%s",
+                    parsed_path.path,
+                    round(duration_seconds * 1000),
+                    outcome,
+                    (query.get("symbol") or [None])[0],
+                    (query.get("interval") or [None])[0],
+                )
         return parsed

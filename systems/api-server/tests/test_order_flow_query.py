@@ -143,7 +143,10 @@ class OrderFlowStreamHubTest(unittest.IsolatedAsyncioTestCase):
         gateway = FakeSimulationStreamGateway()
         websocket = FakeSimulationWebSocket(gateway)
 
-        with mock.patch("app.routes.streams.simulator_mode_active", side_effect=[True, False]):
+        with (
+            mock.patch("app.routes.streams.simulator_mode_active", side_effect=[True, False]),
+            mock.patch("app.routes.streams.asyncio.sleep", new=mock.AsyncMock()) as sleep,
+        ):
             await _serve_simulation_chart(websocket, "NVDA", "1m", None, order_flow=True)
 
         events = {event["type"]: event for event in websocket.sent}
@@ -154,13 +157,42 @@ class OrderFlowStreamHubTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events["ORDER_FLOW_BINS_UPDATE"]["data"]["sessionDate"], "2026-07-14")
         self.assertEqual(events["LIVE_QUOTE_UPDATE"]["data"]["bidPrice"], 100.0)
         self.assertEqual(websocket.closed_code, 1012)
+        sleep.assert_awaited_once_with(0.25)
+
+    async def test_order_flow_only_simulation_socket_never_reads_candles(self):
+        gateway = FakeSimulationStreamGateway()
+        websocket = FakeSimulationWebSocket(gateway)
+
+        with (
+            mock.patch("app.routes.streams.simulator_mode_active", side_effect=[True, False]),
+            mock.patch("app.routes.streams.asyncio.sleep", new=mock.AsyncMock()) as sleep,
+        ):
+            await _serve_simulation_chart(
+                websocket,
+                "NVDA",
+                "1m",
+                None,
+                order_flow=True,
+                candles=False,
+            )
+
+        self.assertEqual(gateway.candle_calls, 0)
+        self.assertEqual(gateway.order_flow_calls, 1)
+        self.assertIn("ORDER_FLOW_BINS_UPDATE", {event["type"] for event in websocket.sent})
+        sleep.assert_awaited_once_with(1.0)
 
 
 class FakeSimulationStreamGateway:
+    def __init__(self):
+        self.candle_calls = 0
+        self.order_flow_calls = 0
+
     def candles(self, symbol, interval, limit):
+        self.candle_calls += 1
         return {"candles": []}
 
     def order_flow(self, symbol, **_kwargs):
+        self.order_flow_calls += 1
         return {
             "runId": "run-1",
             "nextSequence": 42,

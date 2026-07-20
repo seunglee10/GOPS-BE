@@ -8,10 +8,11 @@ import gzip
 import hashlib
 import json
 import tempfile
+import time
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 from unittest.mock import patch
 
 
@@ -38,7 +39,12 @@ from gops_simul.dataset import (
     in_half_open_window,
 )
 from gops_simul import env as simulator_env
-from gops_simul.tick_replay import InMemoryReplayEventSource, ReplayController, ReplayEvent
+from gops_simul.tick_replay import (
+    InMemoryReplayEventSource,
+    ReplayController,
+    ReplayEvent,
+    ReplayRunChangedError,
+)
 from gops_simul.order_flow import ReplayOrderFlowProjection
 from gops_simul.clickhouse import ClickHouseHttpClient, ClickHouseReplayEventSource
 from gops_simul.tools import import_alpaca
@@ -718,6 +724,7 @@ class ReplayControllerTests(unittest.TestCase):
         controller.set_mode("simulation")
         controller.resume()
         self.clock.value += 4
+        controller.pump()
 
         payload = controller.candle_snapshot("NVDA", "1D", 20)
 
@@ -875,6 +882,7 @@ class ReplayControllerTests(unittest.TestCase):
         self.controller.set_mode("simulation")
         self.controller.resume()
         self.clock.value += 2
+        self.controller.pump()
         before_restart = self.controller.order_flow_snapshot("NVDA")
         first = self.controller.set_mode("simulation")
         restarted = self.controller.restart()
@@ -884,6 +892,89 @@ class ReplayControllerTests(unittest.TestCase):
         self.assertEqual(restarted["state"], "ready")
         self.assertEqual(self.controller.order_flow_snapshot("NVDA")["dataStatus"], "empty")
         self.assertNotIn("accounts", self.controller.state_store.snapshot if self.controller.state_store else {})
+
+    def test_blocked_intraday_candle_read_does_not_block_status_or_run_transition(self):
+        started = Event()
+        release = Event()
+
+        class BlockingCandleSource(InMemoryReplayEventSource):
+            def candle_snapshot(self, symbol, interval, through, limit):
+                started.set()
+                release.wait(timeout=2)
+                return super().candle_snapshot(symbol, interval, through, limit)
+
+        controller = ReplayController(BlockingCandleSource(self.source._events), clock=self.clock)
+        controller.set_mode("simulation")
+        old_run = controller.run_id
+        failures = []
+
+        def read_candles():
+            try:
+                controller.candle_snapshot("NVDA", "1m", 20)
+            except Exception as exc:  # asserted below
+                failures.append(exc)
+
+        thread = Thread(target=read_candles)
+        thread.start()
+        self.assertTrue(started.wait(timeout=1))
+        before = time.monotonic()
+        self.assertEqual(controller.status_snapshot()["runId"], old_run)
+        self.assertLess(time.monotonic() - before, 0.2)
+
+        restarted = controller.restart()
+        release.set()
+        thread.join(timeout=2)
+
+        self.assertNotEqual(restarted["runId"], old_run)
+        self.assertEqual(len(failures), 1)
+        self.assertIsInstance(failures[0], ReplayRunChangedError)
+
+    def test_blocked_order_flow_projection_does_not_block_candles_or_replay_snapshot(self):
+        started = Event()
+        release = Event()
+
+        class BlockingOrderFlowSource(InMemoryReplayEventSource):
+            def events_for_symbol_after(self, symbol, sequence, through, limit):
+                started.set()
+                release.wait(timeout=2)
+                return super().events_for_symbol_after(symbol, sequence, through, limit)
+
+        source = BlockingOrderFlowSource(self.source._events)
+        controller = ReplayController(source, clock=self.clock)
+        controller.set_mode("simulation")
+        old_run = controller.run_id
+        projection_failures = []
+        restart_result = []
+
+        def read_order_flow():
+            try:
+                controller.order_flow_snapshot("NVDA")
+            except Exception as exc:  # asserted below
+                projection_failures.append(exc)
+
+        projection = Thread(target=read_order_flow)
+        projection.start()
+        self.assertTrue(started.wait(timeout=1))
+
+        before = time.monotonic()
+        candle_payload = controller.candle_snapshot("NVDA", "1m", 20)
+        self.assertEqual(candle_payload["candles"], [])
+        self.assertEqual(controller.status_snapshot()["runId"], old_run)
+        self.assertLess(time.monotonic() - before, 0.2)
+
+        transition = Thread(target=lambda: restart_result.append(controller.restart()))
+        transition.start()
+        deadline = time.monotonic() + 1
+        while controller.run_id == old_run and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertNotEqual(controller.run_id, old_run)
+        release.set()
+        projection.join(timeout=2)
+        transition.join(timeout=2)
+
+        self.assertEqual(len(projection_failures), 1)
+        self.assertIsInstance(projection_failures[0], ReplayRunChangedError)
+        self.assertEqual(restart_result[0]["runId"], controller.run_id)
 
     def test_persisted_state_contains_replay_state_only(self):
         store = MemoryStateStore()
