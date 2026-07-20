@@ -221,15 +221,16 @@ async def paper_order_socket(websocket: WebSocket, order_id: str) -> None:
         repository = paper_repository_from_app(websocket.app)
         last_fingerprint: str | None = None
         while True:
-            order = repository.get_order(user.sub, order_id)
+            order = await asyncio.to_thread(repository.get_order, user.sub, order_id)
             if order is None:
                 await websocket.send_json({"type": "error", "detail": "paper order not found"})
                 await websocket.close(code=1008)
                 return
+            events = await asyncio.to_thread(repository.list_order_events, user.sub, order_id)
             payload = {
                 "type": "snapshot" if last_fingerprint is None else "update",
                 "order": jsonable_encoder(order),
-                "events": jsonable_encoder(repository.list_order_events(user.sub, order_id)),
+                "events": jsonable_encoder(events),
             }
             fingerprint = _fingerprint(payload)
             if fingerprint != last_fingerprint:
@@ -252,10 +253,21 @@ async def paper_account_socket(websocket: WebSocket) -> None:
         last_fingerprint: str | None = None
         last_portfolio_fingerprint: str | None = None
         while True:
-            raw_account = _enriched_account_snapshot(websocket.app, repository, user.sub)
+            raw_account = await asyncio.to_thread(
+                _enriched_account_snapshot,
+                websocket.app,
+                repository,
+                user.sub,
+            )
             portfolio_fingerprint = _paper_portfolio_state_fingerprint(raw_account)
             if portfolio_fingerprint != last_portfolio_fingerprint:
-                _sync_paper_portfolio_snapshot(websocket.app, repository, user.sub, raw_account)
+                await asyncio.to_thread(
+                    _sync_paper_portfolio_snapshot,
+                    websocket.app,
+                    repository,
+                    user.sub,
+                    raw_account,
+                )
                 last_portfolio_fingerprint = portfolio_fingerprint
             account = jsonable_encoder(raw_account)
             payload = {"type": "snapshot" if last_fingerprint is None else "update", "account": account}
@@ -703,19 +715,24 @@ def _optional_positive_decimal(value: Any) -> Decimal | None:
 
 async def _accept_paper_socket(websocket: WebSocket) -> AuthenticatedUser | None:
     try:
-        user = require_websocket_user(websocket)
+        user = await asyncio.to_thread(require_websocket_user, websocket)
     except WebSocketAuthRequired as exc:
-        await websocket.accept()
-        await websocket.send_json({"type": "error", "detail": str(exc)})
-        await websocket.close(code=1008)
+        await _reject_paper_socket(websocket, str(exc), code=1008)
         return None
     except WebSocketAuthUnavailable as exc:
-        await websocket.accept()
-        await websocket.send_json({"type": "error", "detail": str(exc)})
-        await websocket.close(code=1011)
+        await _reject_paper_socket(websocket, str(exc), code=1011)
         return None
     await websocket.accept()
     return user
+
+
+async def _reject_paper_socket(websocket: WebSocket, detail: str, *, code: int) -> None:
+    try:
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "detail": detail})
+        await websocket.close(code=code)
+    except (RuntimeError, WebSocketDisconnect):
+        return
 
 
 async def _close_socket_with_error(websocket: WebSocket, exc: Exception) -> None:
