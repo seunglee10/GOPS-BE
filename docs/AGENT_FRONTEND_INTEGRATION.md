@@ -133,7 +133,8 @@ fixture를 남기지 않고 `simulation_data_unavailable` 상태를 표시한다
 전체 Geometry Asset은 현재 캔들이 첫 scene에 반영된 뒤 후순위로 요청한다. 해설 본문은
 먼저 표시할 수 있지만 작도·봉·이벤트·지표를 바꾸는 inline link는 전체 자산과 scene이
 준비된 뒤 활성화한다. 해설 panel은 별도 전체 자산 요청을 만들지 않고 chart document별
-runtime snapshot을 구독한다.
+runtime snapshot을 구독한다. 해설 상단의 종목·주기 identity는 기업 로고를 왼쪽에
+표시하고, 로고 이미지를 사용할 수 없으면 공통 `StockLogo`의 티커 이니셜 fallback을 사용한다.
 
 Order Flow 패널과 Bid/Ask 차트는 SIM에서 기존 intraday API와
 `/ws/charts?orderFlow=true`를 사용한다. 독립 Order Flow 패널은 초기 intraday REST 요청이
