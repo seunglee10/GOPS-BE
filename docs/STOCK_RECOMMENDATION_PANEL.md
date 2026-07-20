@@ -112,6 +112,7 @@ feedback control, tracking, 자동 주문 경로를 만들지 않는다.
 
 투자 프로필이 없으면 추천 API는 `profile_required`를 반환한다. 점수 가중치 프로필은
 `추천 수식 설정` 탭에서 별도로 생성·복제·편집·활성화한다.
+추천 수식의 기본값은 `stable`이며, 위험성향의 기본값 `balanced`와는 별개다.
 
 | 필드 | 설명 |
 | --- | --- |
@@ -223,7 +224,7 @@ cutoff 이하 10-K 프로필, 저장 뉴스 최대 2건, 기업명·업종과 �
   "status": "ready",
   "profile": {
     "riskLevel": "balanced",
-    "recommendationStyle": "balanced",
+    "recommendationStyle": "stable",
     "horizon": "intraday",
     "maxDrawdownPct": 6,
     "preferredSectors": ["Information Technology"],

@@ -11,6 +11,8 @@ from zoneinfo import ZoneInfo
 
 from app.core.sectors import normalize_sector
 
+from .score_profiles import DEFAULT_RECOMMENDATION_STYLE
+
 
 WEIGHTS_VERSION = "professional-personalization-v1"
 FACTOR_KEYS = (
@@ -68,7 +70,7 @@ def apply_professional_personalization(
     context: ProfessionalContext,
     shadow: bool,
 ) -> list[dict[str, Any]]:
-    style = context.style if context.style in STYLE_WEIGHTS else "balanced"
+    style = context.style if context.style in STYLE_WEIGHTS else DEFAULT_RECOMMENDATION_STYLE
     style_weights = context.style_weights or STYLE_WEIGHTS
     raw_by_symbol: dict[str, dict[str, float]] = {}
     for item in items:
@@ -154,7 +156,11 @@ def personalization_digest(
 ) -> str:
     portfolio = portfolio_snapshot or {}
     material = {
-        "style": profile.get("recommendation_style") or profile.get("recommendationStyle") or "balanced",
+        "style": (
+            profile.get("recommendation_style")
+            or profile.get("recommendationStyle")
+            or DEFAULT_RECOMMENDATION_STYLE
+        ),
         "risk": profile.get("risk_level") or profile.get("riskLevel") or "balanced",
         "maxDrawdownPct": profile.get("max_drawdown_pct") or profile.get("maxDrawdownPct"),
         "preferredSectors": sorted(profile.get("preferred_sectors") or profile.get("preferredSectors") or []),

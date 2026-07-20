@@ -15,6 +15,7 @@ PUT    /api/recommendations/score-profiles/active
 ```
 
 기본 모멘텀·균형·안정 프로필은 immutable이고 custom 프로필은 사용자별 최대 20개다.
+사용자 설정이 없거나 활성 custom 프로필이 삭제된 경우의 기본 추천 수식은 `stable`이다.
 이름은 대소문자 무시 고유값이며 모든 블록·세부 그룹 합계가 100이어야 한다.
 추천 응답은 `customRankScore`, canonical/effective block score, portfolio 반영률과
 score-profile provenance를 반환한다. `preference*`, `personalizationDelta`,
@@ -432,7 +433,8 @@ snapshot의 `sector`는 GraphDB `gops:sector` canonical 값을 사용하고, 화
 한글 라벨은 `sectorLabelKo`로 함께 내려준다.
 
 추천 profile의 `recommendationStyle`은 `momentum`, `balanced`, `stable` 중 하나이며
-custom profile FK가 없을 때만 기본 점수 프로필 선택에 사용한다. run에는 투자 프로필
+custom profile FK가 없을 때만 기본 점수 프로필 선택에 사용한다. 새 프로필의 기본값은
+`stable`이며 위험성향 기본값 `balanced`와는 독립적이다. run에는 투자 프로필
 revision, 활성 점수 프로필 ID/revision/schema/digest가 반영된 `run_key`와
 `scoring_input_digest`를 저장한다. 동일 slot이라도 설정이 바뀌면 새 run을 계산하고,
 동일 설정이면 기존 run을 replay한다. 주문·fill은 점수 입력이 아니다.

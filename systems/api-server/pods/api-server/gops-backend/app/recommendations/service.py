@@ -34,7 +34,12 @@ from .professional_v3 import (
     rank_evidence_candidates,
     rules_snapshot as evidence_rules_snapshot,
 )
-from .score_profiles import public_score_profile, score_profile_digest, system_score_profile
+from .score_profiles import (
+    DEFAULT_RECOMMENDATION_STYLE,
+    public_score_profile,
+    score_profile_digest,
+    system_score_profile,
+)
 from .scoring import (
     MARKET_TZ,
     NEWS_LOOKBACK_DAYS,
@@ -408,7 +413,7 @@ class RecommendationService:
             f"{user_sub}:{slot['marketDate']}:{session_mode}:{slot['slotStart']}:"
             f"p{profile_row.get('profile_revision') or 1}:"
             f"s{score_profile.get('type') or 'preset'}-"
-            f"{score_profile.get('id') or score_profile.get('presetStyle') or profile_row.get('recommendation_style') or 'balanced'}-"
+            f"{score_profile.get('id') or score_profile.get('presetStyle') or profile_row.get('recommendation_style') or DEFAULT_RECOMMENDATION_STYLE}-"
             f"r{score_profile.get('revision') or 1}-"
             f"v{score_profile.get('schemaVersion') or 'recommendation-score-profile.v1'}-"
             f"{score_profile_digest(score_profile)[:16]}"
@@ -1278,7 +1283,7 @@ def active_score_profile(repository: RecommendationRepository, profile: dict[str
             if row.get("id") == active_id:
                 return public_score_profile(row)
     return system_score_profile(
-        str(profile.get("recommendation_style") or "balanced"),
+        str(profile.get("recommendation_style") or DEFAULT_RECOMMENDATION_STYLE),
         str(profile.get("risk_level") or "balanced"),
     )
 

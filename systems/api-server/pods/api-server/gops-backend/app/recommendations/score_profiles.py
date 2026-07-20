@@ -10,6 +10,7 @@ from typing import Any
 SCORE_PROFILE_SCHEMA_VERSION = "recommendation-score-profile.v1"
 MAX_CUSTOM_SCORE_PROFILES = 20
 SCORE_WEIGHT_TOLERANCE = 0.01
+DEFAULT_RECOMMENDATION_STYLE = "stable"
 
 BLOCK_KEYS = (
     "trendStrength",
@@ -81,7 +82,7 @@ class ScoreProfileValidationError(ValueError):
 
 
 def system_score_profile(style: str, risk_level: str = "balanced") -> dict[str, Any]:
-    normalized_style = style if style in SYSTEM_BLOCK_WEIGHTS else "balanced"
+    normalized_style = style if style in SYSTEM_BLOCK_WEIGHTS else DEFAULT_RECOMMENDATION_STYLE
     return {
         "type": "preset",
         "id": None,

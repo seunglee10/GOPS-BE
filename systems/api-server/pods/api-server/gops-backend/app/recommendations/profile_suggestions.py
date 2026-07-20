@@ -10,7 +10,12 @@ from typing import Any
 from gops_agents.query_understanding.korean_text import compact_text, query_fragments
 from gops_agents.recommendation_profiles import build_score_profile_suggestion
 
-from .score_profiles import normalize_score_profile_payload, public_score_profile, system_score_profile
+from .score_profiles import (
+    DEFAULT_RECOMMENDATION_STYLE,
+    normalize_score_profile_payload,
+    public_score_profile,
+    system_score_profile,
+)
 from .service import RecommendationDataSource
 
 
@@ -21,7 +26,10 @@ def suggest_score_profile(app: Any, repository: Any, user_sub: str, query: str) 
     active_id = (profile or {}).get("active_score_profile_id")
     base_profile = next((public_score_profile(row) for row in custom if row.get("id") == active_id), None)
     if base_profile is None:
-        base_profile = system_score_profile(str((profile or {}).get("recommendation_style") or "balanced"), risk_level)
+        base_profile = system_score_profile(
+            str((profile or {}).get("recommendation_style") or DEFAULT_RECOMMENDATION_STYLE),
+            risk_level,
+        )
 
     now_provider = getattr(app.state, "recommendation_now_provider", None)
     now = now_provider() if callable(now_provider) else datetime.now(timezone.utc)

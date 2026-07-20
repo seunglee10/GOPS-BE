@@ -24,6 +24,7 @@ from .repository import (
     ScoreProfileUpsert,
 )
 from .score_profiles import (
+    DEFAULT_RECOMMENDATION_STYLE,
     MAX_CUSTOM_SCORE_PROFILES,
     SCORE_PROFILE_SCHEMA_VERSION,
     ScoreProfileValidationError,
@@ -42,7 +43,7 @@ router = APIRouter(tags=["recommendations"])
 
 class InvestmentProfileBody(BaseModel):
     riskLevel: str = Field(min_length=1, max_length=24)
-    recommendationStyle: str = Field(default="balanced", min_length=1, max_length=24)
+    recommendationStyle: str = Field(default=DEFAULT_RECOMMENDATION_STYLE, min_length=1, max_length=24)
     horizon: str = "intraday"
     maxDrawdownPct: float = Field(default=6, gt=0, le=50)
     preferredSectors: list[str] = Field(default_factory=list)
@@ -129,7 +130,10 @@ def list_recommendation_score_profiles(
     active_id = (profile or {}).get("active_score_profile_id")
     active = next((public_score_profile(row) for row in custom if row.get("id") == active_id), None)
     if active is None:
-        active = system_score_profile(str((profile or {}).get("recommendation_style") or "balanced"), risk_level)
+        active = system_score_profile(
+            str((profile or {}).get("recommendation_style") or DEFAULT_RECOMMENDATION_STYLE),
+            risk_level,
+        )
     return {
         "schemaVersion": SCORE_PROFILE_SCHEMA_VERSION,
         "maxCustomProfiles": MAX_CUSTOM_SCORE_PROFILES,
@@ -210,7 +214,7 @@ def delete_recommendation_score_profile(
     deleted = _call_recommendation_storage(lambda: repository.delete_score_profile(user.sub, profile_id))
     if not deleted:
         raise HTTPException(status_code=404, detail="score profile not found")
-    return {"status": "deleted", "activeFallback": "balanced"}
+    return {"status": "deleted", "activeFallback": DEFAULT_RECOMMENDATION_STYLE}
 
 
 @router.put("/api/recommendations/score-profiles/active")
@@ -228,7 +232,7 @@ def activate_recommendation_score_profile(
         if body.profileId is None:
             raise HTTPException(status_code=422, detail="profileId is required for a custom score profile")
         profile_id = body.profileId
-        style = "balanced"
+        style = DEFAULT_RECOMMENDATION_STYLE
     repository = _repository_from_app(request.app)
     profile = _call_recommendation_storage(
         lambda: repository.activate_score_profile(user.sub, profile_id, preset_style=style)
@@ -302,7 +306,7 @@ def _fixed_replay_response(app: Any, provider: Any, user_sub: str) -> dict[str, 
         active_score_profile(repository, current_profile)
         if current_profile and callable(getattr(repository, "list_score_profiles", None))
         else system_score_profile(
-            str((profile or {}).get("recommendation_style") or "balanced"),
+            str((profile or {}).get("recommendation_style") or DEFAULT_RECOMMENDATION_STYLE),
             str((profile or {}).get("risk_level") or "balanced"),
         )
     )
@@ -459,7 +463,7 @@ def _public_profile(profile: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
     return {
         "riskLevel": profile.get("risk_level"),
-        "recommendationStyle": profile.get("recommendation_style") or "balanced",
+        "recommendationStyle": profile.get("recommendation_style") or DEFAULT_RECOMMENDATION_STYLE,
         "horizon": profile.get("horizon"),
         "maxDrawdownPct": profile.get("max_drawdown_pct"),
         "preferredSectors": normalize_sector_list(profile.get("preferred_sectors") or []),
@@ -479,7 +483,7 @@ def _profile_with_active_score(repository: Any, profile: dict[str, Any] | None) 
     rows = repository.list_score_profiles(str(profile.get("user_sub") or "")) if active_id else []
     active = next((public_score_profile(row) for row in rows if row.get("id") == active_id), None)
     payload["active_score_profile"] = active or system_score_profile(
-        str(profile.get("recommendation_style") or "balanced"),
+        str(profile.get("recommendation_style") or DEFAULT_RECOMMENDATION_STYLE),
         str(profile.get("risk_level") or "balanced"),
     )
     return payload

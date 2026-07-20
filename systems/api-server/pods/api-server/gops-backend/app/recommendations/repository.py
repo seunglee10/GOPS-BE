@@ -15,6 +15,8 @@ from psycopg.errors import UndefinedTable, UniqueViolation
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from .score_profiles import DEFAULT_RECOMMENDATION_STYLE
+
 
 RISK_LEVELS = {"conservative", "balanced", "aggressive"}
 RECOMMENDATION_STYLES = {"momentum", "balanced", "stable"}
@@ -269,7 +271,7 @@ class PostgresRecommendationRepository(RecommendationRepository):
                 ).fetchone()
                 profile_payload = {
                     "risk_level": row["risk_level"],
-                    "recommendation_style": row.get("recommendation_style") or "balanced",
+                    "recommendation_style": row.get("recommendation_style") or DEFAULT_RECOMMENDATION_STYLE,
                     "horizon": row["horizon"],
                     "max_drawdown_pct": float(row["max_drawdown_pct"]),
                     "preferred_sectors": _json_ready(row["preferred_sectors"]),
@@ -412,7 +414,7 @@ class PostgresRecommendationRepository(RecommendationRepository):
                     conn.execute(
                         """
                         UPDATE user_investment_profiles
-                        SET active_score_profile_id = NULL, recommendation_style = 'balanced',
+                        SET active_score_profile_id = NULL, recommendation_style = 'stable',
                             profile_revision = profile_revision + 1, updated_at = now()
                         WHERE user_sub = %s
                         """,
@@ -1016,7 +1018,7 @@ class InMemoryRecommendationRepository(RecommendationRepository):
         profile = self.profiles.get(user_sub)
         if profile and profile.get("active_score_profile_id") == profile_id:
             profile["active_score_profile_id"] = None
-            profile["recommendation_style"] = "balanced"
+            profile["recommendation_style"] = DEFAULT_RECOMMENDATION_STYLE
             profile["profile_revision"] = int(profile.get("profile_revision") or 1) + 1
             profile["updated_at"] = datetime.now(timezone.utc)
         del self.score_profiles[profile_id]

@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 
 from app.core.sectors import sector_label_ko, sector_payload_fields, normalize_sector, normalize_sector_list
 
+from .score_profiles import DEFAULT_RECOMMENDATION_STYLE
+
 
 MARKET_TZ = ZoneInfo("America/New_York")
 MIN_CANDLE_COUNT = 60
@@ -810,7 +812,11 @@ def reason(reason_type: str, text: str, weight: float) -> dict[str, Any]:
 def normalize_profile(row: dict[str, Any]) -> RecommendationProfile:
     return RecommendationProfile(
         risk_level=str(row.get("risk_level") or row.get("riskLevel") or "balanced"),
-        recommendation_style=str(row.get("recommendation_style") or row.get("recommendationStyle") or "balanced"),
+        recommendation_style=str(
+            row.get("recommendation_style")
+            or row.get("recommendationStyle")
+            or DEFAULT_RECOMMENDATION_STYLE
+        ),
         horizon=str(row.get("horizon") or "intraday"),
         max_drawdown_pct=float(row.get("max_drawdown_pct") or row.get("maxDrawdownPct") or 5),
         preferred_sectors=tuple(normalize_sector_list(row.get("preferred_sectors") or row.get("preferredSectors") or [])),
