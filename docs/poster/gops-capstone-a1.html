@@ -1,0 +1,833 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GOPS Capstone Poster — A1</title>
+  <style>
+    @page { size: A1 portrait; margin: 0; }
+
+    :root {
+      --ink: #111317;
+      --muted: #59616f;
+      --paper: #f5f7fa;
+      --card: #ffffff;
+      --line: #d9dfe7;
+      --line-strong: #bfc8d4;
+      --dark: #111317;
+      --panel: #20242b;
+      --blue: #0099ff;
+      --blue-soft: #e8f5ff;
+      --green: #168a4d;
+      --green-soft: #e9f7ef;
+      --coral: #d84663;
+      --coral-soft: #fff0f3;
+      --yellow: #9a7400;
+      --yellow-soft: #fff8d8;
+      --radius: 5mm;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      width: 594mm;
+      min-width: 594mm;
+      height: 841mm;
+      min-height: 841mm;
+      overflow: hidden;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      word-break: keep-all;
+    }
+
+    body { position: relative; }
+
+    .poster {
+      width: 594mm;
+      height: 841mm;
+      padding: 17mm 18mm 14mm;
+      display: flex;
+      flex-direction: column;
+      gap: 7mm;
+      background:
+        linear-gradient(rgba(17,19,23,.024) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(17,19,23,.024) 1px, transparent 1px),
+        var(--paper);
+      background-size: 12mm 12mm;
+    }
+
+    .header {
+      position: relative;
+      height: 143mm;
+      flex: 0 0 143mm;
+      overflow: hidden;
+      border-radius: 7mm;
+      background: var(--dark);
+      color: white;
+      isolation: isolate;
+    }
+
+    .header::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      background: url("assets/gops-data-evidence-flow.png") center 56% / cover no-repeat;
+      opacity: .76;
+    }
+
+    .header::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      background:
+        linear-gradient(90deg, rgba(8,10,13,.98) 0%, rgba(8,10,13,.91) 36%, rgba(8,10,13,.35) 70%, rgba(8,10,13,.1) 100%),
+        linear-gradient(0deg, rgba(8,10,13,.76), transparent 52%);
+    }
+
+    .header-content {
+      height: 100%;
+      padding: 12mm 14mm;
+      display: grid;
+      grid-template-columns: 1.12fr .88fr;
+      grid-template-rows: auto 1fr auto;
+      column-gap: 10mm;
+    }
+
+    .eyebrow {
+      grid-column: 1 / 2;
+      font-size: 15pt;
+      line-height: 1.2;
+      font-weight: 750;
+      letter-spacing: .12em;
+      color: #73c5ff;
+      text-transform: uppercase;
+    }
+
+    .brand {
+      align-self: center;
+      grid-column: 1 / 2;
+      max-width: 315mm;
+    }
+
+    h1 {
+      margin: 0 0 3mm;
+      font-size: 74pt;
+      line-height: .96;
+      letter-spacing: -.055em;
+      font-weight: 850;
+    }
+
+    .brand h2 {
+      margin: 0;
+      max-width: 300mm;
+      font-size: 31pt;
+      line-height: 1.22;
+      letter-spacing: -.025em;
+      font-weight: 700;
+    }
+
+    .brand h2 em {
+      color: #54b9ff;
+      font-style: normal;
+    }
+
+    .header-foot {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10mm;
+    }
+
+    .tagline {
+      margin: 0;
+      font-size: 19pt;
+      line-height: 1.35;
+      color: #dce3ec;
+      font-weight: 520;
+    }
+
+    .team-meta {
+      text-align: right;
+      font-size: 14.5pt;
+      line-height: 1.45;
+      color: #c5ced9;
+    }
+
+    .team-meta strong { color: white; }
+
+    .section-label {
+      display: flex;
+      align-items: center;
+      gap: 3mm;
+      margin: 0 0 4mm;
+      color: var(--ink);
+      font-size: 15pt;
+      line-height: 1;
+      font-weight: 850;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .section-label::before {
+      content: "";
+      width: 11mm;
+      height: 1.2mm;
+      border-radius: 999px;
+      background: var(--blue);
+    }
+
+    .intro-grid {
+      height: 92mm;
+      flex: 0 0 92mm;
+      display: grid;
+      grid-template-columns: 1fr 1.32fr 1fr;
+      gap: 7mm;
+    }
+
+    .story-card {
+      border: .55mm solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.94);
+      padding: 7mm 7.5mm;
+      overflow: hidden;
+    }
+
+    .story-card.problem { border-top: 2.2mm solid var(--coral); }
+    .story-card.solution { border-top: 2.2mm solid var(--blue); }
+    .story-card.people { border-top: 2.2mm solid var(--green); }
+
+    .story-card .kicker {
+      margin-bottom: 2.2mm;
+      font-size: 13.5pt;
+      line-height: 1;
+      font-weight: 850;
+      color: var(--muted);
+      letter-spacing: .08em;
+    }
+
+    .story-card h3 {
+      margin: 0 0 3mm;
+      font-size: 25pt;
+      line-height: 1.2;
+      letter-spacing: -.025em;
+    }
+
+    .story-card p {
+      margin: 0;
+      font-size: 18.5pt;
+      line-height: 1.47;
+      color: #303641;
+    }
+
+    .story-card ul {
+      margin: 2.5mm 0 0;
+      padding-left: 5mm;
+      font-size: 17.4pt;
+      line-height: 1.46;
+      color: #343b46;
+    }
+
+    .story-card li + li { margin-top: 1.2mm; }
+
+    .hero-grid {
+      height: 192mm;
+      flex: 0 0 192mm;
+      display: grid;
+      grid-template-columns: 2.12fr .88fr;
+      gap: 7mm;
+    }
+
+    .screen-card {
+      position: relative;
+      overflow: hidden;
+      border-radius: 6mm;
+      background: #1a1d22;
+      border: 1mm solid #1a1d22;
+    }
+
+    .screen-card img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: 50% 50%;
+      display: block;
+    }
+
+    .screen-caption {
+      position: absolute;
+      left: 7mm;
+      right: 7mm;
+      bottom: 6mm;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      gap: 4mm;
+      padding: 4mm 5mm;
+      border: .5mm solid rgba(255,255,255,.16);
+      border-radius: 4mm;
+      color: white;
+      background: rgba(10,12,15,.88);
+      backdrop-filter: blur(4px);
+    }
+
+    .screen-caption .number {
+      display: grid;
+      place-items: center;
+      width: 12mm;
+      height: 12mm;
+      border-radius: 50%;
+      background: var(--blue);
+      font-size: 17pt;
+      font-weight: 850;
+    }
+
+    .screen-caption strong {
+      display: block;
+      margin-bottom: 1mm;
+      font-size: 18pt;
+    }
+
+    .screen-caption span {
+      display: block;
+      font-size: 14.5pt;
+      line-height: 1.35;
+      color: #d6dee8;
+    }
+
+    .journey {
+      display: flex;
+      flex-direction: column;
+      gap: 4mm;
+      min-width: 0;
+    }
+
+    .journey-title {
+      margin: 0 0 1mm;
+      font-size: 28pt;
+      line-height: 1.14;
+      letter-spacing: -.03em;
+    }
+
+    .journey-sub {
+      margin: 0 0 2mm;
+      font-size: 15.5pt;
+      line-height: 1.38;
+      color: var(--muted);
+    }
+
+    .journey-step {
+      position: relative;
+      flex: 1;
+      display: grid;
+      grid-template-columns: 13mm 1fr;
+      align-items: start;
+      gap: 3.5mm;
+      padding: 5mm 5.5mm;
+      border: .55mm solid var(--line);
+      border-radius: 4.5mm;
+      background: var(--card);
+    }
+
+    .journey-step:not(:last-child)::after {
+      content: "↓";
+      position: absolute;
+      left: 9.3mm;
+      bottom: -5.6mm;
+      z-index: 2;
+      color: var(--blue);
+      font-size: 19pt;
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .step-index {
+      width: 13mm;
+      height: 13mm;
+      border-radius: 4mm;
+      display: grid;
+      place-items: center;
+      background: var(--blue-soft);
+      color: #0071bd;
+      font-size: 17pt;
+      font-weight: 900;
+    }
+
+    .journey-step h4 {
+      margin: .5mm 0 1mm;
+      font-size: 19pt;
+      line-height: 1.2;
+    }
+
+    .journey-step p {
+      margin: 0;
+      font-size: 14.4pt;
+      line-height: 1.38;
+      color: var(--muted);
+    }
+
+    .architecture {
+      height: 137mm;
+      flex: 0 0 137mm;
+      padding: 7mm 8mm 6mm;
+      border-radius: 6mm;
+      background: var(--dark);
+      color: white;
+      overflow: hidden;
+    }
+
+    .architecture .section-label { color: white; margin-bottom: 5mm; }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: 1fr 9mm 1fr 9mm 1.22fr 9mm 1.15fr 9mm 1.12fr 9mm 1fr;
+      align-items: stretch;
+      gap: 0;
+    }
+
+    .pipe-node {
+      min-height: 69mm;
+      padding: 5mm 4.5mm;
+      border: .55mm solid #38404b;
+      border-radius: 4mm;
+      background: #1d2229;
+    }
+
+    .pipe-node.highlight {
+      border-color: #137dc3;
+      background: #112d40;
+    }
+
+    .pipe-node.safe {
+      border-color: #2f7a51;
+      background: #163326;
+    }
+
+    .pipe-icon {
+      width: 11mm;
+      height: 11mm;
+      display: grid;
+      place-items: center;
+      margin-bottom: 3mm;
+      border-radius: 50%;
+      background: #2c333d;
+      color: #75c5ff;
+      font-size: 15pt;
+      font-weight: 850;
+    }
+
+    .pipe-node h4 {
+      margin: 0 0 2mm;
+      font-size: 17pt;
+      line-height: 1.2;
+    }
+
+    .pipe-node p {
+      margin: 0;
+      font-size: 12.8pt;
+      line-height: 1.42;
+      color: #b9c4d1;
+    }
+
+    .pipe-node.highlight p { color: #d5ebfa; }
+    .pipe-node.safe p { color: #d2eddd; }
+
+    .pipe-arrow {
+      display: grid;
+      place-items: center;
+      color: #53baff;
+      font-size: 23pt;
+      font-weight: 900;
+    }
+
+    .boundary-row {
+      margin-top: 5mm;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5mm;
+    }
+
+    .boundary {
+      display: flex;
+      align-items: center;
+      gap: 3mm;
+      min-height: 28mm;
+      padding: 3.5mm 4.5mm;
+      border: .45mm solid #343c46;
+      border-radius: 3.5mm;
+      background: #171b20;
+      font-size: 13.5pt;
+      line-height: 1.38;
+      color: #c7d0da;
+    }
+
+    .boundary b { color: white; }
+
+    .boundary-mark {
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      width: 10mm;
+      height: 10mm;
+      border-radius: 50%;
+      background: var(--blue);
+      color: white;
+      font-size: 14pt;
+      font-weight: 900;
+    }
+
+    .boundary.safe .boundary-mark { background: #168a4d; }
+
+    .evidence-grid {
+      height: 145mm;
+      flex: 0 0 145mm;
+      display: grid;
+      grid-template-columns: 1.34fr 1fr;
+      gap: 7mm;
+    }
+
+    .proofs, .principles {
+      border: .55mm solid var(--line);
+      border-radius: 5mm;
+      background: rgba(255,255,255,.96);
+      padding: 7mm;
+      overflow: hidden;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5mm;
+    }
+
+    .metric {
+      min-height: 47mm;
+      padding: 5mm;
+      border-radius: 4mm;
+      background: #f0f4f8;
+      border: .45mm solid #e0e6ed;
+    }
+
+    .metric strong {
+      display: block;
+      margin-bottom: 1.5mm;
+      font-size: 33pt;
+      line-height: 1;
+      letter-spacing: -.035em;
+      color: #007bcf;
+    }
+
+    .metric span {
+      display: block;
+      font-size: 14.6pt;
+      line-height: 1.35;
+      color: #3f4854;
+    }
+
+    .proof-note {
+      margin: 4.5mm 0 0;
+      padding-top: 4mm;
+      border-top: .45mm solid var(--line);
+      font-size: 14pt;
+      line-height: 1.42;
+      color: var(--muted);
+    }
+
+    .principle-list {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 3.2mm;
+    }
+
+    .principle {
+      display: grid;
+      grid-template-columns: 9mm 1fr;
+      gap: 3.5mm;
+      align-items: start;
+      padding: 3.5mm 4mm;
+      border-radius: 3.5mm;
+      background: #f7f9fb;
+      border: .4mm solid #e2e7ed;
+    }
+
+    .principle .check {
+      display: grid;
+      place-items: center;
+      width: 8mm;
+      height: 8mm;
+      border-radius: 50%;
+      background: var(--green-soft);
+      color: var(--green);
+      font-size: 12pt;
+      font-weight: 900;
+    }
+
+    .principle strong {
+      display: block;
+      margin-bottom: .6mm;
+      font-size: 15.8pt;
+      line-height: 1.2;
+    }
+
+    .principle span {
+      display: block;
+      font-size: 13.2pt;
+      line-height: 1.35;
+      color: var(--muted);
+    }
+
+    .footer {
+      min-height: 48mm;
+      flex: 1 1 auto;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 8mm;
+      padding: 5mm 6mm;
+      border-top: .7mm solid var(--line-strong);
+    }
+
+    .footer-copy h3 {
+      margin: 0 0 2mm;
+      font-size: 19pt;
+      line-height: 1.2;
+    }
+
+    .stack {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2mm;
+    }
+
+    .chip {
+      padding: 1.5mm 2.8mm;
+      border-radius: 999px;
+      background: #e9edf2;
+      color: #35404d;
+      font-size: 11.8pt;
+      font-weight: 750;
+      line-height: 1;
+    }
+
+    .footer-note {
+      margin: 2.4mm 0 0;
+      font-size: 11.8pt;
+      color: #707887;
+    }
+
+    .qr-wrap {
+      display: flex;
+      align-items: center;
+      gap: 4mm;
+    }
+
+    .qr-copy {
+      text-align: right;
+      font-size: 11.8pt;
+      line-height: 1.35;
+      color: var(--muted);
+    }
+
+    .qr-copy strong {
+      display: block;
+      color: var(--ink);
+      font-size: 14pt;
+    }
+
+    .qr-placeholder {
+      width: 31mm;
+      height: 31mm;
+      padding: 3mm;
+      display: grid;
+      place-items: center;
+      border: 1mm solid var(--ink);
+      background:
+        linear-gradient(90deg, var(--ink) 23%, transparent 23% 38%, var(--ink) 38% 52%, transparent 52% 68%, var(--ink) 68%),
+        linear-gradient(var(--ink) 21%, transparent 21% 36%, var(--ink) 36% 53%, transparent 53% 70%, var(--ink) 70%);
+      background-size: 8mm 8mm;
+      background-color: white;
+      color: white;
+      font-size: 10pt;
+      font-weight: 900;
+      text-shadow: 0 1px 2px black;
+    }
+  </style>
+</head>
+<body>
+  <main class="poster">
+    <header class="header">
+      <div class="header-content">
+        <div class="eyebrow">Capstone Design · AI-native market workspace</div>
+        <div class="brand">
+          <h1>GOPS</h1>
+          <h2>시장 데이터가 <em>근거</em>가 되고,<br />근거가 <em>화면과 행동</em>을 바꾼다.</h2>
+        </div>
+        <div class="header-foot">
+          <p class="tagline">종목을 찾는 사람에게 기준을,<br />시장을 읽는 사람에게 방향을.</p>
+          <div class="team-meta"><strong>TEAM GOPS</strong><br />[팀원명 입력] · 2026 CAPSTONE</div>
+        </div>
+      </div>
+    </header>
+
+    <section class="intro-grid" aria-label="Problem, solution, stakeholders">
+      <article class="story-card problem">
+        <div class="kicker">01 · PROBLEM</div>
+        <h3>정보는 흩어지고,<br />판단 시점은 짧습니다.</h3>
+        <ul>
+          <li>차트·뉴스·재무·기업 관계가 서로 다른 화면에 분절</li>
+          <li>AI 답변과 실제 숫자 근거가 어긋날 위험</li>
+          <li>분석에서 주문까지 사용자 통제 경계가 불명확</li>
+        </ul>
+      </article>
+
+      <article class="story-card solution">
+        <div class="kicker">02 · OUR ANSWER</div>
+        <h3>근거 → 해석 → 행동을<br />하나의 워크스페이스로.</h3>
+        <p>GOPS는 실시간 시장 데이터를 시점이 고정된 evidence snapshot으로 만들고, 질문 의도에 맞는 역할 에이전트가 분석합니다. 결과는 차트 작도·패널 구성·조건 제안으로 연결되지만, 실행 권한은 언제나 사용자와 주문 런타임에 남습니다.</p>
+      </article>
+
+      <article class="story-card people">
+        <div class="kicker">03 · FOR WHOM</div>
+        <h3>초보에게는 맥락을,<br />숙련자에게는 검증 가능성을.</h3>
+        <ul>
+          <li><b>개인 투자자</b> — 시장 탐색과 판단 근거를 한 흐름으로</li>
+          <li><b>숙련 사용자</b> — 원천 시점·품질·실패 상태까지 확인</li>
+          <li><b>운영자</b> — 재현 가능한 replay와 감사 가능한 계약</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="hero-grid" aria-label="Product interface and user journey">
+      <figure class="screen-card" style="margin:0">
+        <img src="assets/gops-workspace-chart-analysis.png" alt="GOPS chart analysis workspace" />
+        <figcaption class="screen-caption">
+          <div class="number">A</div>
+          <div>
+            <strong>실제 GOPS 워크스페이스</strong>
+            <span>저장된 차트 Geometry가 패턴·지지/저항·진입/목표/손절 시나리오와 동일한 근거 ID로 연결됩니다.</span>
+          </div>
+        </figcaption>
+      </figure>
+
+      <div class="journey">
+        <h3 class="journey-title">한 질문이<br />화면이 되기까지</h3>
+        <p class="journey-sub">일반 사용자는 4단계만 보면 되고, 각 단계의 계약은 아래 아키텍처에서 추적할 수 있습니다.</p>
+
+        <article class="journey-step">
+          <div class="step-index">1</div>
+          <div><h4>SEE · 탐색</h4><p>S&amp;P 500 히트맵, 실시간 차트, Bid/Ask·Order Flow로 시장 상태를 봅니다.</p></div>
+        </article>
+        <article class="journey-step">
+          <div class="step-index">2</div>
+          <div><h4>ASK · 질문</h4><p>“이 상승은 무엇이 지지해?”처럼 자연어로 맥락을 요청합니다.</p></div>
+        </article>
+        <article class="journey-step">
+          <div class="step-index">3</div>
+          <div><h4>UNDERSTAND · 해석</h4><p>차트·뉴스·기업 관계·재무·리스크 근거를 역할별로 수집하고 종합합니다.</p></div>
+        </article>
+        <article class="journey-step">
+          <div class="step-index">4</div>
+          <div><h4>ACT · 확인 후 행동</h4><p>패널과 차트 제안을 검토한 뒤 paper/KIS 모의 주문은 별도 확인을 거칩니다.</p></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="architecture" aria-label="System architecture">
+      <h3 class="section-label">How it works · evidence-first architecture</h3>
+      <div class="pipeline">
+        <article class="pipe-node">
+          <div class="pipe-icon">01</div>
+          <h4>Market Sources</h4>
+          <p>Alpaca 실시간/과거 시세<br />SEC·Yahoo 기업 근거<br />KIS demo 주문</p>
+        </article>
+        <div class="pipe-arrow">→</div>
+        <article class="pipe-node">
+          <div class="pipe-icon">02</div>
+          <h4>Event Stream</h4>
+          <p>Kafka key=symbol 순서<br />feed/session guard<br />at-least-once ingest</p>
+        </article>
+        <div class="pipe-arrow">→</div>
+        <article class="pipe-node">
+          <div class="pipe-icon">03</div>
+          <h4>Serving &amp; Storage</h4>
+          <p>Redis: live/cache<br />ClickHouse: time series<br />S3: replay/evidence<br />Postgres·GraphDB</p>
+        </article>
+        <div class="pipe-arrow">→</div>
+        <article class="pipe-node highlight">
+          <div class="pipe-icon">04</div>
+          <h4>Evidence Snapshot</h4>
+          <p>cutoff · freshness · provenance<br />no-data를 숨기지 않는<br />불변 분석 입력</p>
+        </article>
+        <div class="pipe-arrow">→</div>
+        <article class="pipe-node highlight">
+          <div class="pipe-icon">05</div>
+          <h4>Role Agents</h4>
+          <p>Chart · News · Relation<br />Financial · Risk<br />의도에 따라 bounded fan-out</p>
+        </article>
+        <div class="pipe-arrow">→</div>
+        <article class="pipe-node safe">
+          <div class="pipe-icon">06</div>
+          <h4>Human Control</h4>
+          <p>React workspace 제안<br />조건·주문은 명시적 확인<br />Agent는 broker를 호출하지 않음</p>
+        </article>
+      </div>
+
+      <div class="boundary-row">
+        <div class="boundary">
+          <div class="boundary-mark">D</div>
+          <div><b>Deterministic kernel</b> — 지표·추천 점수·리스크 gate·AI 코치 성과 계산은 코드가 소유하고, LLM은 제한된 의도 해석과 서술을 담당합니다.</div>
+        </div>
+        <div class="boundary safe">
+          <div class="boundary-mark">S</div>
+          <div><b>Safety boundary</b> — provider 실패는 no-data 근거로 낮춰 계속 분석하고, 주문은 Idempotency-Key와 별도 execution runtime으로 중복·권한을 통제합니다.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="evidence-grid" aria-label="Build evidence and engineering principles">
+      <article class="proofs">
+        <h3 class="section-label">Built &amp; verified · 구현 근거</h3>
+        <div class="metric-grid">
+          <div class="metric"><strong>93.3M</strong><span>고정 시점 시장 replay 이벤트<br />40.3M trades + 53.0M quotes</span></div>
+          <div class="metric"><strong>502</strong><span>재생 기준가를 고정해 검증하는<br />미국 주식 심볼 데이터셋</span></div>
+          <div class="metric"><strong>158</strong><span>frontend·agent·data·order·simulator<br />전 영역 자동화 테스트 파일</span></div>
+          <div class="metric"><strong>LIVE↔SIM</strong><span>같은 UI에서 실시간과 불변 replay를<br />분리하고 미래 데이터 혼입을 차단</span></div>
+        </div>
+        <p class="proof-note">구현 범위는 React 19 차트 워크스페이스, FastAPI REST/WebSocket, Kafka 스트림 처리, Redis/ClickHouse/S3 저장, 역할 기반 Agent, paper/KIS demo 주문, Docker Compose와 AWS/EKS 배포 계약까지 이어집니다.</p>
+      </article>
+
+      <article class="principles">
+        <h3 class="section-label">What makes it trustworthy</h3>
+        <div class="principle-list">
+          <div class="principle"><div class="check">✓</div><div><strong>Point-in-time first</strong><span>분석·추천·코치 입력은 관측 시점과 cutoff를 보존해 미래 정보 누출을 막습니다.</span></div></div>
+          <div class="principle"><div class="check">✓</div><div><strong>Evidence before eloquence</strong><span>출처·신선도·품질이 있는 snapshot만 종합하고, 없는 데이터는 추정해 채우지 않습니다.</span></div></div>
+          <div class="principle"><div class="check">✓</div><div><strong>Idempotent by contract</strong><span>Kafka sink와 주문 흐름은 재시도·중복 전달에도 같은 결과를 유지하도록 설계했습니다.</span></div></div>
+          <div class="principle"><div class="check">✓</div><div><strong>Human-in-the-loop</strong><span>Agent는 분석과 제안만 수행합니다. 주문·계좌 제어는 사용자 확인과 별도 권한 경계를 거칩니다.</span></div></div>
+          <div class="principle"><div class="check">✓</div><div><strong>No fake market data</strong><span>로컬 런타임도 임의 캔들을 만들지 않고, 데이터 공백과 복구 상태를 그대로 노출합니다.</span></div></div>
+        </div>
+      </article>
+    </section>
+
+    <footer class="footer">
+      <div class="footer-copy">
+        <h3>From market event to explainable action</h3>
+        <div class="stack">
+          <span class="chip">React 19</span><span class="chip">TypeScript</span><span class="chip">FastAPI</span><span class="chip">Python 3.12</span><span class="chip">Kafka</span><span class="chip">Redis</span><span class="chip">ClickHouse</span><span class="chip">Postgres</span><span class="chip">S3</span><span class="chip">GraphDB</span><span class="chip">Docker</span><span class="chip">Kubernetes / AWS</span>
+        </div>
+        <p class="footer-note">※ 교육·연구용 캡스톤 프로젝트 소개 시안입니다. 실주문은 v1에서 비활성화되어 있으며 투자 권유를 목적으로 하지 않습니다.</p>
+      </div>
+      <div class="qr-wrap">
+        <div class="qr-copy"><strong>DEMO &amp; CODE</strong>발표용 링크로 교체<br />[contact@example.com]</div>
+        <div class="qr-placeholder">QR</div>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,905 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GOPS Capstone Poster — Executive A1</title>
+  <style>
+    @page { size: A1 portrait; margin: 0; }
+
+    :root {
+      --paper: #f4f6f9;
+      --card: #ffffff;
+      --ink: #111317;
+      --muted: #5c6572;
+      --dark: #101318;
+      --dark-2: #1b2027;
+      --line: #d9e0e8;
+      --blue: #0099ff;
+      --blue-2: #52baff;
+      --blue-soft: #e7f5ff;
+      --green: #13834a;
+      --green-soft: #e8f7ef;
+      --coral: #d84862;
+      --radius: 5mm;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      width: 594mm;
+      min-width: 594mm;
+      height: 841mm;
+      min-height: 841mm;
+      overflow: hidden;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      word-break: keep-all;
+    }
+
+    .poster {
+      width: 594mm;
+      height: 841mm;
+      padding: 15mm 18mm 13mm;
+      display: flex;
+      flex-direction: column;
+      gap: 7mm;
+      background:
+        linear-gradient(rgba(17,19,23,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(17,19,23,.025) 1px, transparent 1px),
+        var(--paper);
+      background-size: 12mm 12mm;
+    }
+
+    .header {
+      position: relative;
+      height: 115mm;
+      flex: 0 0 115mm;
+      overflow: hidden;
+      border-radius: 7mm;
+      color: white;
+      background: var(--dark);
+      isolation: isolate;
+    }
+
+    .header::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      background: url("assets/gops-data-evidence-flow.png") center 52% / cover no-repeat;
+      opacity: .7;
+    }
+
+    .header::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      background:
+        linear-gradient(90deg, rgba(7,9,12,.99) 0%, rgba(7,9,12,.95) 49%, rgba(7,9,12,.28) 83%, rgba(7,9,12,.15) 100%),
+        linear-gradient(0deg, rgba(7,9,12,.45), transparent 60%);
+    }
+
+    .header-inner {
+      height: 100%;
+      padding: 9mm 13mm 8mm;
+      display: grid;
+      grid-template-columns: 1.4fr .6fr;
+      grid-template-rows: auto 1fr auto;
+      column-gap: 12mm;
+    }
+
+    .eyebrow {
+      font-size: 13.5pt;
+      line-height: 1;
+      font-weight: 850;
+      letter-spacing: .12em;
+      color: #68c1ff;
+      text-transform: uppercase;
+    }
+
+    .headline {
+      align-self: center;
+      grid-column: 1 / 2;
+    }
+
+    .headline h1 {
+      margin: 0 0 1.5mm;
+      font-size: 64pt;
+      line-height: .95;
+      letter-spacing: -.055em;
+      font-weight: 900;
+    }
+
+    .headline h2 {
+      margin: 0;
+      font-size: 28pt;
+      line-height: 1.18;
+      letter-spacing: -.03em;
+      font-weight: 760;
+    }
+
+    .headline em { color: var(--blue-2); font-style: normal; }
+
+    .header-bottom {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10mm;
+    }
+
+    .header-bottom p {
+      margin: 0;
+      max-width: 390mm;
+      font-size: 16pt;
+      line-height: 1.35;
+      color: #d7e0ea;
+    }
+
+    .team {
+      text-align: right;
+      font-size: 12.5pt;
+      line-height: 1.35;
+      color: #bec9d5;
+    }
+
+    .team strong { color: white; }
+
+    .principle-strip {
+      position: absolute;
+      right: 12mm;
+      top: 10mm;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 2.2mm;
+    }
+
+    .principle-chip {
+      padding: 2mm 3.2mm;
+      border: .4mm solid rgba(255,255,255,.15);
+      border-radius: 999px;
+      background: rgba(17,20,25,.72);
+      color: #dfe8f2;
+      font-size: 10.8pt;
+      font-weight: 750;
+      letter-spacing: .025em;
+    }
+
+    .hero {
+      height: 250mm;
+      flex: 0 0 250mm;
+      display: grid;
+      grid-template-columns: 1.34fr .66fr;
+      gap: 7mm;
+    }
+
+    .loop-panel {
+      position: relative;
+      overflow: hidden;
+      border-radius: 7mm;
+      background: var(--dark);
+      color: white;
+    }
+
+    .loop-panel > img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      opacity: .94;
+    }
+
+    .loop-panel::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(circle at center, transparent 0 29%, rgba(7,9,12,.05) 41%, rgba(7,9,12,.26) 100%);
+    }
+
+    .loop-title {
+      position: absolute;
+      z-index: 3;
+      left: 50%;
+      top: 50%;
+      width: 145mm;
+      transform: translate(-50%, -50%);
+      text-align: center;
+    }
+
+    .loop-title small {
+      display: block;
+      margin-bottom: 2mm;
+      color: #71c6ff;
+      font-size: 11.5pt;
+      font-weight: 850;
+      letter-spacing: .12em;
+    }
+
+    .loop-title strong {
+      display: block;
+      font-size: 28pt;
+      line-height: 1.06;
+      letter-spacing: -.04em;
+    }
+
+    .loop-title span {
+      display: block;
+      margin-top: 3mm;
+      font-size: 13.5pt;
+      line-height: 1.35;
+      color: #bdc9d6;
+    }
+
+    .loop-label {
+      position: absolute;
+      z-index: 4;
+      min-width: 67mm;
+      padding: 2.3mm 3.3mm;
+      border: .4mm solid rgba(255,255,255,.16);
+      border-radius: 3mm;
+      background: rgba(9,12,16,.88);
+      color: white;
+      font-size: 10.5pt;
+      line-height: 1.18;
+      font-weight: 800;
+      backdrop-filter: blur(3px);
+    }
+
+    .loop-label b {
+      display: inline-block;
+      margin-right: 1.5mm;
+      color: #64c1ff;
+    }
+
+    .loop-label span {
+      display: block;
+      margin: 1mm 0 0 6mm;
+      color: #b8c4d0;
+      font-size: 8.7pt;
+      font-weight: 550;
+    }
+
+    .l1 { top: 4mm; left: 50%; transform: translateX(-50%); }
+    .l2 { top: 35mm; right: 47mm; }
+    .l3 { top: 104mm; right: 43mm; }
+    .l4 { bottom: 26mm; right: 60mm; }
+    .l5 { bottom: 12mm; left: 89mm; }
+    .l6 { top: 143mm; left: 47mm; }
+    .l7 { top: 52mm; left: 46mm; }
+
+    .product-story {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      gap: 4mm;
+    }
+
+    .product-intro {
+      flex: 0 0 auto;
+    }
+
+    .section-kicker {
+      margin: 0 0 2mm;
+      color: #007ccf;
+      font-size: 11.5pt;
+      font-weight: 900;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .product-intro h3 {
+      margin: 0 0 2mm;
+      font-size: 28pt;
+      line-height: 1.12;
+      letter-spacing: -.035em;
+    }
+
+    .product-intro p {
+      margin: 0;
+      font-size: 14pt;
+      line-height: 1.38;
+      color: var(--muted);
+    }
+
+    .ui-card {
+      position: relative;
+      flex: 1 1 0;
+      min-height: 0;
+      overflow: hidden;
+      border: .6mm solid #242931;
+      border-radius: 5mm;
+      background: #1d2127;
+    }
+
+    .ui-card img {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+    }
+
+    .ui-card.formula img { object-position: center 42%; }
+    .ui-card.chart img { object-position: 68% 47%; }
+
+    .ui-caption {
+      position: absolute;
+      left: 4mm;
+      right: 4mm;
+      bottom: 4mm;
+      padding: 3mm 3.5mm;
+      border-radius: 3mm;
+      background: rgba(7,9,12,.91);
+      color: white;
+      font-size: 11.5pt;
+      line-height: 1.32;
+    }
+
+    .ui-caption b { color: #57bcff; margin-right: 1.5mm; }
+
+    .coach-card {
+      flex: 0 0 39mm;
+      display: grid;
+      grid-template-columns: 12mm 1fr;
+      gap: 4mm;
+      align-items: center;
+      padding: 4mm 5mm;
+      border: .55mm solid var(--line);
+      border-radius: 4mm;
+      background: white;
+    }
+
+    .coach-icon {
+      width: 12mm;
+      height: 12mm;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--blue-soft);
+      color: #007dcc;
+      font-size: 15pt;
+      font-weight: 900;
+    }
+
+    .coach-card strong {
+      display: block;
+      margin-bottom: 1mm;
+      font-size: 14.5pt;
+    }
+
+    .coach-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 11.5pt;
+      line-height: 1.34;
+    }
+
+    .value-section {
+      height: 122mm;
+      flex: 0 0 122mm;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 3mm;
+      margin: 0 0 4mm;
+      font-size: 16pt;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    .section-title::before {
+      content: "";
+      width: 10mm;
+      height: 1.2mm;
+      border-radius: 999px;
+      background: var(--blue);
+    }
+
+    .value-grid {
+      height: 103mm;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 5mm;
+    }
+
+    .value-card {
+      position: relative;
+      overflow: hidden;
+      padding: 6mm;
+      border: .55mm solid var(--line);
+      border-radius: 5mm;
+      background: rgba(255,255,255,.96);
+    }
+
+    .value-card::before {
+      content: attr(data-no);
+      position: absolute;
+      right: 5mm;
+      top: 4mm;
+      color: #deebf5;
+      font-size: 34pt;
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .value-icon {
+      width: 12mm;
+      height: 12mm;
+      display: grid;
+      place-items: center;
+      margin-bottom: 4mm;
+      border-radius: 4mm;
+      background: var(--blue-soft);
+      color: #007dcc;
+      font-size: 15pt;
+      font-weight: 900;
+    }
+
+    .value-card h4 {
+      position: relative;
+      margin: 0 0 2.5mm;
+      font-size: 19pt;
+      line-height: 1.18;
+      letter-spacing: -.025em;
+    }
+
+    .value-card .eng {
+      display: block;
+      margin-bottom: 2.5mm;
+      color: #007bc9;
+      font-size: 10.5pt;
+      font-weight: 850;
+      letter-spacing: .05em;
+    }
+
+    .value-card p {
+      margin: 0;
+      color: #46505d;
+      font-size: 13pt;
+      line-height: 1.43;
+    }
+
+    .architecture {
+      height: 112mm;
+      flex: 0 0 112mm;
+      overflow: hidden;
+      padding: 6mm 7mm;
+      border-radius: 6mm;
+      background: var(--dark);
+      color: white;
+    }
+
+    .architecture .section-title { margin-bottom: 4mm; color: white; }
+
+    .plane-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 4mm;
+    }
+
+    .plane {
+      min-height: 53mm;
+      padding: 4.5mm;
+      border: .45mm solid #37404b;
+      border-radius: 4mm;
+      background: #1c2128;
+    }
+
+    .plane.blue { border-color: #0c78bc; background: #102d40; }
+    .plane.green { border-color: #2d754e; background: #153226; }
+
+    .plane small {
+      display: block;
+      margin-bottom: 2mm;
+      color: #68c1ff;
+      font-size: 9.8pt;
+      font-weight: 900;
+      letter-spacing: .1em;
+    }
+
+    .plane h4 {
+      margin: 0 0 2mm;
+      font-size: 16pt;
+      line-height: 1.15;
+    }
+
+    .plane p {
+      margin: 0;
+      color: #bac5d1;
+      font-size: 10.8pt;
+      line-height: 1.38;
+    }
+
+    .llm-boundary {
+      margin-top: 4mm;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 4mm;
+      min-height: 31mm;
+      padding: 3.5mm 4.5mm;
+      border: .45mm solid #37404a;
+      border-radius: 3.5mm;
+      background: #171b20;
+    }
+
+    .boundary-mark {
+      width: 10mm;
+      height: 10mm;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: white;
+      background: var(--blue);
+      font-size: 13pt;
+      font-weight: 900;
+    }
+
+    .llm-boundary strong {
+      display: block;
+      margin-bottom: 1mm;
+      font-size: 14.2pt;
+    }
+
+    .llm-boundary span {
+      display: block;
+      color: #bdc7d2;
+      font-size: 11pt;
+      line-height: 1.3;
+    }
+
+    .boundary-tag {
+      padding: 2mm 3mm;
+      border-radius: 999px;
+      background: #23303a;
+      color: #73c6ff;
+      font-size: 9.5pt;
+      font-weight: 850;
+    }
+
+    .proof {
+      height: 112mm;
+      flex: 0 0 112mm;
+      display: grid;
+      grid-template-columns: 2.1fr .9fr;
+      gap: 6mm;
+    }
+
+    .metrics-panel, .ask-panel {
+      padding: 6mm;
+      border: .55mm solid var(--line);
+      border-radius: 5mm;
+      background: rgba(255,255,255,.96);
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4mm;
+    }
+
+    .metric {
+      min-height: 76mm;
+      padding: 5mm;
+      border-radius: 4mm;
+      background: #eef3f8;
+      border: .4mm solid #e0e6ed;
+    }
+
+    .metric strong {
+      display: block;
+      margin-bottom: 2mm;
+      color: #0081d7;
+      font-size: 38pt;
+      line-height: .95;
+      letter-spacing: -.045em;
+    }
+
+    .metric h4 {
+      margin: 0 0 2mm;
+      font-size: 14pt;
+      line-height: 1.2;
+    }
+
+    .metric p {
+      margin: 0;
+      color: #4d5764;
+      font-size: 11.2pt;
+      line-height: 1.38;
+    }
+
+    .metric .fine {
+      display: block;
+      margin-top: 3mm;
+      padding-top: 2.5mm;
+      border-top: .35mm solid #d8dfe7;
+      color: #717a86;
+      font-size: 8.8pt;
+      line-height: 1.3;
+    }
+
+    .ask-panel {
+      background: #0f79bd;
+      color: white;
+      border-color: #0f79bd;
+    }
+
+    .ask-panel .section-title { color: white; }
+    .ask-panel .section-title::before { background: white; }
+
+    .ask-panel ol {
+      margin: 0;
+      padding-left: 6mm;
+      font-size: 12.5pt;
+      line-height: 1.43;
+    }
+
+    .ask-panel li + li { margin-top: 3mm; }
+    .ask-panel b { color: #dff3ff; }
+
+    .footer {
+      flex: 1 1 auto;
+      min-height: 48mm;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 8mm;
+      padding: 4mm 5mm;
+      border-top: .7mm solid #bdc7d3;
+    }
+
+    .footer h3 {
+      margin: 0 0 1.5mm;
+      font-size: 18pt;
+      line-height: 1.15;
+    }
+
+    .footer h3 em { color: #0086df; font-style: normal; }
+
+    .footer p {
+      margin: 0 0 2mm;
+      color: var(--muted);
+      font-size: 10.5pt;
+      line-height: 1.35;
+    }
+
+    .stack {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.6mm;
+    }
+
+    .stack span {
+      padding: 1.25mm 2.2mm;
+      border-radius: 999px;
+      background: #e4e9ef;
+      color: #44505c;
+      font-size: 9pt;
+      line-height: 1;
+      font-weight: 750;
+    }
+
+    .qr-wrap {
+      display: flex;
+      align-items: center;
+      gap: 3mm;
+    }
+
+    .qr-copy {
+      text-align: right;
+      color: var(--muted);
+      font-size: 9.5pt;
+      line-height: 1.3;
+    }
+
+    .qr-copy strong {
+      display: block;
+      color: var(--ink);
+      font-size: 12pt;
+    }
+
+    .qr {
+      width: 29mm;
+      height: 29mm;
+      display: grid;
+      place-items: center;
+      border: 1mm solid var(--ink);
+      background:
+        linear-gradient(90deg, var(--ink) 23%, transparent 23% 38%, var(--ink) 38% 52%, transparent 52% 68%, var(--ink) 68%),
+        linear-gradient(var(--ink) 21%, transparent 21% 36%, var(--ink) 36% 53%, transparent 53% 70%, var(--ink) 70%);
+      background-size: 8mm 8mm;
+      background-color: white;
+      color: white;
+      font-size: 9pt;
+      font-weight: 900;
+      text-shadow: 0 1px 2px black;
+    }
+  </style>
+</head>
+<body>
+  <main class="poster">
+    <header class="header">
+      <div class="header-inner">
+        <div class="eyebrow">Personalized AI Stock Trading Workspace · Capstone 2026</div>
+        <div class="headline">
+          <h1>GOPS</h1>
+          <h2>개인의 투자 기준을<br /><em>탐색·분석·실행·회고</em>까지 연결하는<br />AI 투자 운영체제</h2>
+        </div>
+        <div class="header-bottom">
+          <p>흩어진 차트·뉴스·기업·포트폴리오 데이터를 하나의 판단 흐름으로 연결하고, 사용자가 직접 정의한 기준에 따라 필요한 화면과 행동을 제안합니다.</p>
+          <div class="team"><strong>TEAM GOPS</strong><br />[팀원명 입력] · CAPSTONE PRODUCT PROTOTYPE</div>
+        </div>
+      </div>
+      <div class="principle-strip">
+        <div class="principle-chip">USER-DEFINED CRITERIA</div>
+        <div class="principle-chip">TRACEABLE EVIDENCE</div>
+        <div class="principle-chip">HUMAN-CONTROLLED EXECUTION</div>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="loop-panel">
+        <img src="assets/gops-investment-decision-loop.png" alt="Circular personalized investment decision loop" />
+        <div class="loop-title">
+          <small>ONE CONTINUOUS DECISION LOOP</small>
+          <strong>사용자의 기준이<br />다음 거래로 이어집니다.</strong>
+          <span>시장 탐색에서 거래 후 회고까지,<br />각 판단의 근거와 맥락을 잃지 않습니다.</span>
+        </div>
+        <div class="loop-label l1"><b>01</b> MARKET VIEW<span>시장 전체의 자금 흐름</span></div>
+        <div class="loop-label l2"><b>02</b> PERSONALIZED DISCOVERY<span>내 기준으로 종목 발굴</span></div>
+        <div class="loop-label l3"><b>03</b> EVIDENCE REVIEW<span>기업·뉴스·재무·관계 검증</span></div>
+        <div class="loop-label l4"><b>04</b> ENTRY TIMING<span>추세·패턴·지지·저항</span></div>
+        <div class="loop-label l5"><b>05</b> CONTROLLED EXECUTION<span>리스크 검사와 사용자 확인</span></div>
+        <div class="loop-label l6"><b>06</b> POST-TRADE COACH<span>결과보다 판단 과정 복기</span></div>
+        <div class="loop-label l7"><b>07</b> ALERT &amp; RETURN<span>다음 기준과 행동으로 연결</span></div>
+      </div>
+
+      <div class="product-story">
+        <div class="product-intro">
+          <div class="section-kicker">Not a chatbot · An adaptive workspace</div>
+          <h3>AI가 답하는 것을 넘어,<br />필요한 화면을 움직입니다.</h3>
+          <p>질문과 선택 종목, 투자 기준, 포트폴리오 맥락이 분석 화면과 다음 행동으로 이어집니다.</p>
+        </div>
+
+        <figure class="ui-card formula" style="margin:0">
+          <img src="assets/gops-recommendation-settings.png" alt="GOPS personalized recommendation settings" />
+          <figcaption class="ui-caption"><b>01</b> 사용자가 중요하게 보는 근거와 가중치를 편집하고, AI가 자연어 기준을 수식 초안으로 제안합니다.</figcaption>
+        </figure>
+
+        <figure class="ui-card chart" style="margin:0">
+          <img src="assets/gops-workspace-chart-analysis.png" alt="GOPS evidence-linked chart analysis" />
+          <figcaption class="ui-caption"><b>02</b> 분석 문장을 선택하면 판단에 사용한 가격·봉·지지·저항·패턴이 동일 화면에서 강조됩니다.</figcaption>
+        </figure>
+
+        <div class="coach-card">
+          <div class="coach-icon">↻</div>
+          <div><strong>03 · 장 마감 후 AI 투자 코치</strong><span>확인한 근거, 놓친 조건, 유사한 과거 거래와 반복 습관을 다음 기준과 알림으로 연결합니다.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="value-section">
+      <h3 class="section-title">Why GOPS · 무엇이 다른가</h3>
+      <div class="value-grid">
+        <article class="value-card" data-no="01">
+          <div class="value-icon">⌁</div>
+          <span class="eng">TRANSPARENT PERSONALIZATION</span>
+          <h4>개인화가<br />투명합니다.</h4>
+          <p>추천 결과만 받지 않습니다. 거래대금·추세·리스크 등 판단 기준과 실제 적용 가중치를 사용자가 확인하고 수정합니다.</p>
+        </article>
+        <article class="value-card" data-no="02">
+          <div class="value-icon">◎</div>
+          <span class="eng">INTERACTIVE PROVENANCE</span>
+          <h4>근거가 원본 화면으로<br />돌아갑니다.</h4>
+          <p>기업분석 문장과 차트 해석은 원본 지표·시점·가격·봉·작도 ID에 연결되어 판단 과정을 화면에서 검증할 수 있습니다.</p>
+        </article>
+        <article class="value-card" data-no="03">
+          <div class="value-icon">✓</div>
+          <span class="eng">HUMAN IN THE LOOP</span>
+          <h4>실행 권한은<br />사용자에게 남습니다.</h4>
+          <p>Agent는 분석과 조건을 제안합니다. 주문은 리스크 검사, 사용자 확인, 멱등성 계약을 거친 별도 런타임이 처리합니다.</p>
+        </article>
+        <article class="value-card" data-no="04">
+          <div class="value-icon">↻</div>
+          <span class="eng">CLOSED-LOOP COACHING</span>
+          <h4>거래가 다음 판단의<br />기준이 됩니다.</h4>
+          <p>수익만 평가하지 않고 판단 당시의 근거와 습관을 복기해 유지할 기준, 재확인할 조건과 알림을 제안합니다.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="architecture">
+      <h3 class="section-title">Evidence-first system · 제품 경험을 지탱하는 4개의 Plane</h3>
+      <div class="plane-grid">
+        <article class="plane">
+          <small>01 · DATA PLANE</small>
+          <h4>실시간 시장과 기업 근거</h4>
+          <p>Alpaca · SEC · Yahoo · KIS<br />Kafka · Redis · ClickHouse · S3<br />Postgres · GraphDB</p>
+        </article>
+        <article class="plane blue">
+          <small>02 · DECISION PLANE</small>
+          <h4>시점이 고정된 판단 입력</h4>
+          <p>Evidence Snapshot · provenance<br />결정론적 추천 점수 · 차트 Geometry<br />리스크 Rule · point-in-time cutoff</p>
+        </article>
+        <article class="plane blue">
+          <small>03 · AGENT PLANE</small>
+          <h4>의도에 맞는 분석과 화면</h4>
+          <p>Chart · News · Relation<br />Financial · Risk 역할 분석<br />동적 패널 · 차트 · 조건 제안</p>
+        </article>
+        <article class="plane green">
+          <small>04 · CONTROL &amp; LEARNING</small>
+          <h4>통제된 실행과 회고</h4>
+          <p>사용자 확인 주문 · 실시간 알림<br />거래 기록 · 유사 거래 · 습관 코칭<br />다음 의사결정으로 feedback</p>
+        </article>
+      </div>
+      <div class="llm-boundary">
+        <div class="boundary-mark">D</div>
+        <div><strong>LLM은 숫자를 다시 계산하지 않습니다.</strong><span>가격·지표·추천 점수·리스크 gate·성과 계산은 결정론적 코드가 소유하고, Agent는 의도 해석·근거 종합·화면 제안을 담당합니다.</span></div>
+        <div class="boundary-tag">DETERMINISTIC CORE</div>
+      </div>
+    </section>
+
+    <section class="proof">
+      <article class="metrics-panel">
+        <h3 class="section-title">Engineering proof · 속도와 안정성을 수치로 검증</h3>
+        <div class="metric-grid">
+          <div class="metric">
+            <strong>100→1</strong>
+            <h4>동일 요청의 계산을 한 번만</h4>
+            <p>request hash와 Redis Lock으로 동시 요청을 하나의 singleflight로 묶고 Cache 결과를 공유합니다.</p>
+            <span class="fine">동일 파생 차트 요청 100건 기준 · 실제 계산 1회</span>
+          </div>
+          <div class="metric">
+            <strong>200→2</strong>
+            <h4>사용자 수와 Redis 구독 분리</h4>
+            <p>API 서버가 Redis 이벤트를 한 번 받아 연결된 브라우저로 fan-out해 구독 부하를 서버 수에 맞춥니다.</p>
+            <span class="fine">200명 접속 · Redis pub/sub 구독 2개(API 서버 2대)</span>
+          </div>
+          <div class="metric">
+            <strong>93.3M</strong>
+            <h4>재현 가능한 시장 Replay</h4>
+            <p>동일 시장을 반복 실행해 추천·차트·주문·코치 흐름을 미래 데이터 누출 없이 검증합니다.</p>
+            <span class="fine">40.3M trades + 53.0M quotes · 502 symbols</span>
+          </div>
+        </div>
+      </article>
+
+      <aside class="ask-panel">
+        <h3 class="section-title">Ask us</h3>
+        <ol>
+          <li>왜 AI에게 추천 수식은 제안하게 하면서 <b>주문 권한은 주지 않았을까요?</b></li>
+          <li>100명이 같은 차트를 요청해도 <b>어떻게 계산을 한 번만</b> 수행할까요?</li>
+          <li>9,327만 건의 replay에서 <b>미래 정보 누출을 어떻게</b> 막았을까요?</li>
+        </ol>
+      </aside>
+    </section>
+
+    <footer class="footer">
+      <div>
+        <h3>From market signal to <em>better decision.</em></h3>
+        <p>End-to-end experience implemented · Production hardening in progress · 교육·연구용 캡스톤 프로토타입이며 투자 권유를 목적으로 하지 않습니다.</p>
+        <div class="stack">
+          <span>React 19</span><span>TypeScript</span><span>FastAPI</span><span>Python 3.12</span><span>Kafka</span><span>Redis</span><span>ClickHouse</span><span>Postgres</span><span>S3</span><span>GraphDB</span><span>Docker</span><span>Kubernetes / AWS</span>
+        </div>
+      </div>
+      <div class="qr-wrap">
+        <div class="qr-copy"><strong>DEMO · CODE · CONTACT</strong>실제 발표용 링크로 교체<br />[contact@example.com]</div>
+        <div class="qr">QR</div>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>

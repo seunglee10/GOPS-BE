@@ -1,0 +1,1003 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GOPS Capstone Poster - Four Section A1</title>
+  <style>
+    @page { size: A1 portrait; margin: 0; }
+
+    :root {
+      --paper: #f2f5f8;
+      --card: #ffffff;
+      --ink: #101318;
+      --muted: #5e6875;
+      --line: #d8e0e9;
+      --dark: #0c1016;
+      --dark-2: #171d25;
+      --blue: #008ee8;
+      --blue-2: #48b7ff;
+      --blue-soft: #e8f5ff;
+      --green: #16824e;
+      --green-soft: #e9f7ef;
+      --orange: #dd6b20;
+      --radius: 5mm;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 594mm;
+      min-width: 594mm;
+      height: 841mm;
+      min-height: 841mm;
+      margin: 0;
+      overflow: hidden;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      word-break: keep-all;
+    }
+
+    .poster {
+      width: 594mm;
+      height: 841mm;
+      padding: 14mm 16mm 12mm;
+      display: flex;
+      flex-direction: column;
+      gap: 6mm;
+      background:
+        linear-gradient(rgba(16,19,24,.024) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(16,19,24,.024) 1px, transparent 1px),
+        var(--paper);
+      background-size: 12mm 12mm;
+    }
+
+    .masthead {
+      position: relative;
+      flex: 0 0 75mm;
+      height: 75mm;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 12mm;
+      padding: 8mm 11mm;
+      overflow: hidden;
+      border-radius: 6mm;
+      background: var(--dark);
+      color: white;
+      isolation: isolate;
+    }
+
+    .masthead::before {
+      content: "";
+      position: absolute;
+      z-index: -2;
+      inset: 0;
+      background: url("assets/gops-data-evidence-flow.png") center 52% / cover no-repeat;
+      opacity: .48;
+    }
+
+    .masthead::after {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      inset: 0;
+      background: linear-gradient(90deg, rgba(5,8,12,.99) 0%, rgba(5,8,12,.94) 57%, rgba(5,8,12,.36) 100%);
+    }
+
+    .brandline {
+      display: flex;
+      align-items: center;
+      gap: 6mm;
+    }
+
+    .brandline h1 {
+      margin: 0;
+      font-size: 54pt;
+      line-height: .9;
+      letter-spacing: -.055em;
+      font-weight: 920;
+    }
+
+    .brandline .bar {
+      width: .65mm;
+      height: 28mm;
+      background: var(--blue-2);
+    }
+
+    .brand-copy small {
+      display: block;
+      margin-bottom: 1.5mm;
+      color: #67c4ff;
+      font-size: 11pt;
+      line-height: 1;
+      font-weight: 850;
+      letter-spacing: .105em;
+      text-transform: uppercase;
+    }
+
+    .brand-copy h2 {
+      margin: 0;
+      font-size: 23pt;
+      line-height: 1.15;
+      letter-spacing: -.035em;
+      font-weight: 830;
+    }
+
+    .brand-copy h2 em {
+      color: var(--blue-2);
+      font-style: normal;
+    }
+
+    .mast-meta {
+      align-self: stretch;
+      min-width: 145mm;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      justify-content: space-between;
+      text-align: right;
+    }
+
+    .mast-meta .tag {
+      padding: 2mm 3.2mm;
+      border: .35mm solid rgba(255,255,255,.22);
+      border-radius: 999px;
+      background: rgba(15,20,27,.7);
+      color: #e5edf5;
+      font-size: 9.5pt;
+      font-weight: 800;
+      letter-spacing: .06em;
+    }
+
+    .mast-meta p {
+      margin: 0;
+      color: #bdc8d4;
+      font-size: 10.5pt;
+      line-height: 1.35;
+    }
+
+    .mast-meta strong { color: white; }
+
+    .group {
+      position: relative;
+      overflow: hidden;
+      border: .55mm solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.965);
+    }
+
+    .section-head {
+      height: 19mm;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8mm;
+      padding: 4mm 6mm 3.3mm;
+      border-bottom: .45mm solid var(--line);
+    }
+
+    .section-id {
+      display: flex;
+      align-items: center;
+      gap: 4mm;
+    }
+
+    .section-no {
+      color: var(--blue);
+      font-size: 20pt;
+      line-height: 1;
+      font-weight: 920;
+      letter-spacing: -.04em;
+    }
+
+    .section-head h3 {
+      margin: 0;
+      font-size: 17pt;
+      line-height: 1;
+      letter-spacing: -.025em;
+    }
+
+    .section-head p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 9.8pt;
+      line-height: 1.25;
+      text-align: right;
+    }
+
+    /* 01. Service introduction */
+    .service {
+      flex: 0 0 115mm;
+      height: 115mm;
+      background: var(--dark);
+      border-color: var(--dark);
+      color: white;
+    }
+
+    .service .section-head {
+      border-color: rgba(255,255,255,.13);
+    }
+
+    .service .section-no { color: var(--blue-2); }
+    .service .section-head p { color: #aeb9c6; }
+
+    .service-body {
+      height: 96mm;
+      display: grid;
+      grid-template-columns: .88fr 1.72fr;
+      gap: 8mm;
+      padding: 6mm;
+    }
+
+    .service-message {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 2mm 1mm 2mm 2mm;
+    }
+
+    .service-message .problem {
+      margin: 0 0 2mm;
+      color: #9fabb8;
+      font-size: 11pt;
+      line-height: 1.35;
+      font-weight: 700;
+    }
+
+    .service-message h4 {
+      margin: 0 0 3mm;
+      font-size: 23pt;
+      line-height: 1.13;
+      letter-spacing: -.04em;
+    }
+
+    .service-message h4 em { color: var(--blue-2); font-style: normal; }
+
+    .service-message .definition {
+      margin: 0;
+      color: #cbd4de;
+      font-size: 11.2pt;
+      line-height: 1.48;
+    }
+
+    .principles {
+      margin-top: 4mm;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5mm;
+    }
+
+    .principles span {
+      padding: 1.4mm 2.1mm;
+      border-radius: 999px;
+      background: #1b2631;
+      color: #78c8ff;
+      font-size: 8.5pt;
+      line-height: 1;
+      font-weight: 800;
+    }
+
+    .journey {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      align-items: center;
+      gap: 3mm;
+      padding: 7mm 2mm 5mm;
+    }
+
+    .journey::before {
+      content: "";
+      position: absolute;
+      left: 6%;
+      right: 6%;
+      top: 50%;
+      height: .55mm;
+      background: linear-gradient(90deg, #2e8dca, #55c1ff);
+      opacity: .68;
+    }
+
+    .journey-step {
+      position: relative;
+      z-index: 1;
+      min-height: 60mm;
+      padding: 4mm 3mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      border: .45mm solid rgba(255,255,255,.12);
+      border-radius: 4mm;
+      background: linear-gradient(180deg, #202a35, #121820);
+      box-shadow: 0 3mm 8mm rgba(0,0,0,.18);
+    }
+
+    .journey-step .num {
+      color: #67c4ff;
+      font-size: 10pt;
+      font-weight: 900;
+    }
+
+    .journey-step .symbol {
+      color: white;
+      font-size: 22pt;
+      line-height: 1;
+      font-weight: 500;
+    }
+
+    .journey-step strong {
+      display: block;
+      margin-bottom: 1.4mm;
+      font-size: 11.5pt;
+      line-height: 1.1;
+    }
+
+    .journey-step span {
+      display: block;
+      color: #aeb9c6;
+      font-size: 8.5pt;
+      line-height: 1.3;
+    }
+
+    /* 02. Core features */
+    .features {
+      flex: 0 0 195mm;
+      height: 195mm;
+    }
+
+    .feature-grid {
+      height: 176mm;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      grid-template-rows: repeat(2, 1fr);
+      gap: 4mm;
+      padding: 5mm 6mm 6mm;
+    }
+
+    .feature-card {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 44% 56%;
+      overflow: hidden;
+      border: .45mm solid #dce3ea;
+      border-radius: 4mm;
+      background: #f7f9fb;
+    }
+
+    .feature-media {
+      position: relative;
+      overflow: hidden;
+      background: #0d131a;
+      border-right: .45mm solid #dce3ea;
+    }
+
+    .feature-media img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center;
+    }
+
+    .feature-media.contain img {
+      object-fit: contain;
+      padding: 2mm;
+      background: #111820;
+    }
+
+    .feature-copy {
+      padding: 4.5mm 5mm 4mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .feature-copy small {
+      display: block;
+      margin-bottom: 1.5mm;
+      color: var(--blue);
+      font-size: 8.6pt;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: .075em;
+    }
+
+    .feature-copy h4 {
+      margin: 0 0 2mm;
+      font-size: 15.5pt;
+      line-height: 1.16;
+      letter-spacing: -.025em;
+    }
+
+    .feature-copy p {
+      margin: 0;
+      color: #4e5966;
+      font-size: 10.2pt;
+      line-height: 1.4;
+    }
+
+    .feature-copy .proofline {
+      margin-top: 2.7mm;
+      padding-top: 2.3mm;
+      border-top: .35mm solid #dbe2e9;
+      color: #27313b;
+      font-size: 8.8pt;
+      line-height: 1.3;
+      font-weight: 750;
+    }
+
+    .coach-visual {
+      height: 100%;
+      padding: 7mm 5mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 3mm;
+      background:
+        radial-gradient(circle at 20% 10%, rgba(72,183,255,.28), transparent 36%),
+        #0d141c;
+      color: white;
+    }
+
+    .coach-row {
+      display: grid;
+      grid-template-columns: 10mm 1fr;
+      align-items: center;
+      gap: 3mm;
+      padding: 3mm;
+      border-radius: 3mm;
+      background: rgba(255,255,255,.07);
+      border: .35mm solid rgba(255,255,255,.09);
+    }
+
+    .coach-row b {
+      display: grid;
+      place-items: center;
+      width: 9mm;
+      height: 9mm;
+      border-radius: 50%;
+      background: var(--blue);
+      font-size: 9pt;
+    }
+
+    .coach-row span {
+      color: #d6e0ea;
+      font-size: 9.2pt;
+      line-height: 1.25;
+      font-weight: 720;
+    }
+
+    /* 03. Technical challenges */
+    .challenges {
+      flex: 0 0 105mm;
+      height: 105mm;
+      background: var(--dark);
+      border-color: var(--dark);
+      color: white;
+    }
+
+    .challenges .section-head { border-color: rgba(255,255,255,.13); }
+    .challenges .section-no { color: var(--blue-2); }
+    .challenges .section-head p { color: #aeb9c6; }
+
+    .challenge-grid {
+      height: 86mm;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 5mm;
+      padding: 5mm 6mm 6mm;
+    }
+
+    .challenge-card {
+      display: grid;
+      grid-template-columns: 49mm 1fr;
+      gap: 5mm;
+      align-items: stretch;
+      padding: 5mm;
+      border: .4mm solid rgba(255,255,255,.12);
+      border-radius: 4mm;
+      background: linear-gradient(135deg, #1b242e, #11171e);
+    }
+
+    .big-metric {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border-radius: 3mm;
+      background: #eaf6ff;
+      color: #057fc9;
+    }
+
+    .big-metric strong {
+      font-size: 32pt;
+      line-height: .93;
+      letter-spacing: -.06em;
+    }
+
+    .big-metric span {
+      margin-top: 2mm;
+      font-size: 8.2pt;
+      line-height: 1.2;
+      font-weight: 850;
+      text-align: center;
+    }
+
+    .challenge-copy {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .challenge-copy small {
+      color: #6bc6ff;
+      font-size: 8.5pt;
+      font-weight: 900;
+      letter-spacing: .07em;
+    }
+
+    .challenge-copy h4 {
+      margin: 1.2mm 0 1.7mm;
+      font-size: 14pt;
+      line-height: 1.14;
+    }
+
+    .challenge-copy p {
+      margin: 0;
+      color: #c3cdd7;
+      font-size: 9.6pt;
+      line-height: 1.38;
+    }
+
+    .mini-flow {
+      margin-top: 3mm;
+      display: flex;
+      align-items: center;
+      gap: 1.3mm;
+      color: #e6f4ff;
+      font-size: 8.2pt;
+      line-height: 1;
+      font-weight: 800;
+    }
+
+    .mini-flow i {
+      padding: 1.3mm 1.7mm;
+      border-radius: 999px;
+      background: #263441;
+      font-style: normal;
+    }
+
+    .mini-flow b { color: #58bfff; }
+
+    /* 04. Architecture */
+    .architecture {
+      flex: 0 0 240mm;
+      height: 240mm;
+    }
+
+    .architecture-body {
+      height: 221mm;
+      display: grid;
+      grid-template-columns: 356mm 1fr;
+      gap: 5mm;
+      padding: 5mm 6mm 6mm;
+    }
+
+    .architecture-figure {
+      margin: 0;
+      min-height: 0;
+      padding: 3mm;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      gap: 2mm;
+      overflow: hidden;
+      border: .45mm solid #d9e1e9;
+      border-radius: 4mm;
+      background: white;
+    }
+
+    .architecture-figure img {
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      object-fit: contain;
+      object-position: center;
+    }
+
+    .architecture-figure figcaption {
+      padding: 1.6mm 2mm 0;
+      border-top: .35mm solid #e0e6ec;
+      color: #65707c;
+      font-size: 8.3pt;
+      line-height: 1.3;
+    }
+
+    .architecture-notes {
+      display: flex;
+      flex-direction: column;
+      gap: 3mm;
+    }
+
+    .architecture-summary {
+      padding: 5mm;
+      border-radius: 4mm;
+      background: var(--blue-soft);
+      color: #10344b;
+    }
+
+    .architecture-summary small {
+      color: #0078c3;
+      font-size: 8.5pt;
+      font-weight: 900;
+      letter-spacing: .08em;
+    }
+
+    .architecture-summary h4 {
+      margin: 1.5mm 0 2mm;
+      font-size: 15.2pt;
+      line-height: 1.2;
+      letter-spacing: -.025em;
+    }
+
+    .architecture-summary p {
+      margin: 0;
+      color: #37566b;
+      font-size: 9.3pt;
+      line-height: 1.38;
+    }
+
+    .layer-list {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 3mm;
+    }
+
+    .layer {
+      min-height: 48mm;
+      padding: 4mm;
+      border: .4mm solid #dbe2e9;
+      border-radius: 3.5mm;
+      background: #f7f9fb;
+    }
+
+    .layer b {
+      display: block;
+      margin-bottom: 1.4mm;
+      color: var(--blue);
+      font-size: 8.5pt;
+      line-height: 1;
+    }
+
+    .layer h5 {
+      margin: 0 0 1.5mm;
+      font-size: 11.3pt;
+      line-height: 1.18;
+    }
+
+    .layer p {
+      margin: 0;
+      color: #596471;
+      font-size: 8.7pt;
+      line-height: 1.34;
+    }
+
+    .outcome {
+      flex: 1 1 auto;
+      min-height: 34mm;
+      padding: 4mm;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2mm;
+      align-items: stretch;
+      border-radius: 4mm;
+      background: #11171e;
+      color: white;
+    }
+
+    .outcome div {
+      padding: 2mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      text-align: center;
+      border-right: .35mm solid rgba(255,255,255,.1);
+    }
+
+    .outcome div:last-child { border-right: 0; }
+
+    .outcome strong {
+      color: #68c5ff;
+      font-size: 10.5pt;
+      line-height: 1.15;
+    }
+
+    .outcome span {
+      margin-top: 1.3mm;
+      color: #c3ccd6;
+      font-size: 7.7pt;
+      line-height: 1.25;
+    }
+
+    /* Footer */
+    .footer {
+      flex: 0 0 55mm;
+      height: 55mm;
+      display: grid;
+      grid-template-columns: 1fr 206mm 45mm;
+      gap: 7mm;
+      align-items: center;
+      padding: 4mm 6mm;
+      border-top: .7mm solid #b9c4cf;
+    }
+
+    .footer h3 {
+      margin: 0 0 1.5mm;
+      font-size: 16pt;
+      line-height: 1.15;
+    }
+
+    .footer h3 em { color: var(--blue); font-style: normal; }
+
+    .footer p {
+      margin: 0 0 2.2mm;
+      color: var(--muted);
+      font-size: 8.7pt;
+      line-height: 1.35;
+    }
+
+    .stack {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.2mm;
+    }
+
+    .stack span {
+      padding: 1mm 1.7mm;
+      border-radius: 999px;
+      background: #e1e7ed;
+      color: #44505c;
+      font-size: 7.7pt;
+      line-height: 1;
+      font-weight: 780;
+    }
+
+    .questions {
+      padding: 3.5mm 4mm;
+      border-radius: 4mm;
+      background: #e8f5ff;
+    }
+
+    .questions strong {
+      display: block;
+      margin-bottom: 1.5mm;
+      color: #0879bd;
+      font-size: 8.5pt;
+      letter-spacing: .08em;
+    }
+
+    .questions ul {
+      margin: 0;
+      padding-left: 4.5mm;
+      color: #25465a;
+      font-size: 8.3pt;
+      line-height: 1.35;
+    }
+
+    .qr-wrap {
+      text-align: center;
+      color: #55616e;
+      font-size: 7.5pt;
+      line-height: 1.2;
+    }
+
+    .qr {
+      width: 29mm;
+      height: 29mm;
+      margin: 0 auto 1.5mm;
+      display: grid;
+      place-items: center;
+      border: 1mm solid var(--ink);
+      background:
+        linear-gradient(90deg, var(--ink) 23%, transparent 23% 38%, var(--ink) 38% 52%, transparent 52% 68%, var(--ink) 68%),
+        linear-gradient(var(--ink) 21%, transparent 21% 36%, var(--ink) 36% 53%, transparent 53% 70%, var(--ink) 70%);
+      background-size: 8mm 8mm;
+      background-color: white;
+      color: white;
+      font-size: 8pt;
+      font-weight: 900;
+      text-shadow: 0 1px 2px black;
+    }
+  </style>
+</head>
+<body>
+  <main class="poster">
+    <header class="masthead">
+      <div class="brandline">
+        <h1>GOPS</h1>
+        <span class="bar"></span>
+        <div class="brand-copy">
+          <small>Personalized AI Stock Trading Platform</small>
+          <h2>내 투자 기준으로 <em>탐색·분석·실행·회고</em>를<br />하나의 흐름으로 연결합니다.</h2>
+        </div>
+      </div>
+      <div class="mast-meta">
+        <div class="tag">CAPSTONE PROJECT · 2026</div>
+        <p><strong>TEAM GOPS</strong><br />[팀원명 입력] · [소속 입력]</p>
+      </div>
+    </header>
+
+    <section class="group service">
+      <div class="section-head">
+        <div class="section-id"><span class="section-no">01</span><h3>서비스 소개</h3></div>
+        <p>흩어진 투자 도구를 개인화된 하나의 의사결정 루프로</p>
+      </div>
+      <div class="service-body">
+        <div class="service-message">
+          <p class="problem">정보는 많지만, 판단의 맥락은 매 단계에서 끊깁니다.</p>
+          <h4>GOPS는 <em>AI가 화면과 근거를 연결하는</em><br />투자 워크스페이스입니다.</h4>
+          <p class="definition">사용자의 투자 성향과 포트폴리오, 현재 선택한 종목과 시점을 유지하며 시장 조망부터 거래 후 복기까지 다음 화면과 행동을 제안합니다.</p>
+          <div class="principles"><span>USER-DEFINED CRITERIA</span><span>TRACEABLE EVIDENCE</span><span>HUMAN CONTROL</span></div>
+        </div>
+        <div class="journey" aria-label="GOPS investment journey">
+          <div class="journey-step"><span class="num">01</span><span class="symbol">▦</span><div><strong>시장 조망</strong><span>업종·자금 흐름</span></div></div>
+          <div class="journey-step"><span class="num">02</span><span class="symbol">◎</span><div><strong>종목 발굴</strong><span>내 기준의 추천</span></div></div>
+          <div class="journey-step"><span class="num">03</span><span class="symbol">⌁</span><div><strong>근거 검증</strong><span>기업·뉴스·재무</span></div></div>
+          <div class="journey-step"><span class="num">04</span><span class="symbol">⌇</span><div><strong>진입 판단</strong><span>추세·패턴·가격</span></div></div>
+          <div class="journey-step"><span class="num">05</span><span class="symbol">✓</span><div><strong>통제 실행</strong><span>리스크·예약 주문</span></div></div>
+          <div class="journey-step"><span class="num">06</span><span class="symbol">↻</span><div><strong>회고·학습</strong><span>습관·알림·다음 거래</span></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="group features">
+      <div class="section-head">
+        <div class="section-id"><span class="section-no">02</span><h3>핵심 기능</h3></div>
+        <p>결과만 제시하지 않고, 사용자가 기준과 근거를 확인하고 통제합니다.</p>
+      </div>
+      <div class="feature-grid">
+        <article class="feature-card">
+          <div class="feature-media contain"><img src="assets/gops-recommendation-settings.png" alt="GOPS personalized recommendation settings" /></div>
+          <div class="feature-copy">
+            <small>PERSONALIZED DISCOVERY</small>
+            <h4>내 투자 기준을 수식으로 만드는<br />개인화 종목 추천</h4>
+            <p>거래대금, 추세, 변동성 등 평가 요소의 가중치를 직접 편집합니다. 자연어로 설명한 방향은 AI가 계산 가능한 수식 초안으로 변환합니다.</p>
+            <div class="proofline">추천 이유와 실제 적용 가중치를 함께 공개</div>
+          </div>
+        </article>
+
+        <article class="feature-card">
+          <div class="feature-media"><img src="assets/gops-workspace-chart-analysis.png" alt="GOPS evidence-linked chart analysis" /></div>
+          <div class="feature-copy">
+            <small>INTERACTIVE EVIDENCE</small>
+            <h4>분석 문장과 원본 시점을 잇는<br />기업·차트 근거 탐색</h4>
+            <p>추세, 패턴, 지지·저항, 재무 요약을 한 화면에서 검증합니다. 설명을 선택하면 판단에 사용한 가격·봉·지표·시점이 즉시 강조됩니다.</p>
+            <div class="proofline">Agent 해석을 원본 데이터로 되짚는 provenance UX</div>
+          </div>
+        </article>
+
+        <article class="feature-card">
+          <div class="feature-media"><img src="assets/gops-workspace-orderflow.png" alt="GOPS risk checked order flow" /></div>
+          <div class="feature-copy">
+            <small>RISK-GUARDED EXECUTION</small>
+            <h4>AI 제안과 주문 권한을 분리한<br />예약 매매·리스크 점검</h4>
+            <p>차트의 지지·저항 가격을 주문 조건으로 이어가되, 수량·현재가 차이·입력 오류·과도한 위험을 별도 규칙으로 검사한 후 사용자가 최종 확정합니다.</p>
+            <div class="proofline">분석은 Agent, 수치 검증은 Rule, 실행은 User</div>
+          </div>
+        </article>
+
+        <article class="feature-card">
+          <div class="feature-media">
+            <div class="coach-visual">
+              <div class="coach-row"><b>1</b><span>매수 전 확인한 근거와 놓친 조건</span></div>
+              <div class="coach-row"><b>2</b><span>유사했던 과거 거래와 당시 결과</span></div>
+              <div class="coach-row"><b>3</b><span>유지할 기준·바꿀 습관·다음 알림</span></div>
+            </div>
+          </div>
+          <div class="feature-copy">
+            <small>POST-TRADE AI COACH</small>
+            <h4>수익률보다 판단 과정을 학습하는<br />장 마감 후 AI 투자 코치</h4>
+            <p>거래 당시 확인한 증거와 행동을 스냅샷으로 남기고, 유사 거래를 비교해 반복되는 습관을 찾습니다. 발견된 개선점은 다음 거래의 기준과 알림으로 연결됩니다.</p>
+            <div class="proofline">한 번의 거래를 다음 의사결정의 데이터로 전환</div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="group challenges">
+      <div class="section-head">
+        <div class="section-id"><span class="section-no">03</span><h3>기술적 챌린지</h3></div>
+        <p>관심이 한 종목에 몰리는 순간에도 계산과 실시간 전달을 안정적으로 유지합니다.</p>
+      </div>
+      <div class="challenge-grid">
+        <article class="challenge-card">
+          <div class="big-metric"><strong>100→1</strong><span>동일 요청 100건<br />실제 계산 1회</span></div>
+          <div class="challenge-copy">
+            <small>CHALLENGE 01 · SINGLEFLIGHT</small>
+            <h4>동시 요청의 중복 계산 방지</h4>
+            <p>파라미터를 request hash로 묶고 Redis Lock을 획득한 요청만 계산합니다. 나머지는 동일 Future·Cache 결과를 공유해 CPU 시간과 p95를 줄였습니다.</p>
+            <div class="mini-flow"><i>Request ×100</i><b>→</b><i>Hash Key</i><b>→</b><i>Redis Lock</i><b>→</b><i>Cache</i></div>
+          </div>
+        </article>
+
+        <article class="challenge-card">
+          <div class="big-metric"><strong>200→2</strong><span>접속자 200명<br />Redis 구독 2개</span></div>
+          <div class="challenge-copy">
+            <small>CHALLENGE 02 · REAL-TIME FAN-OUT</small>
+            <h4>사용자 수와 데이터 구독 부하 분리</h4>
+            <p>Kafka가 저장·분석 경로를 분리하고, API 서버가 Redis 이벤트를 한 번 구독한 뒤 연결된 브라우저로 fan-out합니다. 저장 장애도 전달 경로와 격리됩니다.</p>
+            <div class="mini-flow"><i>Kafka</i><b>→</b><i>Redis ×2</i><b>→</b><i>API Server ×2</i><b>→</b><i>WebSocket ×200</i></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="group architecture">
+      <div class="section-head">
+        <div class="section-id"><span class="section-no">04</span><h3>아키텍처</h3></div>
+        <p>Multi-AZ EKS 위에서 실시간 데이터, AI 분석, 주문을 역할별로 격리한 확장형 구조</p>
+      </div>
+      <div class="architecture-body">
+        <figure class="architecture-figure">
+          <img src="assets/gops-aws-architecture.png" alt="GOPS AWS architecture across two availability zones" />
+          <figcaption>Route53·ALB를 거쳐 Private App Subnet의 서비스로 진입합니다. 데이터 저장소와 이벤트 백본은 Private Data Subnet에 두고, IAM/IRSA·Secrets Manager·ACM으로 서비스 권한과 비밀을 분리합니다.</figcaption>
+        </figure>
+
+        <aside class="architecture-notes">
+          <div class="architecture-summary">
+            <small>ARCHITECTURE PRINCIPLE</small>
+            <h4>실시간 경로의 장애가<br />주문과 AI 분석으로 번지지 않도록</h4>
+            <p>Frontend, Backend, Agent, Ingestor, Processor, Backfill, Order Worker를 독립 배포 단위로 분리하고 이벤트로 연결합니다.</p>
+          </div>
+          <div class="layer-list">
+            <article class="layer">
+              <b>01 · MULTI-AZ APPLICATION</b>
+              <h5>EKS Auto Mode</h5>
+              <p>두 Availability Zone의 Private App Subnet에 서비스를 배치해 확장과 장애 격리의 기준을 만듭니다.</p>
+            </article>
+            <article class="layer">
+              <b>02 · EVENT BACKBONE</b>
+              <h5>Kafka + Redis</h5>
+              <p>수집·저장·분석은 Kafka로 분리하고, 지연에 민감한 실시간 전달은 Redis와 API fan-out으로 처리합니다.</p>
+            </article>
+            <article class="layer">
+              <b>03 · PURPOSE-BUILT DATA</b>
+              <h5>저장소 역할 분리</h5>
+              <p>ClickHouse는 시계열, PostgreSQL은 거래 상태, GraphDB는 관계 근거, S3는 대용량 원천·스냅샷을 담당합니다.</p>
+            </article>
+            <article class="layer">
+              <b>04 · CONTROLLED BOUNDARY</b>
+              <h5>AI와 주문의 격리</h5>
+              <p>Agent Service의 해석과 Order Worker의 실행을 분리하고, 멱등성·권한·비밀 관리 경계를 유지합니다.</p>
+            </article>
+          </div>
+          <div class="outcome">
+            <div><strong>SCALABLE</strong><span>서비스별 독립 확장</span></div>
+            <div><strong>RESILIENT</strong><span>경로별 장애 격리</span></div>
+            <div><strong>TRACEABLE</strong><span>근거·이벤트·주문 추적</span></div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div>
+        <h3>From market signal to <em>better decision.</em></h3>
+        <p>개인화 AI 주식 트레이딩 플랫폼 GOPS · 교육·연구용 캡스톤 프로젝트이며 투자 권유를 목적으로 하지 않습니다.</p>
+        <div class="stack"><span>React 19</span><span>TypeScript</span><span>FastAPI</span><span>Python 3.12</span><span>Kafka</span><span>Redis</span><span>ClickHouse</span><span>PostgreSQL</span><span>GraphDB</span><span>S3</span><span>EKS</span><span>AWS</span></div>
+      </div>
+      <div class="questions">
+        <strong>DISCUSSION STARTERS</strong>
+        <ul>
+          <li>왜 AI에게 추천은 맡기고 주문 권한은 남겨두었을까요?</li>
+          <li>100명이 같은 차트를 요청해도 어떻게 한 번만 계산할까요?</li>
+          <li>거래 회고를 다음 추천 기준에 어떻게 연결할까요?</li>
+        </ul>
+      </div>
+      <div class="qr-wrap"><div class="qr">QR</div><strong>DEMO · CODE</strong><br />[링크 교체]</div>
+    </footer>
+  </main>
+</body>
+</html>
