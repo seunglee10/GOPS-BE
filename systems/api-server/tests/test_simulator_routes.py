@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -1059,6 +1060,7 @@ class SimulatorRoutesTest(unittest.TestCase):
             "asOf": "2026-07-16T04:00:00.000Z",
             "generatedAt": "2026-07-17T14:27:53.472Z",
             "status": "ready",
+            "inputDigest": "sha256:live-demo",
             "commentary": {"status": "ready", "paragraphs": [{"text": "7월 16일 해설"}]},
             "geometry": {
                 "drawings": [
@@ -1085,7 +1087,11 @@ class SimulatorRoutesTest(unittest.TestCase):
                         "updatedAt": "2026-07-16T04:00:00.000Z",
                     },
                 ],
-                "drawingGroups": {"levels": [], "trend": [], "pattern": ["wedge-upper", "wedge-lower"]},
+                "drawingGroups": {
+                    "levels": ["wedge-upper"],
+                    "trend": ["wedge-lower"],
+                    "pattern": ["wedge-upper", "wedge-lower"],
+                },
                 "patterns": [{
                     "id": "nvda-falling-wedge",
                     "kind": "falling_wedge",
@@ -1125,6 +1131,14 @@ class SimulatorRoutesTest(unittest.TestCase):
                     "projectionBars": 10,
                     "reasons": ["confirmed_upward_breakout", "reward_risk_below_minimum"],
                 },
+                "analysisTrace": {
+                    "version": "geometry-analysis-trace-v2",
+                    "completeness": {
+                        "complete": True,
+                        "detected": {"levels": 1, "trends": 1, "patterns": 1},
+                        "stored": {"levels": 1, "trends": 1, "patterns": 1},
+                    },
+                },
             },
         }
         dynamic_asset = {
@@ -1136,6 +1150,18 @@ class SimulatorRoutesTest(unittest.TestCase):
             "asOf": "2026-07-13T04:00:00.000Z",
             "generatedAt": "2026-07-15T00:00:00.000Z",
             "status": "ready",
+            "inputDigest": "sha256:old-snapshot",
+            "commentary": {
+                "version": "chart-commentary.v2",
+                "status": "ready",
+                "promptVersion": "chart-commentary.ko.v5",
+                "sourceIdentity": {
+                    "geometryInputDigest": "sha256:old-snapshot",
+                    "candlesAsOf": "2026-07-13T04:00:00.000Z",
+                    "indicatorsAsOf": "2026-07-13T04:00:00.000Z",
+                    "contextDigest": "sha256:old-commentary",
+                },
+            },
             "geometry": {
                 "drawings": [{"id": "safe-level", "type": "horizontalLine"}],
                 "drawingGroups": {"levels": ["safe-level"], "trend": [], "pattern": []},
@@ -1144,13 +1170,17 @@ class SimulatorRoutesTest(unittest.TestCase):
                 "tradePlan": None,
             },
         }
+        snapshots = {"asset": dynamic_asset}
         storage = SimpleNamespace(
             get=lambda _symbol, _interval: stored_asset,
-            get_snapshot=lambda _dataset, _symbol, _interval, _cutoff: dynamic_asset,
+            get_snapshot=lambda _dataset, _symbol, _interval, _cutoff: snapshots["asset"],
         )
 
         with patch("app.routes.chart_assets.chart_asset_storage", return_value=storage):
             response = self.client.get("/api/charts/analysis-assets?symbol=NVDA&interval=1D")
+            commentary = self.client.get(
+                "/api/charts/analysis-assets/commentary?symbol=NVDA&interval=1D"
+            )
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -1171,13 +1201,65 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertNotIn("commentary", asset)
         self.assertTrue(payload["meta"]["demoOverride"])
         self.assertEqual(payload["meta"]["demoOverrideAsOf"], "2026-07-14T04:00:00.000Z")
+        self.assertEqual(payload["meta"]["snapshotStatus"], "regeneration_required")
+        self.assertEqual(commentary.status_code, 200)
+        self.assertIsNone(commentary.json()["asset"])
+        self.assertEqual(commentary.json()["meta"]["snapshotStatus"], "regeneration_required")
+
+        paired_asset = deepcopy(asset)
+        paired_asset["inputDigest"] = "sha256:paired-snapshot"
+        paired_asset["geometry"]["drawingGroups"] = {
+            "levels": ["wedge-upper"],
+            "trend": ["wedge-lower"],
+            "pattern": ["wedge-upper", "wedge-lower"],
+        }
+        paired_asset["commentary"] = {
+            "version": "chart-commentary.v2",
+            "status": "ready",
+            "promptVersion": "chart-commentary.ko.v5",
+            "sourceIdentity": {
+                "geometryInputDigest": "sha256:paired-snapshot",
+                "candlesAsOf": paired_asset["asOf"],
+                "indicatorsAsOf": paired_asset["asOf"],
+                "contextDigest": "sha256:paired-commentary",
+            },
+            "references": [{
+                "id": "drawing:wedge",
+                "type": "drawing",
+                "drawingIds": ["wedge-upper", "wedge-lower"],
+            }],
+        }
+        snapshots["asset"] = paired_asset
+
+        with patch("app.routes.chart_assets.chart_asset_storage", return_value=storage):
+            paired_full = self.client.get("/api/charts/analysis-assets?symbol=NVDA&interval=1D")
+            paired_light = self.client.get(
+                "/api/charts/analysis-assets/commentary?symbol=NVDA&interval=1D"
+            )
+
+        self.assertEqual(paired_full.status_code, 200)
+        self.assertEqual(paired_light.status_code, 200)
+        full_asset = paired_full.json()["assets"]["1D"]
+        light_asset = paired_light.json()["asset"]
+        identity_fields = ("algorithmVersion", "inputDigest", "asOf")
+        self.assertEqual(
+            tuple(full_asset[field] for field in identity_fields),
+            tuple(light_asset[field] for field in identity_fields),
+        )
+        self.assertEqual(
+            full_asset["commentary"]["sourceIdentity"]["contextDigest"],
+            light_asset["commentary"]["sourceIdentity"]["contextDigest"],
+        )
+        self.assertEqual(light_asset["commentary"]["promptVersion"], "chart-commentary.ko.v5")
+        self.assertEqual(paired_full.json()["meta"]["snapshotStatus"], "ready")
+        self.assertFalse(paired_full.json()["meta"]["demoOverride"])
 
         self.gateway.virtual_time = "2026-07-17T00:00:00+09:00"
         with patch("app.routes.chart_assets.chart_asset_storage", return_value=storage):
             after_confirmation = self.client.get("/api/charts/analysis-assets?symbol=NVDA&interval=1D")
 
         self.assertEqual(after_confirmation.status_code, 200)
-        self.assertEqual(after_confirmation.json()["assets"]["1D"]["asOf"], dynamic_asset["asOf"])
+        self.assertEqual(after_confirmation.json()["assets"]["1D"]["asOf"], paired_asset["asOf"])
         self.assertFalse(after_confirmation.json()["meta"]["demoOverride"])
 
     def test_other_point_in_time_unsafe_market_data_stays_blocked(self):

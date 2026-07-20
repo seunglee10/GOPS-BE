@@ -15,6 +15,7 @@ for path in (ROOT / "systems" / "market-data" / "shared", ROOT / "systems" / "ag
 from alfaka.analytics.analysis_candles import AnalysisCandleBundle  # noqa: E402
 from alfaka.analytics.analysis_repair import AnalysisRepairResult  # noqa: E402
 from gops_agents.chart_assets.builder import ASSET_VERSION, ChartAssetBuilder  # noqa: E402
+from gops_agents.chart_assets.commentary import ChartCommentaryGenerationError  # noqa: E402
 from gops_agents.chart_assets.envelope import ChartAssetBuildEnvelope  # noqa: E402
 from gops_agents.chart_assets.progress import InMemoryChartAssetProgressStore  # noqa: E402
 from gops_agents.chart_assets.storage import (  # noqa: E402
@@ -118,6 +119,90 @@ class ChartAssetBuilderTest(unittest.TestCase):
         self.assertEqual(saved_log["target"], "simulation")
         self.assertEqual(saved_log["datasetId"], "dataset-1")
         self.assertEqual(saved_log["snapshotCutoff"], cutoff)
+
+    def test_nvda_demo_projection_runs_before_v5_commentary_and_saves_one_snapshot(self):
+        rows = _rows(140, "1D")
+        cutoff = rows[-1]["timestamp"]
+        live_source = {"assetVersion": "geometry", "marker": "live-demo-source"}
+        storage = MemoryStorage()
+        storage.assets[("NVDA", "1D")] = live_source
+        progress = InMemoryChartAssetProgressStore()
+        commentary = _ready_commentary(rows[-1]["timestamp"])
+        builder = ChartAssetBuilder(
+            candle_loader=Loader(rows),
+            storage=storage,
+            progress=progress,
+            commentary_writer=DemoWriter(),
+            commentary_context_loader=DemoContextLoader(),
+            concurrency=1,
+        )
+        envelope = ChartAssetBuildEnvelope.create(
+            requested_by="test", symbols=["NVDA"], intervals=["1D"], force=True,
+            target="simulation", dataset_id="sp500-full-20260715-kst-v3", snapshot_cutoff=cutoff,
+        )
+
+        def project_demo(**kwargs):
+            projected = kwargs["base_asset"]
+            projected["geometry"]["demoProjection"] = True
+            return projected
+
+        with (
+            patch("gops_agents.chart_assets.builder.project_nvda_simulation_demo_snapshot", side_effect=project_demo) as project,
+            patch("gops_agents.chart_assets.builder.is_complete_nvda_simulation_demo_snapshot", return_value=True),
+            patch("gops_agents.chart_assets.builder.build_chart_commentary_fact_pack", return_value={"contextDigest": "sha256:facts"}) as fact_pack,
+            patch("gops_agents.chart_assets.builder.generate_chart_commentary", return_value=(commentary, 7)),
+        ):
+            state = builder.run(envelope)
+
+        self.assertEqual(state["recentItems"][-1]["status"], "saved")
+        self.assertEqual(storage.save_count, 0)
+        self.assertEqual(storage.snapshot_save_count, 1)
+        self.assertIs(storage.assets[("NVDA", "1D")], live_source)
+        snapshot = storage.snapshots[("sp500-full-20260715-kst-v3", "NVDA", "1D")]
+        self.assertTrue(snapshot["geometry"]["demoProjection"])
+        self.assertEqual(snapshot["commentary"]["promptVersion"], "chart-commentary.ko.v5")
+        self.assertIs(project.call_args.kwargs["source_asset"], live_source)
+        self.assertTrue(fact_pack.call_args.kwargs["geometry"]["demoProjection"])
+        asset_log = next(json.loads(item) for item in state["logs"] if "chart_asset_saved" in item)
+        self.assertTrue(asset_log["simulationDemoProjection"])
+
+    def test_nvda_demo_commentary_failure_preserves_the_existing_snapshot(self):
+        rows = _rows(140, "1D")
+        cutoff = rows[-1]["timestamp"]
+        existing = {"assetVersion": "geometry", "symbol": "NVDA", "interval": "1D", "marker": "old"}
+        storage = MemoryStorage()
+        storage.assets[("NVDA", "1D")] = {"assetVersion": "geometry", "marker": "live-demo-source"}
+        storage.snapshots[("sp500-full-20260715-kst-v3", "NVDA", "1D")] = existing
+        builder = ChartAssetBuilder(
+            candle_loader=Loader(rows),
+            storage=storage,
+            progress=InMemoryChartAssetProgressStore(),
+            commentary_writer=DemoWriter(),
+            commentary_context_loader=DemoContextLoader(),
+            concurrency=1,
+        )
+        envelope = ChartAssetBuildEnvelope.create(
+            requested_by="test", symbols=["NVDA"], intervals=["1D"], force=True,
+            target="simulation", dataset_id="sp500-full-20260715-kst-v3", snapshot_cutoff=cutoff,
+        )
+
+        with (
+            patch(
+                "gops_agents.chart_assets.builder.project_nvda_simulation_demo_snapshot",
+                side_effect=lambda **kwargs: kwargs["base_asset"],
+            ),
+            patch("gops_agents.chart_assets.builder.build_chart_commentary_fact_pack", return_value={"contextDigest": "sha256:facts"}),
+            patch(
+                "gops_agents.chart_assets.builder.generate_chart_commentary",
+                side_effect=ChartCommentaryGenerationError("provider failed", code="provider_server"),
+            ),
+        ):
+            state = builder.run(envelope)
+
+        self.assertEqual(state["status"], "completed_with_errors")
+        self.assertEqual(state["recentItems"][-1]["reason"], "commentary_generation_failed")
+        self.assertIs(storage.snapshots[("sp500-full-20260715-kst-v3", "NVDA", "1D")], existing)
+        self.assertEqual(storage.snapshot_save_count, 0)
 
     def test_manual_force_is_the_only_path_that_replaces_existing_asset(self):
         rows = _rows(120, "1D")
@@ -396,6 +481,18 @@ class RaisingRepair:
         raise AssertionError("scheduled manual-only policy must skip before candle repair")
 
 
+class DemoWriter:
+    model = "fixture-model"
+
+    def generate(self, _fact_pack):
+        raise AssertionError("generate_chart_commentary is patched by this fixture")
+
+
+class DemoContextLoader:
+    def load(self, **_kwargs):
+        return {"news": [], "earnings": [], "missingData": []}
+
+
 class ConfirmedEmptyRepair:
     def __init__(self, count): self.count = count
     def ensure_ready(self, *_args, **_kwargs):
@@ -451,6 +548,26 @@ def _analysis_result():
         "historicalTriangle": None,
         "evidence": [],
         "indicators": {},
+    }
+
+
+def _ready_commentary(as_of: str):
+    return {
+        "version": "chart-commentary.v2",
+        "status": "ready",
+        "generatedAt": as_of,
+        "model": "fixture-model",
+        "promptVersion": "chart-commentary.ko.v5",
+        "sourceIdentity": {
+            "geometryInputDigest": "sha256:1D:140",
+            "candlesAsOf": as_of,
+            "indicatorsAsOf": as_of,
+            "contextDigest": "sha256:facts",
+        },
+        "paragraphs": [],
+        "indicatorRecommendations": [],
+        "references": [],
+        "limitations": [],
     }
 
 

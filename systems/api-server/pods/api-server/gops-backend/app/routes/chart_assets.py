@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import hashlib
 import os
 import re
@@ -20,17 +19,21 @@ from alfaka.analytics.geometry import ALGORITHM_VERSION
 from gops_agents.chart_assets.envelope import ALLOWED_INTERVALS, BUILD_INTERVALS, ChartAssetBuildEnvelope, utc_now_iso
 from gops_agents.chart_assets.progress import build_progress_store_from_env
 from gops_agents.chart_assets.queue import build_chart_asset_queue_from_env
+from gops_agents.chart_assets.simulation_demo import (
+    NVDA_SIMULATION_DEMO_FALLBACK_AS_OF,
+    NVDA_SIMULATION_DEMO_DATASET_ID,
+    NVDA_SIMULATION_DEMO_INTERVAL,
+    NVDA_SIMULATION_DEMO_SYMBOL,
+    clamp_demo_dates,
+    is_complete_nvda_simulation_demo_snapshot,
+    is_nvda_simulation_demo_target,
+    project_nvda_simulation_demo_snapshot,
+)
 from gops_agents.chart_assets.storage import build_chart_asset_storage_from_env
 
 
 router = APIRouter()
 JOB_ID_PATTERN = r"^cab-[A-Za-z0-9-]{8,64}$"
-# Requested demo-only exception. It is projected in the SIM response and is never persisted.
-NVDA_SIMULATION_DEMO_AS_OF = "2026-07-14T04:00:00.000Z"
-NVDA_SIMULATION_DEMO_DATASET_ID = "sp500-full-20260715-kst-v3"
-NVDA_SIMULATION_DEMO_SYMBOL = "NVDA"
-NVDA_SIMULATION_DEMO_INTERVAL = "1D"
-NVDA_SIMULATION_DEMO_TRADE_PLAN_REASON = "simulation_demo_reward_risk_override"
 
 
 class ChartAssetBuildRequest(BaseModel):
@@ -72,31 +75,29 @@ def chart_analysis_assets(
     if simulation:
         raw_assets = assets
         demo_override = False
-        if (
-            simulation["datasetId"] == NVDA_SIMULATION_DEMO_DATASET_ID
-            and normalized == NVDA_SIMULATION_DEMO_SYMBOL
-            and interval == NVDA_SIMULATION_DEMO_INTERVAL
-        ):
+        demo_regeneration_required = False
+        if interval and is_nvda_simulation_demo_target(simulation["datasetId"], normalized, interval):
             try:
                 persisted_demo_asset = storage.get(normalized, interval)
             except Exception:
                 persisted_demo_asset = None
-            demo_asset = _build_nvda_simulation_demo_asset(
+            effective_asset, demo_override, demo_regeneration_required = _resolve_nvda_simulation_demo_asset(
+                dataset_id=str(simulation["datasetId"]),
                 symbol=normalized,
                 interval=interval,
+                snapshot_asset=raw_assets.get(interval),
                 persisted_asset=persisted_demo_asset,
                 cutoff=_parse_timestamp(simulation["virtualTime"]),
             )
-            if demo_asset is not None and demo_asset.get("algorithmVersion") == ALGORITHM_VERSION:
-                raw_assets = {**raw_assets, interval: demo_asset}
-                demo_override = True
+            raw_assets = {**raw_assets, interval: effective_asset}
         assets = {
             key: asset if isinstance(asset, dict) and asset.get("algorithmVersion") == ALGORITHM_VERSION else None
             for key, asset in raw_assets.items()
         }
         selected = raw_assets.get(interval) if interval else next((asset for asset in raw_assets.values() if asset), None)
         snapshot_status = (
-            "missing" if selected is None
+            "regeneration_required" if demo_regeneration_required
+            else "missing" if selected is None
             else "ready" if selected.get("algorithmVersion") == ALGORITHM_VERSION
             else "regeneration_required"
         )
@@ -108,7 +109,7 @@ def chart_analysis_assets(
             "snapshotCutoff": simulation["snapshotCutoff"],
             "snapshotStatus": snapshot_status,
             "demoOverride": demo_override,
-            "demoOverrideAsOf": NVDA_SIMULATION_DEMO_AS_OF if demo_override else None,
+            "demoOverrideAsOf": NVDA_SIMULATION_DEMO_FALLBACK_AS_OF if demo_override else None,
         })
     return {"symbol": normalized, "assets": assets, "meta": meta}
 
@@ -121,19 +122,40 @@ def chart_analysis_asset_commentary(
 ) -> dict[str, Any]:
     normalized = normalize_market_symbol(symbol)
     simulation = _simulation_asset_context(request)
+    demo_override = False
+    demo_regeneration_required = False
     try:
         storage = chart_asset_storage()
-        asset = (
-            storage.get_snapshot_commentary(simulation["datasetId"], normalized, interval, simulation["virtualTime"])
-            if simulation
-            else storage.get_commentary(normalized, interval)
-        )
+        if simulation and is_nvda_simulation_demo_target(simulation["datasetId"], normalized, interval):
+            snapshot_asset = storage.get_snapshot(
+                simulation["datasetId"], normalized, interval, simulation["virtualTime"],
+            )
+            try:
+                persisted_demo_asset = storage.get(normalized, interval)
+            except Exception:
+                persisted_demo_asset = None
+            effective_asset, demo_override, demo_regeneration_required = _resolve_nvda_simulation_demo_asset(
+                dataset_id=str(simulation["datasetId"]),
+                symbol=normalized,
+                interval=interval,
+                snapshot_asset=snapshot_asset,
+                persisted_asset=persisted_demo_asset,
+                cutoff=_parse_timestamp(simulation["virtualTime"]),
+            )
+            asset = _commentary_projection_from_asset(effective_asset)
+        else:
+            asset = (
+                storage.get_snapshot_commentary(simulation["datasetId"], normalized, interval, simulation["virtualTime"])
+                if simulation
+                else storage.get_commentary(normalized, interval)
+            )
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Chart commentary asset storage is unavailable.") from exc
     meta: dict[str, Any] = {"servedAt": utc_now_iso(), "assetContext": "simulation" if simulation else "live"}
     if simulation:
         snapshot_status = (
-            "missing" if asset is None
+            "regeneration_required" if demo_regeneration_required
+            else "missing" if asset is None
             else "ready" if asset.get("algorithmVersion") == ALGORITHM_VERSION
             else "regeneration_required"
         )
@@ -146,6 +168,8 @@ def chart_analysis_asset_commentary(
             "datasetId": simulation["datasetId"],
             "snapshotCutoff": simulation["snapshotCutoff"],
             "snapshotStatus": snapshot_status,
+            "demoOverride": demo_override,
+            "demoOverrideAsOf": NVDA_SIMULATION_DEMO_FALLBACK_AS_OF if demo_override else None,
         })
     return {"symbol": normalized, "interval": interval, "asset": asset, "meta": meta}
 
@@ -292,7 +316,7 @@ def _build_nvda_simulation_demo_asset(
     persisted_asset: dict[str, Any] | None,
     cutoff: datetime | None,
 ) -> dict[str, Any] | None:
-    demo_as_of = _parse_timestamp(NVDA_SIMULATION_DEMO_AS_OF)
+    demo_as_of = _parse_timestamp(NVDA_SIMULATION_DEMO_FALLBACK_AS_OF)
     persisted_as_of = (
         _parse_timestamp(persisted_asset.get("asOf"))
         if isinstance(persisted_asset, dict)
@@ -310,94 +334,64 @@ def _build_nvda_simulation_demo_asset(
     ):
         return None
 
-    persisted_geometry = persisted_asset.get("geometry")
-    if not isinstance(persisted_geometry, dict):
+    try:
+        demo_asset = project_nvda_simulation_demo_snapshot(
+            dataset_id=NVDA_SIMULATION_DEMO_DATASET_ID,
+            base_asset=clamp_demo_dates(persisted_asset, NVDA_SIMULATION_DEMO_FALLBACK_AS_OF),
+            source_asset=persisted_asset,
+        )
+    except ValueError:
         return None
-
-    falling_wedge = next(
-        (
-            pattern
-            for pattern in persisted_geometry.get("patterns") or []
-            if isinstance(pattern, dict) and pattern.get("kind") == "falling_wedge"
-        ),
-        None,
-    )
-    if falling_wedge is None:
-        return None
-
-    demo_asset = _clamp_demo_dates(persisted_asset, demo_as_of)
-    _promote_nvda_simulation_demo_trade_plan(demo_asset)
     demo_asset["generatedAt"] = utc_now_iso()
-    demo_asset.pop("commentary", None)
     return demo_asset
 
 
-def _promote_nvda_simulation_demo_trade_plan(asset: dict[str, Any]) -> None:
-    geometry = asset.get("geometry")
-    if not isinstance(geometry, dict):
-        return
-    patterns = geometry.get("patterns")
-    trade_plan = geometry.get("tradePlan")
-    if not isinstance(patterns, list) or not isinstance(trade_plan, dict):
-        return
-
-    pattern = next(
-        (
-            item
-            for item in patterns
-            if isinstance(item, dict)
-            and item.get("kind") == "falling_wedge"
-            and item.get("state") == "confirmed"
-            and item.get("id") == trade_plan.get("patternId")
-        ),
-        None,
+def _resolve_nvda_simulation_demo_asset(
+    *,
+    dataset_id: str,
+    symbol: str,
+    interval: str,
+    snapshot_asset: dict[str, Any] | None,
+    persisted_asset: dict[str, Any] | None,
+    cutoff: datetime | None,
+) -> tuple[dict[str, Any] | None, bool, bool]:
+    if not is_nvda_simulation_demo_target(dataset_id, symbol, interval):
+        return snapshot_asset, False, False
+    if is_complete_nvda_simulation_demo_snapshot(snapshot_asset):
+        return snapshot_asset, False, False
+    fallback = _build_nvda_simulation_demo_asset(
+        symbol=symbol,
+        interval=interval,
+        persisted_asset=persisted_asset,
+        cutoff=cutoff,
     )
-    reasons = trade_plan.get("reasons")
-    reward_risk_ratio = trade_plan.get("rewardRiskRatio")
-    required_prices = [
-        trade_plan.get("entryTrigger"),
-        trade_plan.get("entryPrice"),
-        trade_plan.get("stopPrice"),
-        trade_plan.get("targetPrice"),
+    if fallback is not None and fallback.get("algorithmVersion") == ALGORITHM_VERSION:
+        return fallback, True, True
+    if isinstance(snapshot_asset, dict):
+        stale_snapshot = dict(snapshot_asset)
+        stale_snapshot.pop("commentary", None)
+        return stale_snapshot, False, True
+    return None, False, True
+
+
+def _commentary_projection_from_asset(asset: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(asset, dict):
+        return None
+    geometry = asset.get("geometry") if isinstance(asset.get("geometry"), dict) else {}
+    drawing_ids = [
+        str(drawing.get("id"))
+        for drawing in geometry.get("drawings") or []
+        if isinstance(drawing, dict) and drawing.get("id")
     ]
-    allowed_reasons = {"confirmed_upward_breakout", "reward_risk_below_minimum"}
-    if (
-        pattern is None
-        or trade_plan.get("action") != "no_trade"
-        or trade_plan.get("patternState") != "confirmed"
-        or not isinstance(reasons, list)
-        or not all(isinstance(reason, str) for reason in reasons)
-        or "reward_risk_below_minimum" not in reasons
-        or set(reasons).difference(allowed_reasons)
-        or not isinstance(reward_risk_ratio, (int, float))
-        or isinstance(reward_risk_ratio, bool)
-        or reward_risk_ratio <= 0
-        or not all(
-            isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
-            for value in required_prices
-        )
-    ):
-        return
-
-    trade_plan["action"] = "buy_candidate"
-    trade_plan["direction"] = "long"
-    trade_plan["minimumRewardRisk"] = reward_risk_ratio
-    trade_plan["reasons"] = [
-        *(reason for reason in reasons if reason != "reward_risk_below_minimum"),
-        NVDA_SIMULATION_DEMO_TRADE_PLAN_REASON,
-    ]
-
-
-def _clamp_demo_dates(value: Any, cutoff: datetime) -> Any:
-    if isinstance(value, dict):
-        return {key: _clamp_demo_dates(item, cutoff) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_clamp_demo_dates(item, cutoff) for item in value]
-    if isinstance(value, str):
-        parsed = _parse_timestamp(value)
-        if parsed is not None and parsed > cutoff:
-            return NVDA_SIMULATION_DEMO_AS_OF
-    return deepcopy(value)
+    return {
+        "assetVersion": asset.get("assetVersion"),
+        "algorithmVersion": asset.get("algorithmVersion"),
+        "asOf": asset.get("asOf"),
+        "generatedAt": asset.get("generatedAt"),
+        "inputDigest": asset.get("inputDigest"),
+        "drawingIds": drawing_ids,
+        "commentary": asset.get("commentary") if isinstance(asset.get("commentary"), dict) else None,
+    }
 
 
 def _simulation_asset_context(request: Request) -> dict[str, str | None] | None:

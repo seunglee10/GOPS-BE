@@ -24,6 +24,11 @@ from .commentary import (
 )
 from .envelope import ChartAssetBuildEnvelope, utc_now_iso
 from .progress import build_progress_store_from_env
+from .simulation_demo import (
+    is_complete_nvda_simulation_demo_snapshot,
+    is_nvda_simulation_demo_target,
+    project_nvda_simulation_demo_snapshot,
+)
 from .storage import MAX_ASSET_BYTES, build_chart_asset_storage_from_env
 
 
@@ -96,6 +101,7 @@ class ChartAssetBuilder:
     def run_item(self, envelope: ChartAssetBuildEnvelope, symbol: str, interval: str) -> dict[str, Any]:
         started = time.monotonic()
         commentary_diagnostics: dict[str, Any] | None = None
+        simulation_demo_projection = False
         symbol = symbol.upper()
         if self.progress.is_cancel_requested(envelope.job_id):
             item = _item(symbol, interval, "skipped", "cancel", started, reason="cancel_requested")
@@ -199,6 +205,18 @@ class ChartAssetBuilder:
                 "geometry": geometry,
                 "indicators": result["indicators"],
             }
+            simulation_demo_projection = is_nvda_simulation_demo_target(
+                envelope.dataset_id,
+                symbol,
+                interval,
+            )
+            if simulation_demo_projection:
+                asset = project_nvda_simulation_demo_snapshot(
+                    dataset_id=str(envelope.dataset_id),
+                    base_asset=asset,
+                    source_asset=self.storage.get(symbol, interval),
+                )
+                geometry = asset["geometry"]
             commentary_latency_ms = None
             if self.commentary_writer is not None:
                 commentary_started = time.monotonic()
@@ -243,8 +261,17 @@ class ChartAssetBuilder:
                     writer=self.commentary_writer,
                     generated_at=generated_at,
                 )
-            elif self.commentary_required:
-                raise ChartCommentaryGenerationError("commentary provider is disabled in required mode")
+            elif self.commentary_required or simulation_demo_projection:
+                raise ChartCommentaryGenerationError(
+                    "NVDA simulation demo snapshot requires the commentary provider"
+                    if simulation_demo_projection
+                    else "commentary provider is disabled in required mode",
+                    code="provider_config",
+                )
+            if simulation_demo_projection and not is_complete_nvda_simulation_demo_snapshot(asset):
+                raise ValueError(
+                    "NVDA simulation demo snapshot requires matching v5 commentary and geometry identity"
+                )
 
             _validate_writer_asset(asset, existing=existing)
             asset, encoded = _fit_asset_payload(asset)
@@ -279,6 +306,7 @@ class ChartAssetBuilder:
                 target=envelope.target,
                 dataset_id=envelope.dataset_id,
                 snapshot_cutoff=envelope.snapshot_cutoff,
+                simulation_demo_projection=simulation_demo_projection,
             )
             status = "saved" if saved is not False else "unchanged"
             item = _item(
@@ -327,6 +355,7 @@ class ChartAssetBuilder:
         target: str = "live",
         dataset_id: str | None = None,
         snapshot_cutoff: str | None = None,
+        simulation_demo_projection: bool = False,
     ) -> None:
         trace_payload = trace if isinstance(trace, dict) else {}
         omitted = trace_payload.get("omittedCounts")
@@ -346,6 +375,7 @@ class ChartAssetBuilder:
             },
             "target": target,
             **({"datasetId": dataset_id, "snapshotCutoff": snapshot_cutoff} if target == "simulation" else {}),
+            **({"simulationDemoProjection": True} if simulation_demo_projection else {}),
         }
         trace_log = {
             "event": "chart_trace_summary",

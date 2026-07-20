@@ -1376,6 +1376,11 @@ SIM 차트 자동 작도는 runtime 계산용 Deployment나 Job을 추가하지 
 gate가 `geometry_asset_snapshots`를 먼저 만들고, 운영자는 활성 dataset에서 개발 패널로
 필요한 symbol의 `1m/1D`를 시작 시각 기준으로 한 번 생성한다. backend full/commentary GET은
 현재 dataset snapshot만 읽고 없으면 LIVE fallback 없이 생성 필요 상태를 반환한다.
+고정 시연 dataset의 `NVDA/1D` 재생성은 cutoff canonical 자산에 검증된 falling-wedge
+geometry를 투영한 뒤 같은 입력으로 `chart-commentary.ko.v5`까지 생성해 단일 UPSERT한다.
+두 API identity가 일치하지 않는 구 snapshot은 `regeneration_required`이며 runtime 호환
+작도에 다른 snapshot의 commentary를 결합하지 않는다. 배포 후 활성 SIM 기준으로
+`NVDA / 1D / force`를 한 번 수동 생성하고 full/light identity를 smoke test한다.
 추천은 같은 simulator 배포에서 위 fixed replay 환경변수를 그대로 사용한다.
 시장 evidence는 고정하고, 활성 `runId`와 `virtualTime` 검증을 통과한 최신 paper portfolio만
 사용자별 재추천 입력으로 허용한다. 뉴스는 기존 cutoff-safe ClickHouse 읽기 경로를 유지한다.

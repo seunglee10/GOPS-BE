@@ -122,6 +122,10 @@ optional field만 PostgreSQL JSONB에 합치며 prompt와 전체 fact pack은 �
 S3, Redis, Kafka는 자산 저장 경로에 없다. 시뮬레이션 자산은
 `chart_assets.geometry_asset_snapshots`에 `(dataset_id, symbol, interval)`별로 별도
 저장한다. replay GET은 이 snapshot을 읽기만 하고 Geometry나 LLM을 런타임에 실행하지 않는다.
+고정 시연 dataset의 `NVDA/1D` 수동 build만 cutoff canonical 결과에 검증된 하락 쐐기
+geometry를 마지막 완료 봉 시각 안으로 투영한 뒤, 같은 geometry 기반 v5 commentary와 함께
+단일 snapshot으로 저장한다. projection 또는 해설 검증이 실패하면 기존 snapshot 전체를
+보존한다. 구 snapshot의 runtime 호환 작도에는 해설을 섞지 않고 재생성 필요 상태를 반환한다.
 
 차트 runtime은 현재 symbol·interval의 candle snapshot과 저장 commentary 경량 projection을
 병렬로 읽는다. 해설 projection은 asset identity, commentary, 최종 drawing ID만 포함한다.
@@ -146,6 +150,8 @@ Alpaca가 성공했지만 실제 봉이 없는 slot은 `provider_confirmed_empty
   virtual time을 cutoff로 쓰거나 replay 중 자동 생성하지 않는다. 완료 결과에는 target,
   dataset/cutoff, algorithm version, 저장 as-of, trace mode,
   category별 후보 수와 write 검증을 표시하며 실패 시에는 기존 row 유지 여부를 명시한다.
+  고정 시연 dataset의 `NVDA/1D`는 pattern·level·trend·proposal과 v5 commentary의 identity 및
+  drawing reference까지 모두 검증된 경우에만 같은 snapshot을 교체한다.
 - 실패분은 별도 실행 종류로 분리하지 않고 같은 선택과 버튼으로 다시 실행한다. 수동
   S&P500 force 갱신은 개발 패널에 노출하지 않는다.
 - `symbols="sp500"`과 `force=true` 조합은 API에서 400으로 거절한다.

@@ -24,13 +24,13 @@
   일괄 backfill, Geometry v6용 migration Job은 실행하지 않는다.
 - `tradePlan`, 해설, spotlight, trace overlay는 주문·알림 신뢰 원본이 아니다.
 
-시연용 SIM 응답에는 한 가지 명시적 비영속 예외가 있다. `NVDA/1D`는 저장된
-`falling_wedge` 자산 복사본의 시각을 2026-07-14로 제한해 동적 자산보다 우선한다.
-PostgreSQL 자산과 candle 원본은 수정하지 않고, 실제 저장 자산 `asOf` 이후에는 예외를
-적용하지 않으며 commentary도 복사하지 않는다. 저장 `tradePlan`이 확정 상승 돌파 뒤
-손익비 기준 미달만으로 `no_trade`가 된 경우 응답 복사본에서만 `buy_candidate/long`으로
-승격한다. 이때 최소 손익비는 계산된 손익비로 맞추고
-`simulation_demo_reward_risk_override` 사유를 남긴다.
+고정 시연 dataset의 `NVDA/1D`에는 명시적으로 제한된 build projection이 있다. 수동 SIM
+build가 cutoff canonical 자산의 identity·coverage·indicator를 유지하면서 기존 하락 쐐기
+geometry를 마지막 완료 봉 안으로 제한하고, buy-only 제안의
+`simulation_demo_reward_risk_override` 사유를 남긴다. 이 geometry로 v5 commentary까지 만든
+뒤 하나의 PostgreSQL snapshot으로만 저장한다. full/light identity가 일치하지 않거나 v5
+commentary가 없으면 `ready`로 취급하지 않는다. 배포 전 구 snapshot의 runtime 호환 projection은
+commentary를 반환하지 않고 `regeneration_required`를 표시하며, 새 snapshot 생성 후에는 적용되지 않는다.
 
 ## 계산과 자산 계약
 

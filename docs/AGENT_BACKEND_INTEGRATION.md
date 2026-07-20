@@ -175,13 +175,13 @@ build는 현재 simulator의 dataset ID와 시작 시각을 서버가 주입하�
 저장된 종합 해설은 `GET /api/charts/analysis-assets/commentary?symbol&interval`에서
 asset identity, commentary, 최종 drawing ID만 PostgreSQL JSONB projection으로 읽는다.
 이 safe-read도 현재 dataset의 사전 생성 snapshot만 반환하며 replay 중 해설을 동적으로 생성하지 않는다.
-시연 데이터셋에 한해 `NVDA/1D` 전체 자산 GET은 저장된 하락 쐐기 자산의 시각을
-`2026-07-14T04:00:00Z`로 제한한 응답 복사본을 snapshot보다 우선한다. 이 데모
-projection은 PostgreSQL이나 candle 원본을 변경하지 않고, 저장 자산의 실제
-`asOf`에 도달하면 자동으로 비활성화하며 미래 해설은 포함하지 않는다. 저장된 확정
-하락 쐐기 `tradePlan`이 손익비 기준 미달만으로 `no_trade`인 경우에는 응답 복사본에서만
-`buy_candidate/long`으로 승격하고 `minimumRewardRisk`를 실제 계산 손익비에 맞춘다.
-`simulation_demo_reward_risk_override` 사유가 이 비영속 시연 예외를 식별한다.
+고정 시연 데이터셋의 `NVDA/1D`는 수동 SIM build에서 cutoff canonical 자산을 먼저 만든 뒤,
+검증된 LIVE 하락 쐐기 geometry를 마지막 완료 봉 시각 안으로 제한해 결합한다. 같은 geometry로
+`chart-commentary.ko.v5`를 생성하고 둘을 하나의 snapshot으로 원자적 저장하며,
+`simulation_demo_reward_risk_override`가 buy-only 제안의 시연 출처를 식별한다. full GET과
+경량 commentary GET은 이 한 row만 사용한다. 배포 전 구 snapshot에는 기존 runtime 패턴
+복사본을 임시로 유지하되 commentary를 제거하고 `snapshotStatus=regeneration_required`를
+반환하므로 서로 다른 날짜·digest·drawing ID의 해설과 geometry가 혼합되지 않는다.
 예외적으로 `GET /api/market/news/latest`는 live Redis를 건너뛰고 ClickHouse의
 `published_at <= virtualTime AND localized_at <= virtualTime`인 저장 기사만 읽는다.
 `GET /api/charts/events`는 SIM `virtualTime`을 cutoff로 전달해
@@ -971,6 +971,9 @@ snapshot cutoff가 virtual time보다 미래거나 snapshot이 없으면 LIVE로
 `missing`, 현재 algorithm과 다르면 `regeneration_required`를 meta에 반환한다. runtime GET은
 canonical candle, Geometry kernel, OpenAI writer를 호출하지 않는다. mode 해제 시 같은 route는
 즉시 기존 LIVE row를 다시 읽는다.
+고정 시연 데이터셋의 `NVDA/1D` snapshot은 falling-wedge/level/trend/proposal과 v5 commentary가
+같은 `algorithmVersion + inputDigest + asOf + contextDigest` identity를 가져야 `ready`다. 수동
+build 중 projection, LLM, schema/reference 또는 저장 검증이 실패하면 기존 snapshot 전체를 보존한다.
 
 ## AI Company Journal Routes
 
