@@ -238,9 +238,9 @@ def test_simulation_recommendations_use_current_matching_run_portfolio(monkeypat
 
 
 def test_simulation_demo_query_moves_nvda_from_second_to_first_after_activation(monkeypatch) -> None:
-    monkeypatch.setenv("RECOMMENDATION_DECISION_V1_ENABLED", "true")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = configured_app(monkeypatch)
+    monkeypatch.setenv("RECOMMENDATION_DECISION_V1_ENABLED", "true")
     repository = InMemoryRecommendationRepository()
     app.state.recommendation_repository = repository
     app.state.recommendation_market_provider = lambda: []
