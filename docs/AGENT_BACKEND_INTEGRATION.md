@@ -531,6 +531,8 @@ Redis 제안 캐시에 쓰지 않는다. 프런트는 현재 SIM `runId`에 대�
 가중치까지 일치할 때만 허용한다. 새 run의 `baseline`은 기존 활성 수식과 무관하게
 JPM 1위·NVDA 2위를 반환하고, 검증된 `volume_trend`는 NVDA를 1위로 반환한다. 순위와
 `customRankScore`는 fixed replay 서버 응답에서 함께 확정하며 프런트는 재정렬하지 않는다.
+두 시연 stage에서는 현재 보유종목도 후보에 유지하되 같은 SIM paper snapshot을
+포트폴리오 적합도와 수량 계산에는 계속 반영하며, 최종 응답은 15개로 제한한다.
 LIVE의 동일 문구와 stage 입력은 일반 evidence·LLM 제안·추천 경로를 변경하지 않는다.
 
 V2 commit은 사용자 advisory lock 아래에서 slot idempotency와 예상 preference state를

@@ -63,6 +63,7 @@ class FixedReplayRecommendationProvider:
         portfolio_snapshot: dict[str, Any] | None = None,
         score_profile: dict[str, Any] | None = None,
         portfolio_evaluated_at: datetime | None = None,
+        include_held_symbols: bool = False,
     ) -> dict[str, Any]:
         if not decision_v1_enabled():
             result = copy.deepcopy(self.payload)
@@ -80,6 +81,7 @@ class FixedReplayRecommendationProvider:
             portfolio_snapshot=portfolio_snapshot,
             score_profile=score_profile,
             portfolio_evaluated_at=portfolio_evaluated_at,
+            include_held_symbols=include_held_symbols,
         )
 
     def personalized_response(
@@ -89,6 +91,7 @@ class FixedReplayRecommendationProvider:
         portfolio_snapshot: dict[str, Any] | None,
         score_profile: dict[str, Any] | None,
         portfolio_evaluated_at: datetime | None = None,
+        include_held_symbols: bool = False,
     ) -> dict[str, Any]:
         cutoff = datetime.fromisoformat(str(self.payload["evidenceAsOf"]))
         portfolio_now = portfolio_evaluated_at or cutoff
@@ -99,7 +102,7 @@ class FixedReplayRecommendationProvider:
             excluded_symbols=tuple(normalized_profile["excludedSymbols"]),
             excluded_sectors=tuple(normalized_profile["excludedSectors"]),
         )
-        positions = _portfolio_positions(portfolio_snapshot)
+        positions = [] if include_held_symbols else _portfolio_positions(portfolio_snapshot)
         candidates = copy.deepcopy(self.payload.get("candidatePool") or [])
         for candidate in candidates:
             if candidate.get("narrativeContext"):
@@ -265,7 +268,7 @@ def apply_simulation_demo_recommendation_order(
             str(item.get("symbol") or ""),
         ),
     )
-    ordered = [*head, *remaining]
+    ordered = [*head, *remaining][:15]
     score_slots = sorted((_simulation_demo_effective_score(item) for item in source), reverse=True)
     previous_score = 100.01
     for index, item in enumerate(ordered):
@@ -280,6 +283,12 @@ def apply_simulation_demo_recommendation_order(
         item["metricsSnapshot"] = metrics
     result = copy.deepcopy(payload)
     result["items"] = ordered
+    summary = dict(result.get("summary") or {})
+    summary["actionCounts"] = {
+        action: sum(item.get("action") == action for item in ordered)
+        for action in ("buy", "conditional_buy", "watch", "not_suitable")
+    }
+    result["summary"] = summary
     result["simulationDemoStage"] = stage
     result["recommendationDigest"] = response_digest(result)
     return result

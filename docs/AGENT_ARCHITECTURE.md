@@ -17,7 +17,9 @@ ID/revision/schema/digest가 포함된다.
 fixed replay의 시장 evidence와 진입 판단 cutoff는 immutable하다. SIM에서는 예외적으로
 현재 저장 paper portfolio가 활성 `runId`와 일치하고 `asOf <= virtualTime`일 때만 그
 사용자 context로 보유종목 제외, 포트폴리오 적합도, 수량을 다시 계산한다. 다른 run이나
-LIVE/KIS snapshot은 fixed replay 사용자 context에 섞지 않는다.
+LIVE/KIS snapshot은 fixed replay 사용자 context에 섞지 않는다. 활성 SIM의 시연용
+`baseline|volume_trend` stage만 보유종목을 후보에 유지하며, 적합도와 수량에는 같은
+paper portfolio를 계속 반영한다.
 
 자연어 점수 프로필 제안은 `gops_agents.recommendation_profiles`가 소유한다. 기존 한국어
 query normalizer가 입력을 형태소 유사 fragment로 정규화하고, 고정된 추천 신호 문서를

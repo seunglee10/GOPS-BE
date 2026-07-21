@@ -499,10 +499,12 @@ LIVE mode에서는 API가 반환한 가장 최근 활성 세션 결과를 표시
 ### SIM 모드
 
 틱 replay SIM에서는 2026-07-14 마감 근거로 검증한 fixed replay 후보를 사용한다. 기본 안정
-수식과 빈 SIM 포트폴리오에서는 `JPM` 1위, `NVDA` 2위로 시작한다. 추천 수식 설정에서
+수식에서는 보유 여부와 관계없이 `JPM` 1위, `NVDA` 2위로 시작한다. 추천 수식 설정에서
 `거래대금이 강하고 추세가 이어지는 종목`을 요청하면 SIM 활성 run에 한해
 `simulation-demo-score-profile.v1` 고정 초안을 반환한다. 이 초안을 저장·활성화한 뒤 추천을
-재계산하면 같은 fixed 후보에 새 가중치를 적용해 `NVDA`가 1위가 된다.
+재계산하면 같은 fixed 후보에 새 가중치를 적용해 `NVDA`가 1위가 된다. 이 시연 stage는
+보유종목을 추천 후보에 유지하면서도 포트폴리오 적합도와 수량에는 현재 SIM snapshot을
+그대로 반영하고, 최종 추천은 15개만 반환한다.
 프런트는 이 promptVersion과 정확한 문구가 일치하면 `AI 제안` 응답을 편집 초안에 자동
 적용하므로, 시연자는 별도의 `초안에 적용` 클릭 없이 `저장하고 추천 재계산`으로 이어간다.
 
@@ -561,7 +563,9 @@ Agent UI panel type은 `stockRecommendations`다. 프런트 layout kind `recomme
 
 검증된 fixed recommendation override가 활성화된 틱 replay SIM에서는 같은 API로 이 참조
 계약을 생성한다. 시장 evidence는 고정하지만 현재 저장된 portfolio가 활성 SIM `runId`와
-일치하고 `asOf <= virtualTime`이면 보유종목 제외·포트폴리오 적합도·수량을 다시 계산하므로,
+일치하고 `asOf <= virtualTime`이면 포트폴리오 적합도·수량을 다시 계산한다. 시연용
+`baseline|volume_trend` stage에서는 보유종목도 후보에 유지하며, 그 외 fixed replay에서는
+기존처럼 보유종목을 제외한다. 따라서
 SIM 계좌 변경 뒤 item과 digest는 LIVE와 달라질 수 있다. 프런트가 simulator status에 추천
 item을 별도로 주입하지 않는다. 시연용 거래대금·추세 초안도 프런트 순서를 바꾸는 방식이
 아니라, backend fixed candidate pool을 저장된 점수 수식으로 다시 계산한다.

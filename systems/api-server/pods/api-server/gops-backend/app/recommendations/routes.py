@@ -272,7 +272,12 @@ def latest_stock_recommendations(
 ) -> dict[str, Any]:
     provider = _fixed_replay_from_request(request)
     if provider is not None:
-        payload = _fixed_replay_response(request.app, provider, user.sub)
+        payload = _fixed_replay_response(
+            request.app,
+            provider,
+            user.sub,
+            include_held_symbols=_simulation_demo_run_active(request.app, simulation_demo_stage),
+        )
         return jsonable_encoder(
             _simulation_demo_ordered_response(
                 request.app,
@@ -292,13 +297,19 @@ def refresh_stock_recommendations(
 ) -> dict[str, Any]:
     provider = _fixed_replay_from_request(request)
     if provider is not None:
-        payload = _fixed_replay_response(request.app, provider, user.sub)
+        requested_stage = body.simulationDemoStage if body else None
+        payload = _fixed_replay_response(
+            request.app,
+            provider,
+            user.sub,
+            include_held_symbols=_simulation_demo_run_active(request.app, requested_stage),
+        )
         return jsonable_encoder(
             _simulation_demo_ordered_response(
                 request.app,
                 payload,
                 user.sub,
-                body.simulationDemoStage if body else None,
+                requested_stage,
             )
         )
     now_provider = getattr(request.app.state, "recommendation_now_provider", None)
@@ -331,7 +342,13 @@ def _fixed_replay_from_request(request: Request):
         raise HTTPException(status_code=503, detail="fixed_replay_recommendation_unavailable") from exc
 
 
-def _fixed_replay_response(app: Any, provider: Any, user_sub: str) -> dict[str, Any]:
+def _fixed_replay_response(
+    app: Any,
+    provider: Any,
+    user_sub: str,
+    *,
+    include_held_symbols: bool = False,
+) -> dict[str, Any]:
     if not decision_v1_enabled():
         return provider.response()
     repository = _repository_from_app(app)
@@ -360,6 +377,7 @@ def _fixed_replay_response(app: Any, provider: Any, user_sub: str) -> dict[str, 
             portfolio_snapshot=portfolio_snapshot,
             score_profile=score_profile,
             portfolio_evaluated_at=portfolio_evaluated_at,
+            include_held_symbols=include_held_symbols,
         )
     )
 
@@ -370,15 +388,7 @@ def _simulation_demo_ordered_response(
     user_sub: str,
     requested_stage: str | None,
 ) -> dict[str, Any]:
-    if requested_stage not in {"baseline", "volume_trend"}:
-        return payload
-    try:
-        from app.routes.simulator import simulator_gateway_from_app
-
-        status = simulator_gateway_from_app(app).status()
-    except Exception:
-        return payload
-    if status.get("mode") != "simulation" or not status.get("runId"):
+    if not _simulation_demo_run_active(app, requested_stage):
         return payload
     effective_stage = requested_stage
     if effective_stage == "volume_trend":
@@ -388,6 +398,18 @@ def _simulation_demo_ordered_response(
         if not is_simulation_demo_score_profile(score_profile):
             effective_stage = "baseline"
     return apply_simulation_demo_recommendation_order(payload, effective_stage)
+
+
+def _simulation_demo_run_active(app: Any, requested_stage: str | None) -> bool:
+    if requested_stage not in {"baseline", "volume_trend"}:
+        return False
+    try:
+        from app.routes.simulator import simulator_gateway_from_app
+
+        status = simulator_gateway_from_app(app).status()
+    except Exception:
+        return False
+    return status.get("mode") == "simulation" and bool(status.get("runId"))
 
 
 def _fixed_replay_portfolio_context(
