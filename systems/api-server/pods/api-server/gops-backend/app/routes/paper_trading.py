@@ -464,7 +464,12 @@ def _enriched_account_snapshot(app: Any, repository: PaperTradingRepository, use
         unrealized_total += unrealized
         positions.append({
             **position,
-            **_fixture_position_fields(position["symbol"], qty, include_market_facts=not simulation_active),
+            **_fixture_position_fields(
+                position["symbol"],
+                qty,
+                include_market_facts=not simulation_active,
+                include_dividend_facts=simulation_active,
+            ),
             "available_qty": qty - Decimal(position.get("reserved_qty") or 0),
             "current_price": current_price,
             "price_source": price_source,
@@ -590,6 +595,7 @@ def _fixture_position_fields(
     quantity: Decimal,
     *,
     include_market_facts: bool = True,
+    include_dividend_facts: bool = False,
 ) -> dict[str, Any]:
     holding = HOLDING_BY_SYMBOL.get(str(symbol).strip().upper())
     if holding is None:
@@ -603,8 +609,13 @@ def _fixture_position_fields(
         "industry": holding.industry,
         "metadata_source": SEED_PROFILE,
     }
+    dividend_facts = {
+        "dividend_yield": holding.dividend_yield,
+        "dividend_per_share": holding.dividend_per_share,
+        "annual_dividend": holding.dividend_per_share * quantity if holding.dividend_per_share is not None else None,
+    }
     if not include_market_facts:
-        return identity
+        return {**identity, **dividend_facts} if include_dividend_facts else identity
     day_pnl_rate = holding.day_pnl_rate
     day_pnl = (
         quantity * holding.fallback_price * day_pnl_rate / Decimal("100")
@@ -616,9 +627,7 @@ def _fixture_position_fields(
         "eps_ttm": holding.eps_ttm,
         "low_52": holding.low_52,
         "high_52": holding.high_52,
-        "dividend_yield": holding.dividend_yield,
-        "dividend_per_share": holding.dividend_per_share,
-        "annual_dividend": holding.dividend_per_share * quantity if holding.dividend_per_share is not None else None,
+        **dividend_facts,
         "day_pnl_rate": day_pnl_rate,
         "day_pnl": day_pnl,
     }

@@ -617,6 +617,17 @@ class SimulatorRoutesTest(unittest.TestCase):
         )
         self.assertIn("7섹터", payload["account"]["alias"])
         self.assertEqual(payload["asOf"], "2026-07-15T00:00:00+09:00")
+        dividends = {
+            item["symbol"]: item["annualDividend"]
+            for item in payload["positions"]
+        }
+        self.assertEqual(dividends["GOOGL"], 48.0)
+        self.assertIsNone(dividends["AMZN"])
+        self.assertAlmostEqual(
+            sum(value for value in dividends.values() if value is not None),
+            1475.16,
+            places=2,
+        )
         quote_calls = [call for call in self.gateway.calls if call[0] in {"quote", "quotes"}]
         self.assertEqual(len(quote_calls), 1)
         self.assertEqual(quote_calls[0][0], "quotes")
