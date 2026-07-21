@@ -238,10 +238,34 @@ def test_simulation_recommendations_use_current_matching_run_portfolio(monkeypat
 
 
 def test_simulation_demo_query_moves_nvda_from_second_to_first_after_activation(monkeypatch) -> None:
+    class HeldPositionsRepository(InMemoryRecommendationRepository):
+        def get_portfolio_snapshot_at(self, _user_sub, _cutoff):
+            return None
+
+        def get_portfolio_snapshot(self, _user_sub):
+            return {
+                "user_sub": "dev-auth-disabled",
+                "payload": {
+                    "simulation": True,
+                    "runId": "sim-demo-run",
+                    "asOf": "2026-07-15T10:00:00+09:00",
+                    "source": "paper-shared",
+                    "account": {"cashForeign": 100_000, "totalValueForeign": 200_000},
+                    "positions": [
+                        {"symbol": "JPM", "sector": "Financials", "marketValueForeign": 50_000},
+                        {
+                            "symbol": "NVDA",
+                            "sector": "Information Technology",
+                            "marketValueForeign": 50_000,
+                        },
+                    ],
+                },
+            }
+
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = configured_app(monkeypatch)
     monkeypatch.setenv("RECOMMENDATION_DECISION_V1_ENABLED", "true")
-    repository = InMemoryRecommendationRepository()
+    repository = HeldPositionsRepository()
     app.state.recommendation_repository = repository
     app.state.recommendation_market_provider = lambda: []
     app.state.recommendation_profile_suggestion_cache_initialized = True
@@ -263,6 +287,7 @@ def test_simulation_demo_query_moves_nvda_from_second_to_first_after_activation(
     before = client.get(
         "/api/recommendations/stocks/latest?simulationDemoStage=baseline"
     ).json()
+    assert len(before["items"]) == 15
     assert [item["symbol"] for item in before["items"][:2]] == ["JPM", "NVDA"]
 
     not_yet_activated = client.post(
@@ -312,6 +337,7 @@ def test_simulation_demo_query_moves_nvda_from_second_to_first_after_activation(
         "/api/recommendations/stocks/refresh",
         json={"simulationDemoStage": "volume_trend"},
     ).json()
+    assert len(after["items"]) == 15
     assert after["items"][0]["symbol"] == "NVDA"
     assert after["items"][0]["rank"] == 1
     assert after["items"][0]["score"] > after["items"][1]["score"]
