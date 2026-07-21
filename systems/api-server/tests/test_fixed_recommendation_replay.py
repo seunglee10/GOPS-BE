@@ -26,6 +26,7 @@ from app.recommendations.fixed_replay import (  # noqa: E402
     DEFAULT_ARTIFACT_PATH,
     FixedReplayRecommendationProvider,
 )
+from app.recommendations.repository import InMemoryRecommendationRepository  # noqa: E402
 from app.recommendations.routes import router as recommendation_router  # noqa: E402
 from app.recommendations.worker import RecommendationWorker  # noqa: E402
 
@@ -234,6 +235,63 @@ def test_simulation_recommendations_use_current_matching_run_portfolio(monkeypat
     assert payload["scoringMode"] == "cutoff_user_profile"
     assert payload["items"][0]["symbol"] == "JPM"
     assert payload["items"][1]["symbol"] == "NVDA"
+
+
+def test_simulation_demo_query_moves_nvda_from_second_to_first_after_activation(monkeypatch) -> None:
+    monkeypatch.setenv("RECOMMENDATION_DECISION_V1_ENABLED", "true")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = configured_app(monkeypatch)
+    repository = InMemoryRecommendationRepository()
+    app.state.recommendation_repository = repository
+    app.state.recommendation_market_provider = lambda: []
+    app.state.recommendation_profile_suggestion_cache_initialized = True
+    app.state.simulator_gateway = SimpleNamespace(status=lambda: {
+        "mode": "simulation",
+        "runId": "sim-demo-run",
+        "virtualTime": "2026-07-15T10:00:00+09:00",
+    })
+    client = TestClient(app)
+    client.put(
+        "/api/recommendations/profile",
+        json={
+            "riskLevel": "balanced",
+            "recommendationStyle": "stable",
+            "horizon": "intraday",
+        },
+    )
+
+    before = client.get("/api/recommendations/stocks/latest").json()
+    assert [item["symbol"] for item in before["items"][:2]] == ["JPM", "NVDA"]
+
+    suggestion_response = client.post(
+        "/api/recommendations/score-profiles/suggestions",
+        json={"query": "거래대금이 강하고 추세가 이어지는 종목"},
+    )
+    assert suggestion_response.status_code == 200
+    suggestion = suggestion_response.json()["suggestion"]
+    profile = suggestion["profile"]
+    created_response = client.post(
+        "/api/recommendations/score-profiles",
+        json={
+            "name": profile["name"],
+            "blockWeights": profile["blockWeights"],
+            "factorWeights": profile["factorWeights"],
+            "portfolioWeight": profile["portfolioWeight"],
+            "portfolioFactorWeights": profile["portfolioFactorWeights"],
+        },
+    )
+    assert created_response.status_code == 200
+    profile_id = created_response.json()["profile"]["id"]
+    activated_response = client.put(
+        "/api/recommendations/score-profiles/active",
+        json={"type": "custom", "profileId": profile_id},
+    )
+    assert activated_response.status_code == 200
+
+    after = client.post("/api/recommendations/stocks/refresh", json={}).json()
+    assert after["items"][0]["symbol"] == "NVDA"
+    assert after["items"][0]["rank"] == 1
+    assert after["items"][0]["score"] > after["items"][1]["score"]
 
 
 @pytest.mark.parametrize(
