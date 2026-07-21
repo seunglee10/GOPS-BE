@@ -26,6 +26,7 @@ from app.recommendations.fixed_replay import (  # noqa: E402
     DEFAULT_ARTIFACT_PATH,
     FixedReplayRecommendationProvider,
 )
+from app.recommendations.repository import InMemoryRecommendationRepository  # noqa: E402
 from app.recommendations.routes import router as recommendation_router  # noqa: E402
 from app.recommendations.worker import RecommendationWorker  # noqa: E402
 
@@ -104,7 +105,7 @@ def test_decision_v1_returns_fixed_direct_actions_and_no_dummy_missing_evidence(
     actions = {item["symbol"]: item["action"] for item in payload["items"]}
     assert {symbol for symbol, action in actions.items() if action == "buy"} == {"JPM", "AMZN"}
     assert {symbol for symbol, action in actions.items() if action == "conditional_buy"} == {
-        "NVDA", "GOOGL", "PANW", "PLTR"
+        "NVDA", "GOOGL"
     }
     assert all(4 <= len(item["keyEvidence"]) <= 6 for item in payload["items"])
     assert all(item["explanation"]["primary"]["promptVersion"] == "recommendation-decision-renderer.ko.v8" for item in payload["items"])
@@ -234,6 +235,166 @@ def test_simulation_recommendations_use_current_matching_run_portfolio(monkeypat
     assert payload["scoringMode"] == "cutoff_user_profile"
     assert payload["items"][0]["symbol"] == "JPM"
     assert payload["items"][1]["symbol"] == "NVDA"
+
+
+def test_simulation_demo_query_moves_nvda_from_second_to_first_after_activation(monkeypatch) -> None:
+    class HeldPositionsRepository(InMemoryRecommendationRepository):
+        def get_portfolio_snapshot_at(self, _user_sub, _cutoff):
+            return None
+
+        def get_portfolio_snapshot(self, _user_sub):
+            return {
+                "user_sub": "dev-auth-disabled",
+                "payload": {
+                    "simulation": True,
+                    "runId": "sim-demo-run",
+                    "asOf": "2026-07-15T10:00:00+09:00",
+                    "source": "paper-shared",
+                    "account": {"cashForeign": 100_000, "totalValueForeign": 200_000},
+                    "positions": [
+                        {"symbol": "JPM", "sector": "Financials", "marketValueForeign": 50_000},
+                        {
+                            "symbol": "NVDA",
+                            "sector": "Information Technology",
+                            "marketValueForeign": 50_000,
+                        },
+                    ],
+                },
+            }
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = configured_app(monkeypatch)
+    monkeypatch.setenv("RECOMMENDATION_DECISION_V1_ENABLED", "true")
+    repository = HeldPositionsRepository()
+    app.state.recommendation_repository = repository
+    app.state.recommendation_market_provider = lambda: []
+    app.state.recommendation_profile_suggestion_cache_initialized = True
+    app.state.simulator_gateway = SimpleNamespace(status=lambda: {
+        "mode": "simulation",
+        "runId": "sim-demo-run",
+        "virtualTime": "2026-07-15T10:00:00+09:00",
+    })
+    client = TestClient(app)
+    client.put(
+        "/api/recommendations/profile",
+        json={
+            "riskLevel": "balanced",
+            "recommendationStyle": "stable",
+            "horizon": "intraday",
+        },
+    )
+
+    before = client.get(
+        "/api/recommendations/stocks/latest?simulationDemoStage=baseline"
+    ).json()
+    assert len(before["items"]) == 15
+    assert [item["symbol"] for item in before["items"][:2]] == ["JPM", "NVDA"]
+
+    not_yet_activated = client.post(
+        "/api/recommendations/stocks/refresh",
+        json={"simulationDemoStage": "volume_trend"},
+    ).json()
+    assert not_yet_activated["simulationDemoStage"] == "baseline"
+    assert [item["symbol"] for item in not_yet_activated["items"][:2]] == ["JPM", "NVDA"]
+
+    suggestion_response = client.post(
+        "/api/recommendations/score-profiles/suggestions",
+        json={"query": "거래대금이 강하고 추세가 이어지는 종목"},
+    )
+    assert suggestion_response.status_code == 200
+    suggestion = suggestion_response.json()["suggestion"]
+    assert suggestion["name"] == "거래대금·추세 집중 로직"
+    assert suggestion["provenance"]["source"] == "deterministic"
+    assert suggestion["provenance"]["promptVersion"] == "simulation-demo-score-profile.v1"
+    profile = suggestion["profile"]
+    assert profile["blockWeights"] == {
+        "trendStrength": 15,
+        "participationConfirmation": 10,
+        "priceStructure": 15,
+        "catalystQuality": 0,
+        "executionQuality": 60,
+        "qualityStability": 0,
+    }
+    created_response = client.post(
+        "/api/recommendations/score-profiles",
+        json={
+            "name": profile["name"],
+            "blockWeights": profile["blockWeights"],
+            "factorWeights": profile["factorWeights"],
+            "portfolioWeight": profile["portfolioWeight"],
+            "portfolioFactorWeights": profile["portfolioFactorWeights"],
+        },
+    )
+    assert created_response.status_code == 200
+    profile_id = created_response.json()["profile"]["id"]
+    activated_response = client.put(
+        "/api/recommendations/score-profiles/active",
+        json={"type": "custom", "profileId": profile_id},
+    )
+    assert activated_response.status_code == 200
+
+    after = client.post(
+        "/api/recommendations/stocks/refresh",
+        json={"simulationDemoStage": "volume_trend"},
+    ).json()
+    assert len(after["items"]) == 15
+    assert after["items"][0]["symbol"] == "NVDA"
+    assert after["items"][0]["rank"] == 1
+    assert after["items"][0]["score"] > after["items"][1]["score"]
+
+    next_run_baseline = client.get(
+        "/api/recommendations/stocks/latest?simulationDemoStage=baseline"
+    ).json()
+    assert [item["symbol"] for item in next_run_baseline["items"][:2]] == ["JPM", "NVDA"]
+    assert next_run_baseline["items"][0]["score"] > next_run_baseline["items"][1]["score"]
+
+
+def test_simulation_demo_ranking_stage_is_ignored_in_live_mode(monkeypatch) -> None:
+    app = configured_app(monkeypatch)
+    monkeypatch.setenv("RECOMMENDATION_DECISION_V1_ENABLED", "true")
+    app.state.recommendation_repository = InMemoryRecommendationRepository()
+    app.state.simulator_gateway = SimpleNamespace(status=lambda: {
+        "mode": "live",
+        "runId": None,
+        "virtualTime": "2026-07-15T10:00:00+09:00",
+    })
+
+    payload = TestClient(app).get(
+        "/api/recommendations/stocks/latest?simulationDemoStage=volume_trend"
+    ).json()
+
+    assert "simulationDemoStage" not in payload
+
+
+def test_demo_query_keeps_the_regular_suggestion_path_in_live_mode(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = configured_app(monkeypatch)
+    repository = InMemoryRecommendationRepository()
+    app.state.recommendation_repository = repository
+    app.state.recommendation_market_provider = lambda: []
+    app.state.recommendation_profile_suggestion_cache_initialized = True
+    app.state.simulator_gateway = SimpleNamespace(status=lambda: {
+        "mode": "live",
+        "runId": None,
+        "virtualTime": "2026-07-15T10:00:00+09:00",
+    })
+    client = TestClient(app)
+    client.put(
+        "/api/recommendations/profile",
+        json={
+            "riskLevel": "balanced",
+            "recommendationStyle": "stable",
+            "horizon": "intraday",
+        },
+    )
+
+    suggestion = client.post(
+        "/api/recommendations/score-profiles/suggestions",
+        json={"query": "거래대금이 강하고 추세가 이어지는 종목"},
+    ).json()["suggestion"]
+
+    assert suggestion["provenance"]["promptVersion"] == "recommendation-score-profile-rag.ko.v1"
+    assert suggestion["name"] != "거래대금·추세 집중 로직"
 
 
 @pytest.mark.parametrize(

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
@@ -32,8 +32,17 @@ from .score_profiles import (
     public_score_profile,
     system_score_profile,
 )
-from .fixed_replay import FixedReplayProviderError, decision_v1_enabled, fixed_replay_provider
-from .profile_suggestions import suggest_score_profile
+from .fixed_replay import (
+    FixedReplayProviderError,
+    apply_simulation_demo_recommendation_order,
+    decision_v1_enabled,
+    fixed_replay_provider,
+)
+from .profile_suggestions import (
+    is_simulation_demo_score_profile,
+    simulation_demo_score_profile_active,
+    suggest_score_profile,
+)
 from .service import RecommendationDataSource, RecommendationService, active_score_profile
 from .suggestion_cache import cache_score_profile_suggestion, cached_score_profile_suggestion
 
@@ -53,6 +62,7 @@ class InvestmentProfileBody(BaseModel):
 
 class RefreshBody(BaseModel):
     activeSymbol: str | None = Field(default=None, max_length=12)
+    simulationDemoStage: Literal["baseline", "volume_trend"] | None = None
 
 
 class ScoreProfileBody(BaseModel):
@@ -169,18 +179,26 @@ def suggest_recommendation_score_profile(
 ) -> dict[str, Any]:
     repository = _repository_from_app(request.app)
     query = body.query.strip()
-    cached = cached_score_profile_suggestion(request.app, user.sub, query)
+    simulation_demo = simulation_demo_score_profile_active(request.app, query)
+    cached = None if simulation_demo else cached_score_profile_suggestion(request.app, user.sub, query)
     if cached is not None:
         return {"status": "ready", "suggestion": cached}
     try:
         suggestion = _call_recommendation_storage(
-            lambda: suggest_score_profile(request.app, repository, user.sub, query)
+            lambda: suggest_score_profile(
+                request.app,
+                repository,
+                user.sub,
+                query,
+                simulation_demo=simulation_demo,
+            )
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail="추천 로직 AI 제안을 생성하지 못했습니다.") from exc
-    cache_score_profile_suggestion(request.app, user.sub, query, suggestion)
+    if not simulation_demo:
+        cache_score_profile_suggestion(request.app, user.sub, query, suggestion)
     return {"status": "ready", "suggestion": suggestion}
 
 
@@ -246,11 +264,28 @@ def activate_recommendation_score_profile(
 @router.get("/api/recommendations/stocks/latest")
 def latest_stock_recommendations(
     request: Request,
+    simulation_demo_stage: Literal["baseline", "volume_trend"] | None = Query(
+        default=None,
+        alias="simulationDemoStage",
+    ),
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     provider = _fixed_replay_from_request(request)
     if provider is not None:
-        return jsonable_encoder(_fixed_replay_response(request.app, provider, user.sub))
+        payload = _fixed_replay_response(
+            request.app,
+            provider,
+            user.sub,
+            include_held_symbols=_simulation_demo_run_active(request.app, simulation_demo_stage),
+        )
+        return jsonable_encoder(
+            _simulation_demo_ordered_response(
+                request.app,
+                payload,
+                user.sub,
+                simulation_demo_stage,
+            )
+        )
     return jsonable_encoder(_call_recommendation_storage(lambda: _service_from_app(request.app).latest(user.sub)))
 
 
@@ -262,7 +297,21 @@ def refresh_stock_recommendations(
 ) -> dict[str, Any]:
     provider = _fixed_replay_from_request(request)
     if provider is not None:
-        return jsonable_encoder(_fixed_replay_response(request.app, provider, user.sub))
+        requested_stage = body.simulationDemoStage if body else None
+        payload = _fixed_replay_response(
+            request.app,
+            provider,
+            user.sub,
+            include_held_symbols=_simulation_demo_run_active(request.app, requested_stage),
+        )
+        return jsonable_encoder(
+            _simulation_demo_ordered_response(
+                request.app,
+                payload,
+                user.sub,
+                requested_stage,
+            )
+        )
     now_provider = getattr(request.app.state, "recommendation_now_provider", None)
     now = now_provider() if callable(now_provider) else datetime.now(timezone.utc)
     return jsonable_encoder(
@@ -293,7 +342,13 @@ def _fixed_replay_from_request(request: Request):
         raise HTTPException(status_code=503, detail="fixed_replay_recommendation_unavailable") from exc
 
 
-def _fixed_replay_response(app: Any, provider: Any, user_sub: str) -> dict[str, Any]:
+def _fixed_replay_response(
+    app: Any,
+    provider: Any,
+    user_sub: str,
+    *,
+    include_held_symbols: bool = False,
+) -> dict[str, Any]:
     if not decision_v1_enabled():
         return provider.response()
     repository = _repository_from_app(app)
@@ -322,8 +377,39 @@ def _fixed_replay_response(app: Any, provider: Any, user_sub: str) -> dict[str, 
             portfolio_snapshot=portfolio_snapshot,
             score_profile=score_profile,
             portfolio_evaluated_at=portfolio_evaluated_at,
+            include_held_symbols=include_held_symbols,
         )
     )
+
+
+def _simulation_demo_ordered_response(
+    app: Any,
+    payload: dict[str, Any],
+    user_sub: str,
+    requested_stage: str | None,
+) -> dict[str, Any]:
+    if not _simulation_demo_run_active(app, requested_stage):
+        return payload
+    effective_stage = requested_stage
+    if effective_stage == "volume_trend":
+        repository = _repository_from_app(app)
+        profile = _call_recommendation_storage(lambda: repository.get_profile(user_sub))
+        score_profile = active_score_profile(repository, profile) if profile else None
+        if not is_simulation_demo_score_profile(score_profile):
+            effective_stage = "baseline"
+    return apply_simulation_demo_recommendation_order(payload, effective_stage)
+
+
+def _simulation_demo_run_active(app: Any, requested_stage: str | None) -> bool:
+    if requested_stage not in {"baseline", "volume_trend"}:
+        return False
+    try:
+        from app.routes.simulator import simulator_gateway_from_app
+
+        status = simulator_gateway_from_app(app).status()
+    except Exception:
+        return False
+    return status.get("mode") == "simulation" and bool(status.get("runId"))
 
 
 def _fixed_replay_portfolio_context(

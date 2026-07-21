@@ -36,7 +36,14 @@ side rail 또는 장전/본장 selector를 만들지 않는다. 로직 탭은 �
 `내 로직`에는 자연어 요청 입력과 `AI 제안` 버튼을 둔다. 제안 카드는 상위 블록 비중만
 간결하게 표시하고 hover/focus에서는 검색 의도와 최신 evidence/news를 바탕으로 만든 한국어
 두 문장만 표시한다. 원문 snapshot 수치, 기술 key, 뉴스 제목 목록은 노출하지 않는다. AI 응답은 즉시 현재 편집 대상으로 전환하지만 저장·활성 프로필은 바꾸지 않으며, 기존
-가중치 편집기에서 검토한 뒤 icon 저장 또는 `저장하고 추천 재계산`을 눌러야 반영된다.
+가중치 편집기에서 검토한 뒤 icon 저장 또는 `저장하고 추천 재계산`을 눌러야 반영된다. 활성 SIM run에서 서버가
+`simulation-demo-score-profile.v1`로 반환한 `거래대금이 강하고 추세가 이어지는 종목` 제안도 같은 초안 흐름을
+사용한다. 사용자가 이어서 `저장하고 추천 재계산`을 누르면 NVDA 1위 시연 순위를 읽는다.
+SIM 추천 시연 단계는 브라우저의 현재 `runId`별 session storage에만 저장한다. 새 run에서는
+저장된 사용자 수식과 무관하게 `baseline` 단계로 시작해 NVDA를 2위로 표시하고, 현재 run에서
+위 전용 수식을 저장·활성화한 뒤에만 `volume_trend` 단계로 전환한다. 프런트는 단계 값만
+recommendation API에 전달하며 순위·점수는 서버 fixed replay provider가 계산한 응답만 렌더링한다.
+LIVE 전환이나 다른 run의 단계 값을 재사용하지 않는다.
 입력창 아래에는 지원하는 신호 조합을 사용한 짧은 쿼리 예시를 두고, 선택하면 입력창에 채운다.
 
 모든 목록 모드는 추천점수·RSI(14)·공시 EPS 기반 PER·PBR·ROE·부채비율·영업이익률·
@@ -133,7 +140,10 @@ fixture를 남기지 않고 `simulation_data_unavailable` 상태를 표시한다
 전체 Geometry Asset은 현재 캔들이 첫 scene에 반영된 뒤 후순위로 요청한다. 해설 본문은
 먼저 표시할 수 있지만 작도·봉·이벤트·지표를 바꾸는 inline link는 전체 자산과 scene이
 준비된 뒤 활성화한다. 해설 panel은 별도 전체 자산 요청을 만들지 않고 chart document별
-runtime snapshot을 구독한다.
+runtime snapshot을 구독한다. 해설 상단의 종목·주기 identity는 기업 로고를 왼쪽에
+표시하고, 로고 이미지를 사용할 수 없으면 공통 `StockLogo`의 티커 이니셜 fallback을 사용한다.
+바로 아래 보유 현황 표의 `보유 상태 / 평균 매입가 / 보유 수량` 머리글은 primary text
+색상과 굵은 caption으로 표시하고 값 행의 typography는 유지한다.
 
 Order Flow 패널과 Bid/Ask 차트는 SIM에서 기존 intraday API와
 `/ws/charts?orderFlow=true`를 사용한다. 독립 Order Flow 패널은 초기 intraday REST 요청이
@@ -281,8 +291,10 @@ focus/pointer 선택한 `OrderTicket`·`QuickOrderPanel`(paper 변형 포함), �
 현재 화면에 표시된 최종 지지·저항 horizontal line의 오른쪽 가격 pill은 같은
 snapshot 경로를 사용하는 semantic button이다. pill을 직접 선택하면 pointer의 연속
 Y 좌표가 아니라 해당 drawing anchor의 정확한 소수점 두 자리 가격으로 스냅한다.
-숨김 또는 가격 pane 밖 레벨, 추세·패턴·제안·사용자 drawing과 평균 매입가는 이 스냅
-대상이 아니며, pill 바깥의 가격축은 기존 연속 가격 선택을 유지한다.
+숨김 또는 가격 pane 밖 레벨, 추세·패턴·제안·사용자 drawing은 이 스냅 대상이 아니다.
+현재 종목의 평균 매입가 pill은 보유 포지션 tooltip을 유지하는 semantic button이며,
+선택하면 해당 평균 매입가를 같은 snapshot 경로로 주문 패널에 적용한다. pill 바깥의
+가격축은 기존 연속 가격 선택을 유지한다.
 
 `이 가격에 예약하자`, `이 때 사자` 같은 차트 맥락 문장은 Agent/주문/알림 API보다
 먼저 로컬 확인 intent로 분기한다. 현재 `ChartTradeSetup`의 진입·목표·손절과 asset

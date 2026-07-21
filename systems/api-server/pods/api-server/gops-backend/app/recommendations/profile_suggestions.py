@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from copy import deepcopy
 from datetime import datetime, timezone
 from statistics import median
 from typing import Any
@@ -17,9 +18,21 @@ from .score_profiles import (
     system_score_profile,
 )
 from .service import RecommendationDataSource
+from .suggestion_cache import is_fast_suggestion_query
 
 
-def suggest_score_profile(app: Any, repository: Any, user_sub: str, query: str) -> dict[str, Any]:
+SIMULATION_DEMO_PROMPT_VERSION = "simulation-demo-score-profile.v1"
+SIMULATION_DEMO_PROFILE_NAME = "거래대금·추세 집중 로직"
+
+
+def suggest_score_profile(
+    app: Any,
+    repository: Any,
+    user_sub: str,
+    query: str,
+    *,
+    simulation_demo: bool = False,
+) -> dict[str, Any]:
     profile = repository.get_profile(user_sub)
     risk_level = str((profile or {}).get("risk_level") or "balanced")
     custom = repository.list_score_profiles(user_sub)
@@ -42,6 +55,8 @@ def suggest_score_profile(app: Any, repository: Any, user_sub: str, query: str) 
     symbols = _evidence_symbols(run, snapshot, market_items, limit=60)
     news_by_symbol = data_source.news_for_symbols(symbols, now) if symbols else {}
     evidence_context = _evidence_context(query, run, snapshot, market_items, news_by_symbol, now)
+    if simulation_demo and is_fast_suggestion_query(query):
+        return _simulation_demo_suggestion(query, base_profile, evidence_context, now)
     provider = getattr(app.state, "recommendation_profile_suggestion_provider", None)
     suggestion = build_score_profile_suggestion(
         query,
@@ -57,6 +72,141 @@ def suggest_score_profile(app: Any, repository: Any, user_sub: str, query: str) 
         "portfolioFactorWeights": normalized["portfolioFactorWeights"],
     })
     return suggestion
+
+
+def simulation_demo_score_profile_active(app: Any, query: str) -> bool:
+    if not is_fast_suggestion_query(query):
+        return False
+    try:
+        from app.routes.simulator import simulator_gateway_from_app
+
+        status = simulator_gateway_from_app(app).status()
+    except Exception:
+        return False
+    return status.get("mode") == "simulation" and bool(status.get("runId"))
+
+
+def is_simulation_demo_score_profile(profile: dict[str, Any] | None) -> bool:
+    if not profile or profile.get("type") != "custom" or float(profile.get("portfolioWeight") or 0) != 0:
+        return False
+    blocks = profile.get("blockWeights") or {}
+    factors = profile.get("factorWeights") or {}
+    trend = factors.get("trendStrength") or {}
+    price = factors.get("priceStructure") or {}
+    execution = factors.get("executionQuality") or {}
+    return (
+        blocks.get("trendStrength") == 15
+        and blocks.get("participationConfirmation") == 10
+        and blocks.get("priceStructure") == 15
+        and blocks.get("catalystQuality") == 0
+        and blocks.get("executionQuality") == 60
+        and blocks.get("qualityStability") == 0
+        and trend.get("oneDayRelativeStrength") == 100
+        and price.get("vwapHoldQuality") == 100
+        and execution.get("medianDollarVolume") == 70
+        and execution.get("quotedSpreadBps") == 30
+    )
+
+
+def _simulation_demo_suggestion(
+    query: str,
+    base_profile: dict[str, Any],
+    evidence_context: dict[str, Any],
+    now: datetime,
+) -> dict[str, Any]:
+    profile = deepcopy(base_profile)
+    factor_weights = deepcopy(profile["factorWeights"])
+    factor_weights.update({
+        "trendStrength": {
+            "currentSessionRelativeStrength": 0,
+            "last60MinuteRelativeStrength": 0,
+            "oneDayRelativeStrength": 100,
+            "fiveDayRelativeStrength": 0,
+            "high52WeekProximity": 0,
+        },
+        "priceStructure": {
+            "confirmedBreakoutSupport": 0,
+            "vwapHoldQuality": 100,
+            "higherLowQuality": 0,
+            "gapAcceptance": 0,
+        },
+        "executionQuality": {
+            "medianDollarVolume": 70,
+            "quotedSpreadBps": 30,
+            "freshnessScore": 0,
+        },
+    })
+    score_profile = {
+        "type": "custom",
+        "id": None,
+        "name": SIMULATION_DEMO_PROFILE_NAME,
+        "revision": 0,
+        "schemaVersion": profile["schemaVersion"],
+        "blockWeights": {
+            "trendStrength": 15,
+            "participationConfirmation": 10,
+            "priceStructure": 15,
+            "catalystQuality": 0,
+            "executionQuality": 60,
+            "qualityStability": 0,
+        },
+        "factorWeights": factor_weights,
+        "portfolioWeight": 0,
+        "portfolioFactorWeights": deepcopy(profile["portfolioFactorWeights"]),
+    }
+    retrieval_payload = {
+        "query": " ".join(query.split()),
+        "evidenceDigest": evidence_context.get("digest"),
+        "profile": score_profile,
+    }
+    retrieval_digest = hashlib.sha256(
+        json.dumps(retrieval_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    evidence_refs = list(evidence_context.get("evidenceRefs") or [])[:8]
+    return {
+        "schemaVersion": "recommendation-score-suggestion.v1",
+        "query": query.strip(),
+        "name": SIMULATION_DEMO_PROFILE_NAME,
+        "rationale": (
+            "거래대금과 호가 품질에 가장 큰 비중을 두고 당일 추세를 함께 확인합니다. "
+            "VWAP 유지 여부를 더해 거래 참여가 가격 흐름으로 이어지는 종목을 우선합니다."
+        ),
+        "confidence": 0.95,
+        "intent": {
+            "matchedKeywords": ["거래대금", "강한 추세"],
+            "documents": [
+                {
+                    "id": "volume-liquidity",
+                    "title": "거래대금과 유동성 확인",
+                    "reason": "거래대금과 호가 품질을 우선 확인합니다.",
+                    "matchedKeywords": ["거래대금"],
+                },
+                {
+                    "id": "fast-momentum",
+                    "title": "단기 모멘텀과 급등 지속",
+                    "reason": "당일 상대강도와 VWAP 유지 여부를 함께 확인합니다.",
+                    "matchedKeywords": ["강한 추세"],
+                },
+            ],
+        },
+        "profile": score_profile,
+        "evidence": {
+            "summary": list(evidence_context.get("summaryLines") or [])[:6],
+            "news": list(evidence_context.get("news") or [])[:8],
+        },
+        "provenance": {
+            "source": "deterministic",
+            "model": None,
+            "promptVersion": SIMULATION_DEMO_PROMPT_VERSION,
+            "generatedAt": now.astimezone(timezone.utc).isoformat(),
+            "evidenceSnapshotId": evidence_context.get("evidenceSnapshotId"),
+            "evidenceAsOf": evidence_context.get("evidenceAsOf"),
+            "newsAsOf": evidence_context.get("newsAsOf"),
+            "retrievalDigest": retrieval_digest,
+            "evidenceRefs": evidence_refs,
+            "fallbackReason": None,
+        },
+    }
 
 
 def _evidence_context(
