@@ -260,8 +260,17 @@ def test_simulation_demo_query_moves_nvda_from_second_to_first_after_activation(
         },
     )
 
-    before = client.get("/api/recommendations/stocks/latest").json()
+    before = client.get(
+        "/api/recommendations/stocks/latest?simulationDemoStage=baseline"
+    ).json()
     assert [item["symbol"] for item in before["items"][:2]] == ["JPM", "NVDA"]
+
+    not_yet_activated = client.post(
+        "/api/recommendations/stocks/refresh",
+        json={"simulationDemoStage": "volume_trend"},
+    ).json()
+    assert not_yet_activated["simulationDemoStage"] == "baseline"
+    assert [item["symbol"] for item in not_yet_activated["items"][:2]] == ["JPM", "NVDA"]
 
     suggestion_response = client.post(
         "/api/recommendations/score-profiles/suggestions",
@@ -299,10 +308,36 @@ def test_simulation_demo_query_moves_nvda_from_second_to_first_after_activation(
     )
     assert activated_response.status_code == 200
 
-    after = client.post("/api/recommendations/stocks/refresh", json={}).json()
+    after = client.post(
+        "/api/recommendations/stocks/refresh",
+        json={"simulationDemoStage": "volume_trend"},
+    ).json()
     assert after["items"][0]["symbol"] == "NVDA"
     assert after["items"][0]["rank"] == 1
     assert after["items"][0]["score"] > after["items"][1]["score"]
+
+    next_run_baseline = client.get(
+        "/api/recommendations/stocks/latest?simulationDemoStage=baseline"
+    ).json()
+    assert [item["symbol"] for item in next_run_baseline["items"][:2]] == ["JPM", "NVDA"]
+    assert next_run_baseline["items"][0]["score"] > next_run_baseline["items"][1]["score"]
+
+
+def test_simulation_demo_ranking_stage_is_ignored_in_live_mode(monkeypatch) -> None:
+    app = configured_app(monkeypatch)
+    monkeypatch.setenv("RECOMMENDATION_DECISION_V1_ENABLED", "true")
+    app.state.recommendation_repository = InMemoryRecommendationRepository()
+    app.state.simulator_gateway = SimpleNamespace(status=lambda: {
+        "mode": "live",
+        "runId": None,
+        "virtualTime": "2026-07-15T10:00:00+09:00",
+    })
+
+    payload = TestClient(app).get(
+        "/api/recommendations/stocks/latest?simulationDemoStage=volume_trend"
+    ).json()
+
+    assert "simulationDemoStage" not in payload
 
 
 def test_demo_query_keeps_the_regular_suggestion_path_in_live_mode(monkeypatch) -> None:

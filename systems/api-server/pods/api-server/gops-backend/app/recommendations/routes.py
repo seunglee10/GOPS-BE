@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
@@ -32,8 +32,17 @@ from .score_profiles import (
     public_score_profile,
     system_score_profile,
 )
-from .fixed_replay import FixedReplayProviderError, decision_v1_enabled, fixed_replay_provider
-from .profile_suggestions import simulation_demo_score_profile_active, suggest_score_profile
+from .fixed_replay import (
+    FixedReplayProviderError,
+    apply_simulation_demo_recommendation_order,
+    decision_v1_enabled,
+    fixed_replay_provider,
+)
+from .profile_suggestions import (
+    is_simulation_demo_score_profile,
+    simulation_demo_score_profile_active,
+    suggest_score_profile,
+)
 from .service import RecommendationDataSource, RecommendationService, active_score_profile
 from .suggestion_cache import cache_score_profile_suggestion, cached_score_profile_suggestion
 
@@ -53,6 +62,7 @@ class InvestmentProfileBody(BaseModel):
 
 class RefreshBody(BaseModel):
     activeSymbol: str | None = Field(default=None, max_length=12)
+    simulationDemoStage: Literal["baseline", "volume_trend"] | None = None
 
 
 class ScoreProfileBody(BaseModel):
@@ -254,11 +264,23 @@ def activate_recommendation_score_profile(
 @router.get("/api/recommendations/stocks/latest")
 def latest_stock_recommendations(
     request: Request,
+    simulation_demo_stage: Literal["baseline", "volume_trend"] | None = Query(
+        default=None,
+        alias="simulationDemoStage",
+    ),
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
     provider = _fixed_replay_from_request(request)
     if provider is not None:
-        return jsonable_encoder(_fixed_replay_response(request.app, provider, user.sub))
+        payload = _fixed_replay_response(request.app, provider, user.sub)
+        return jsonable_encoder(
+            _simulation_demo_ordered_response(
+                request.app,
+                payload,
+                user.sub,
+                simulation_demo_stage,
+            )
+        )
     return jsonable_encoder(_call_recommendation_storage(lambda: _service_from_app(request.app).latest(user.sub)))
 
 
@@ -270,7 +292,15 @@ def refresh_stock_recommendations(
 ) -> dict[str, Any]:
     provider = _fixed_replay_from_request(request)
     if provider is not None:
-        return jsonable_encoder(_fixed_replay_response(request.app, provider, user.sub))
+        payload = _fixed_replay_response(request.app, provider, user.sub)
+        return jsonable_encoder(
+            _simulation_demo_ordered_response(
+                request.app,
+                payload,
+                user.sub,
+                body.simulationDemoStage if body else None,
+            )
+        )
     now_provider = getattr(request.app.state, "recommendation_now_provider", None)
     now = now_provider() if callable(now_provider) else datetime.now(timezone.utc)
     return jsonable_encoder(
@@ -332,6 +362,32 @@ def _fixed_replay_response(app: Any, provider: Any, user_sub: str) -> dict[str, 
             portfolio_evaluated_at=portfolio_evaluated_at,
         )
     )
+
+
+def _simulation_demo_ordered_response(
+    app: Any,
+    payload: dict[str, Any],
+    user_sub: str,
+    requested_stage: str | None,
+) -> dict[str, Any]:
+    if requested_stage not in {"baseline", "volume_trend"}:
+        return payload
+    try:
+        from app.routes.simulator import simulator_gateway_from_app
+
+        status = simulator_gateway_from_app(app).status()
+    except Exception:
+        return payload
+    if status.get("mode") != "simulation" or not status.get("runId"):
+        return payload
+    effective_stage = requested_stage
+    if effective_stage == "volume_trend":
+        repository = _repository_from_app(app)
+        profile = _call_recommendation_storage(lambda: repository.get_profile(user_sub))
+        score_profile = active_score_profile(repository, profile) if profile else None
+        if not is_simulation_demo_score_profile(score_profile):
+            effective_stage = "baseline"
+    return apply_simulation_demo_recommendation_order(payload, effective_stage)
 
 
 def _fixed_replay_portfolio_context(

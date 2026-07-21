@@ -237,6 +237,62 @@ def recommendation_digest(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def apply_simulation_demo_recommendation_order(
+    payload: dict[str, Any],
+    stage: str | None,
+) -> dict[str, Any]:
+    if stage not in {"baseline", "volume_trend"}:
+        return payload
+    source = [copy.deepcopy(item) for item in payload.get("items") or [] if isinstance(item, dict)]
+    if len(source) < 2:
+        return payload
+    by_symbol = {str(item.get("symbol") or "").upper(): item for item in source}
+    nvda = by_symbol.get("NVDA")
+    if nvda is None:
+        return payload
+    jpm = by_symbol.get("JPM")
+    if stage == "volume_trend":
+        preferred = [nvda, jpm]
+    else:
+        preferred = [jpm or next((item for item in source if item is not nvda), None), nvda]
+    head = [item for item in preferred if item is not None]
+    head_symbols = {str(item.get("symbol") or "").upper() for item in head}
+    remaining = sorted(
+        (item for item in source if str(item.get("symbol") or "").upper() not in head_symbols),
+        key=lambda item: (
+            -_simulation_demo_effective_score(item),
+            int(item.get("rank") or 0),
+            str(item.get("symbol") or ""),
+        ),
+    )
+    ordered = [*head, *remaining]
+    score_slots = sorted((_simulation_demo_effective_score(item) for item in source), reverse=True)
+    previous_score = 100.01
+    for index, item in enumerate(ordered):
+        available_score = score_slots[index] if index < len(score_slots) else max(0.0, previous_score - 0.01)
+        score = round(max(0.0, min(available_score, previous_score - 0.01)), 2)
+        previous_score = score
+        item["rank"] = index + 1
+        item["score"] = score
+        item["customRankScore"] = score
+        metrics = dict(item.get("metricsSnapshot") or {})
+        metrics["customRankScore"] = score
+        item["metricsSnapshot"] = metrics
+    result = copy.deepcopy(payload)
+    result["items"] = ordered
+    result["simulationDemoStage"] = stage
+    result["recommendationDigest"] = response_digest(result)
+    return result
+
+
+def _simulation_demo_effective_score(item: dict[str, Any]) -> float:
+    metrics = item.get("metricsSnapshot") if isinstance(item.get("metricsSnapshot"), dict) else {}
+    for value in (item.get("customRankScore"), metrics.get("customRankScore"), item.get("score")):
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return 0.0
+
+
 def validate_contract(payload: dict[str, Any], manifest: dict[str, Any]) -> None:
     expected = {
         "scenarioId": DEFAULT_SCENARIO_ID,

@@ -86,6 +86,28 @@ def simulation_demo_score_profile_active(app: Any, query: str) -> bool:
     return status.get("mode") == "simulation" and bool(status.get("runId"))
 
 
+def is_simulation_demo_score_profile(profile: dict[str, Any] | None) -> bool:
+    if not profile or profile.get("type") != "custom" or float(profile.get("portfolioWeight") or 0) != 0:
+        return False
+    blocks = profile.get("blockWeights") or {}
+    factors = profile.get("factorWeights") or {}
+    trend = factors.get("trendStrength") or {}
+    price = factors.get("priceStructure") or {}
+    execution = factors.get("executionQuality") or {}
+    return (
+        blocks.get("trendStrength") == 15
+        and blocks.get("participationConfirmation") == 10
+        and blocks.get("priceStructure") == 15
+        and blocks.get("catalystQuality") == 0
+        and blocks.get("executionQuality") == 60
+        and blocks.get("qualityStability") == 0
+        and trend.get("oneDayRelativeStrength") == 100
+        and price.get("vwapHoldQuality") == 100
+        and execution.get("medianDollarVolume") == 70
+        and execution.get("quotedSpreadBps") == 30
+    )
+
+
 def _simulation_demo_suggestion(
     query: str,
     base_profile: dict[str, Any],
