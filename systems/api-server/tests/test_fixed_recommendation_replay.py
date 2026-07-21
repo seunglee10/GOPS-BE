@@ -269,7 +269,18 @@ def test_simulation_demo_query_moves_nvda_from_second_to_first_after_activation(
     )
     assert suggestion_response.status_code == 200
     suggestion = suggestion_response.json()["suggestion"]
+    assert suggestion["name"] == "거래대금·추세 집중 로직"
+    assert suggestion["provenance"]["source"] == "deterministic"
+    assert suggestion["provenance"]["promptVersion"] == "simulation-demo-score-profile.v1"
     profile = suggestion["profile"]
+    assert profile["blockWeights"] == {
+        "trendStrength": 15,
+        "participationConfirmation": 10,
+        "priceStructure": 15,
+        "catalystQuality": 0,
+        "executionQuality": 60,
+        "qualityStability": 0,
+    }
     created_response = client.post(
         "/api/recommendations/score-profiles",
         json={
@@ -292,6 +303,37 @@ def test_simulation_demo_query_moves_nvda_from_second_to_first_after_activation(
     assert after["items"][0]["symbol"] == "NVDA"
     assert after["items"][0]["rank"] == 1
     assert after["items"][0]["score"] > after["items"][1]["score"]
+
+
+def test_demo_query_keeps_the_regular_suggestion_path_in_live_mode(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = configured_app(monkeypatch)
+    repository = InMemoryRecommendationRepository()
+    app.state.recommendation_repository = repository
+    app.state.recommendation_market_provider = lambda: []
+    app.state.recommendation_profile_suggestion_cache_initialized = True
+    app.state.simulator_gateway = SimpleNamespace(status=lambda: {
+        "mode": "live",
+        "runId": None,
+        "virtualTime": "2026-07-15T10:00:00+09:00",
+    })
+    client = TestClient(app)
+    client.put(
+        "/api/recommendations/profile",
+        json={
+            "riskLevel": "balanced",
+            "recommendationStyle": "stable",
+            "horizon": "intraday",
+        },
+    )
+
+    suggestion = client.post(
+        "/api/recommendations/score-profiles/suggestions",
+        json={"query": "거래대금이 강하고 추세가 이어지는 종목"},
+    ).json()["suggestion"]
+
+    assert suggestion["provenance"]["promptVersion"] == "recommendation-score-profile-rag.ko.v1"
+    assert suggestion["name"] != "거래대금·추세 집중 로직"
 
 
 @pytest.mark.parametrize(

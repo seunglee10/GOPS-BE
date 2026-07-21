@@ -522,6 +522,10 @@ snapshot으로 보유종목 제외·포트폴리오 적합도·수량을 다시 
 미래 시각 snapshot은 사용하지 않고 fixed replay cutoff snapshot으로 돌아간다. 따라서
 SIM에서 계좌 상태가 바뀐 뒤의 item·digest는 LIVE 결과와 달라질 수 있다. 이 강제 주입은
 SIM 요청에만 적용하며 LIVE 추천과 worker의 환경변수 기반 override 계약은 유지한다.
+SIM 활성 run에서 `거래대금이 강하고 추세가 이어지는 종목` 점수 수식 제안은
+`simulation-demo-score-profile.v1` 결정론적 초안을 반환한다. 기본 fixed 순위의 NVDA 2위를
+보존하다가 이 초안을 저장·활성화한 refresh에서 NVDA가 1위가 되며, 해당 초안은 사용자별
+Redis 제안 캐시에 쓰지 않는다. LIVE의 동일 문구는 일반 evidence·LLM 제안 경로를 사용한다.
 
 V2 commit은 사용자 advisory lock 아래에서 slot idempotency와 예상 preference state를
 재확인하고, processed/skipped events, immutable preference/risk states, 모든 적격 후보의

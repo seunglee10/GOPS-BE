@@ -498,9 +498,14 @@ LIVE mode에서는 API가 반환한 가장 최근 활성 세션 결과를 표시
 
 ### SIM 모드
 
-틱 replay SIM에서는 point-in-time 추천을 보장할 수 없으므로 backend가
-`simulation_data_unavailable`을 반환한다. 프런트는 최신 추천이나 고정 synthetic item을
-대신 표시하지 않고 unavailable 상태를 보여 준다.
+틱 replay SIM에서는 2026-07-14 마감 근거로 검증한 fixed replay 후보를 사용한다. 기본 안정
+수식과 빈 SIM 포트폴리오에서는 `JPM` 1위, `NVDA` 2위로 시작한다. 추천 수식 설정에서
+`거래대금이 강하고 추세가 이어지는 종목`을 요청하면 SIM 활성 run에 한해
+`simulation-demo-score-profile.v1` 고정 초안을 반환한다. 이 초안을 저장·활성화한 뒤 추천을
+재계산하면 같은 fixed 후보에 새 가중치를 적용해 `NVDA`가 1위가 된다.
+
+시연 초안은 SIM 상태와 정확한 문구가 모두 일치할 때만 사용하고 Redis 제안 캐시에 저장하지
+않는다. LIVE 상태의 같은 문구는 기존 evidence·LLM 제안 경로를 그대로 사용한다.
 
 ## 추천 item과 화면 표시
 
@@ -556,7 +561,8 @@ Agent UI panel type은 `stockRecommendations`다. 프런트 layout kind `recomme
 계약을 생성한다. 시장 evidence는 고정하지만 현재 저장된 portfolio가 활성 SIM `runId`와
 일치하고 `asOf <= virtualTime`이면 보유종목 제외·포트폴리오 적합도·수량을 다시 계산하므로,
 SIM 계좌 변경 뒤 item과 digest는 LIVE와 달라질 수 있다. 프런트가 simulator status에 추천
-item을 별도로 주입하지 않는다.
+item을 별도로 주입하지 않는다. 시연용 거래대금·추세 초안도 프런트 순서를 바꾸는 방식이
+아니라, backend fixed candidate pool을 저장된 점수 수식으로 다시 계산한다.
 
 direct recommendation v1 item은 `buy`, `conditional_buy`, `watch`, `not_suitable` action과
 결정론적 `decision`, `sizing`, 가용 V3 block 기반 4~6개의 `keyEvidence`, 최대 하나의

@@ -33,7 +33,7 @@ from .score_profiles import (
     system_score_profile,
 )
 from .fixed_replay import FixedReplayProviderError, decision_v1_enabled, fixed_replay_provider
-from .profile_suggestions import suggest_score_profile
+from .profile_suggestions import simulation_demo_score_profile_active, suggest_score_profile
 from .service import RecommendationDataSource, RecommendationService, active_score_profile
 from .suggestion_cache import cache_score_profile_suggestion, cached_score_profile_suggestion
 
@@ -169,18 +169,26 @@ def suggest_recommendation_score_profile(
 ) -> dict[str, Any]:
     repository = _repository_from_app(request.app)
     query = body.query.strip()
-    cached = cached_score_profile_suggestion(request.app, user.sub, query)
+    simulation_demo = simulation_demo_score_profile_active(request.app, query)
+    cached = None if simulation_demo else cached_score_profile_suggestion(request.app, user.sub, query)
     if cached is not None:
         return {"status": "ready", "suggestion": cached}
     try:
         suggestion = _call_recommendation_storage(
-            lambda: suggest_score_profile(request.app, repository, user.sub, query)
+            lambda: suggest_score_profile(
+                request.app,
+                repository,
+                user.sub,
+                query,
+                simulation_demo=simulation_demo,
+            )
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail="추천 로직 AI 제안을 생성하지 못했습니다.") from exc
-    cache_score_profile_suggestion(request.app, user.sub, query, suggestion)
+    if not simulation_demo:
+        cache_score_profile_suggestion(request.app, user.sub, query, suggestion)
     return {"status": "ready", "suggestion": suggestion}
 
 
