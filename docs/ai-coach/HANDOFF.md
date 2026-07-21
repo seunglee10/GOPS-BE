@@ -14,10 +14,9 @@ The existing workspace hosts one `AI 투자 코치` panel with four internal pag
 
 1. `당일 거래 회고`: fill switching, a concise decision sentence, current and up to six
    similar cases, missed-check markers, portfolio impact, and a compact condition preview.
-2. `판단 습관과 다음 원칙`: independent `진입`, `청산`, and `포트폴리오` tabs for
-   `30d`, `90d`, and `1y`. Each tab uses its own sample, metrics, confidence, and
-   missing-data state.
-3. `효과·보완 조건`: deterministic priorities, candidate experiments, and guardrails.
+2. `효과·보완 조건`: deterministic priorities, candidate experiments, and guardrails.
+3. `장기 습관`: independent `진입`, `청산`, and `포트폴리오` tabs for `30d`, `90d`,
+   and `1y`. Each tab uses its own sample, metrics, confidence, and missing-data state.
 4. `실행·알람 관리`: one action center combining the former pages 4, 5, and 6:
    experiments, guardrails, recommended alerts, and already watched alerts.
 
@@ -261,7 +260,7 @@ rows, metrics, tabs, and text actions use `label-md` (16px); status/source/time/
 `caption` (14px/500).
 The old nested cards, hover-only evidence, generated waves, fluid font sizes, local font metrics, and
 heavy local weights are not part of the contract.
-Page 2 follows the same presentation contract: semantic stage tabs, flat evidence and habit rows,
+Page 3 follows the same presentation contract: semantic stage tabs, flat evidence and habit rows,
 label/count/meter-only strength summaries, problem recommendations without secondary observed-behavior
 copy, hairline-separated representative-trade sections, and no local typography metrics, decorative
 shadows, gradients, or nested card hierarchy.
@@ -295,7 +294,7 @@ terraform -chdir=infra/aws/terraform validate
 ```
 
 For visual review, run Vite with `VITE_AI_COACH_DEV_FIXTURE=true`; do not start the
-Alpaca realtime ingestor. Verify four pages, all three page-2 tabs, all periods, six-case
+Alpaca realtime ingestor. Verify four pages, all three page-3 tabs, all periods, six-case
 switching, keyboard tooltips, and narrow/wide resize.
 
 Static tests, manifest rendering, and Docker builds do not prove a live AWS data path.
