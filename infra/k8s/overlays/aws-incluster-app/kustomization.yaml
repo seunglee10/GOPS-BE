@@ -6,6 +6,7 @@ resources:
   - ../../base/app
   - secretstore-aws-secrets-manager.yaml
   - externalsecret-openai.yaml
+  - externalsecret-simulator-operator.yaml
   - ../aws/scheduled
   - ingress.yaml
   - retired-alpaca-ingestor.yaml
@@ -13,6 +14,15 @@ resources:
 patches:
   - path: configmap-incluster-patch.yaml
   - path: serviceaccount-irsa-patch.yaml
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: gops-backend
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/5/secretRef/optional
+        value: false
   - target:
       group: apps
       version: v1

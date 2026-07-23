@@ -1355,6 +1355,11 @@ sequence offset으로 사용해 전역 시간순을 보존한다. S3 원본 업�
 일반 배포는 ConfigMap의 `GOPS_SIMULATOR_URL`을 backend에 주입하고 simulator rollout도
 필수 gate로 기다린다. 별도 시작 스크립트는 필요 없다. 새 Pod는 `LIVE/idle`로 시작하고,
 화면의 플레이 버튼이 `start` action을 호출하기 전에는 새 run을 만들거나 재생하지 않는다.
+AWS Secrets Manager의 `sim/operator`는 쉼표로 구분한 운영자 Google 이메일 평문이다.
+`alfaka-simulator-operator-secret` ExternalSecret이 이를
+`SIMULATOR_OPERATOR_EMAILS`로 동기화하고 backend Deployment는 해당 Kubernetes Secret을
+필수로 주입한다. IRSA 정책에는 `sim/operator`의 정확한 ARN만 추가하며 Secret 값은
+manifest, CI 출력, Pod 로그에 기록하지 않는다. 목록 누락·불일치는 fail-closed 403이다.
 기존 `scripts/aws/start-dev-simulator.sh`는 ClickHouse schema와 고정 dataset의 `READY`,
 0보다 큰 event 수, 정확히 502개 symbol, health를 수동 점검하고 LIVE로 정리하는 호환 도구다. replica와 backend
 환경변수는 변경하지 않는다. SIP/BOATS

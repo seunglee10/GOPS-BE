@@ -8,11 +8,21 @@ resources:
   - ../../base/app
   - secretstore-aws-secrets-manager.yaml
   - externalsecret-openai.yaml
+  - externalsecret-simulator-operator.yaml
   - scheduled
 
 patches:
   - path: configmap-aws-patch.yaml
   - path: serviceaccount-irsa-aws-patch.yaml
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: gops-backend
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/envFrom/5/secretRef/optional
+        value: false
   - target:
       group: apps
       version: v1

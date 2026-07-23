@@ -137,6 +137,10 @@ projection을 소유한다. 계좌·주문·가격조건은
 Postgres paper 원장에서 `userId`와 `runId`로 격리한다.
 공개 speed 요청은 `1·2·5·10×`만 허용한다. 배포 전에 저장된 `20·60·300×` 실행 상태는
 simulator 복원 경계에서 `10×`로 낮춘 뒤 다시 저장한다.
+`GET /api/simulator/status`는 현재 세션의 `canControl` capability를 반환한다.
+`PUT /mode`, `POST /action`, `PUT /speed`는 인증된 사용자의 검증된 이메일이
+`SIMULATOR_OPERATOR_EMAILS` 허용 목록에 있을 때만 실행하며, 빈 목록은 fail-closed다.
+프런트의 버튼 숨김과 무관하게 이 권한 검사는 backend route에서 항상 강제한다.
 
 시작 스크립트 완료 상태는 `LIVE/idle`이다. 프런트 플레이 버튼의
 `POST /api/simulator/action {"action":"start"}`가 새 `runId` 준비와 `running` 전환을

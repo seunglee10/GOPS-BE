@@ -371,6 +371,7 @@ class RecordingReplayDerivedService:
 class SimulatorRoutesTest(unittest.TestCase):
     def setUp(self):
         os.environ["AUTH_ENABLED"] = "false"
+        os.environ["SIMULATOR_OPERATOR_EMAILS"] = "dev@gops.local"
         os.environ["KIS_ENV"] = "demo"
         os.environ["IDEMPOTENCY_HASH_SECRET"] = "test-secret"
         self.trace = []
@@ -390,6 +391,9 @@ class SimulatorRoutesTest(unittest.TestCase):
         )
         self.client = TestClient(self.app)
 
+    def tearDown(self):
+        os.environ.pop("SIMULATOR_OPERATOR_EMAILS", None)
+
     def test_mode_control_is_exposed_to_the_frontend(self):
         initial = self.client.get("/api/simulator/status")
         started = self.client.put("/api/simulator/mode", json={"mode": "simulation"})
@@ -397,12 +401,43 @@ class SimulatorRoutesTest(unittest.TestCase):
 
         self.assertEqual(initial.status_code, 200)
         self.assertEqual(initial.json()["mode"], "live")
+        self.assertTrue(initial.json()["canControl"])
         self.assertEqual(started.status_code, 200)
         self.assertEqual(started.json()["mode"], "simulation")
         self.assertEqual(stopped.status_code, 200)
         self.assertEqual(stopped.json()["mode"], "live")
         self.assertEqual(self.gateway.calls, [("mode", "simulation"), ("mode", "live")])
         self.assertEqual(self.trace, [("gateway", "simulation"), ("gateway", "live")])
+
+    def test_simulator_control_rejects_non_operator_without_calling_gateway(self):
+        os.environ["SIMULATOR_OPERATOR_EMAILS"] = "operator@example.com"
+
+        mode = self.client.put("/api/simulator/mode", json={"mode": "simulation"})
+        action = self.client.post("/api/simulator/action", json={"action": "start"})
+        speed = self.client.put("/api/simulator/speed", json={"speed": 5})
+
+        self.assertEqual(mode.status_code, 403)
+        self.assertEqual(action.status_code, 403)
+        self.assertEqual(speed.status_code, 403)
+        self.assertEqual(self.gateway.calls, [])
+        self.assertFalse(self.client.get("/api/simulator/status").json()["canControl"])
+
+    def test_empty_simulator_operator_allowlist_fails_closed(self):
+        os.environ["SIMULATOR_OPERATOR_EMAILS"] = ""
+
+        response = self.client.post("/api/simulator/action", json={"action": "start"})
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.gateway.calls, [])
+        self.assertFalse(self.client.get("/api/simulator/status").json()["canControl"])
+
+    def test_simulator_operator_email_matching_is_case_insensitive_and_trimmed(self):
+        os.environ["SIMULATOR_OPERATOR_EMAILS"] = " other@example.com, DEV@GOPS.LOCAL "
+
+        response = self.client.post("/api/simulator/action", json={"action": "start"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["canControl"])
 
     def test_play_action_prepares_and_starts_replay_from_live(self):
         response = self.client.post("/api/simulator/action", json={"action": "start"})

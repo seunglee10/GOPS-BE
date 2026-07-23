@@ -415,9 +415,15 @@ AUTH_REDIS_URL=
 AUTH_REDIS_KEY_PREFIX=gops:auth
 AUTH_SESSION_TTL_SECONDS=28800
 AUTH_OAUTH_STATE_TTL_SECONDS=300
+SIMULATOR_OPERATOR_EMAILS=
 ```
 
 When `AUTH_REDIS_URL` is empty, the API server uses `REDIS_URL`.
+`SIMULATOR_OPERATOR_EMAILS`는 쉼표로 구분한 Google 로그인 이메일 허용 목록이다.
+AWS에서는 External Secrets Operator가 평문 SecretString `sim/operator`를
+`alfaka-simulator-operator-secret`의 같은 환경변수로 동기화한다. 목록이 비어 있거나
+사용자 이메일이 일치하지 않으면 `/api/simulator/mode|action|speed`는 403을 반환한다.
+로컬 인증 비활성 개발 환경에서는 `dev@gops.local`을 명시해야 제어할 수 있다.
 
 ## Postgres
 

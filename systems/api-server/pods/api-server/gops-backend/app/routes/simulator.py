@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+import os
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
-from app.auth.dependencies import require_current_user
+from app.auth.dependencies import auth_is_enabled, optional_current_user, require_current_user
 from app.auth.models import AuthenticatedUser
 from app.services.simulator_gateway import SimulatorGateway, SimulatorUnavailable
 
@@ -25,13 +26,47 @@ class SimulatorSpeedRequest(BaseModel):
     speed: Literal[1, 2, 5, 10]
 
 
+def require_simulator_operator(
+    user: Annotated[AuthenticatedUser, Depends(require_current_user)],
+) -> AuthenticatedUser:
+    if not simulator_operator_allowed(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="simulator operator permission required",
+        )
+    return user
+
+
+def simulator_operator_allowed(user: AuthenticatedUser | None) -> bool:
+    if user is None:
+        return False
+    allowed_emails = {
+        email.strip().casefold()
+        for email in os.getenv("SIMULATOR_OPERATOR_EMAILS", "").split(",")
+        if email.strip()
+    }
+    return user.email.strip().casefold() in allowed_emails
+
+
 @router.get("/status")
-def simulator_status(request: Request) -> dict[str, Any]:
+def simulator_status(
+    request: Request,
+    user: Annotated[AuthenticatedUser | None, Depends(optional_current_user)],
+) -> dict[str, Any]:
+    capability_user = user
+    if capability_user is None and not auth_is_enabled():
+        capability_user = AuthenticatedUser.dev()
+    can_control = simulator_operator_allowed(capability_user)
     try:
-        return {"available": True, **simulator_gateway_from_app(request.app).status()}
+        return {
+            "available": True,
+            **simulator_gateway_from_app(request.app).status(),
+            "canControl": can_control,
+        }
     except SimulatorUnavailable as exc:
         return {
             "available": False,
+            "canControl": can_control,
             "mode": "live",
             "state": "idle",
             "detail": str(exc),
@@ -51,21 +86,33 @@ def simulator_status(request: Request) -> dict[str, Any]:
 
 
 @router.put("/mode")
-def simulator_mode(payload: SimulatorModeRequest, request: Request) -> dict[str, Any]:
+def simulator_mode(
+    payload: SimulatorModeRequest,
+    request: Request,
+    _operator: Annotated[AuthenticatedUser, Depends(require_simulator_operator)],
+) -> dict[str, Any]:
     _cancel_previous_simulation_run(request.app)
-    return _call_simulator(lambda gateway: gateway.set_mode(payload.mode), request)
+    return _call_simulator(lambda gateway: gateway.set_mode(payload.mode), request, can_control=True)
 
 
 @router.post("/action")
-def simulator_action(payload: SimulatorActionRequest, request: Request) -> dict[str, Any]:
+def simulator_action(
+    payload: SimulatorActionRequest,
+    request: Request,
+    _operator: Annotated[AuthenticatedUser, Depends(require_simulator_operator)],
+) -> dict[str, Any]:
     if payload.action in {"start", "restart"}:
         _cancel_previous_simulation_run(request.app)
-    return _call_simulator(lambda gateway: gateway.action(payload.action), request)
+    return _call_simulator(lambda gateway: gateway.action(payload.action), request, can_control=True)
 
 
 @router.put("/speed")
-def simulator_speed(payload: SimulatorSpeedRequest, request: Request) -> dict[str, Any]:
-    return _call_simulator(lambda gateway: gateway.set_speed(payload.speed), request)
+def simulator_speed(
+    payload: SimulatorSpeedRequest,
+    request: Request,
+    _operator: Annotated[AuthenticatedUser, Depends(require_simulator_operator)],
+) -> dict[str, Any]:
+    return _call_simulator(lambda gateway: gateway.set_speed(payload.speed), request, can_control=True)
 
 
 @router.get("/quote")
@@ -96,9 +143,12 @@ def simulator_mode_active(app: Any) -> bool:
         return (getattr(gateway, "last_status", None) or {}).get("mode") == "simulation"
 
 
-def _call_simulator(callback, request: Request) -> dict[str, Any]:
+def _call_simulator(callback, request: Request, *, can_control: bool | None = None) -> dict[str, Any]:
     try:
-        return callback(simulator_gateway_from_app(request.app))
+        response = callback(simulator_gateway_from_app(request.app))
+        if can_control is None:
+            return response
+        return {**response, "canControl": can_control}
     except SimulatorUnavailable as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 

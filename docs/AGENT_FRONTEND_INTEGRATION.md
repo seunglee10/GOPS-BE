@@ -94,7 +94,9 @@ action, decision, sizing, key evidence, 점수와 설명을 읽는다. 별도 re
 `start` action 하나로 새 run을 준비하고 즉시 `running`으로 전환한다. KST 가상시각·진행률·요청 배속·실효
 배속과 `재생/일시정지/재시작`을 표시한다. 배속은 `1·2·5·10×`이고 서버 status를
 진실의 원천으로 사용한다. 구형 서버 응답의 `20·60·300×` 요청값은 UI 경계에서 `10×`로
-정규화한다. 진행 중인 차트 봉의 남은 시간도 LIVE에서는 실제 시각,
+정규화한다. status의 `canControl=false`인 사용자는 현재 LIVE/SIM 상태만 볼 수 있고
+재생·일시정지·재시작·배속 제어를 표시하지 않는다. 이는 사용성 처리이고 실제 권한은
+backend가 강제한다. 진행 중인 차트 봉의 남은 시간도 LIVE에서는 실제 시각,
 SIM에서는 status의 `virtualTime`과 `effectiveSpeed`를 사용하며 일시정지 중에는 함께
 멈춘다. SIM 전환은 사용자가 보고 있는 화면을 강제로 바꾸지 않는다. 증시지도를 보고
 있다면 전체 LIVE universe 대신 replay manifest의 502종목만 표시하고, status의 replay

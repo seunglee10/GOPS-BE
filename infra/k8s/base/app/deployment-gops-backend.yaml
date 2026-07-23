@@ -37,6 +37,9 @@ spec:
             - secretRef:
                 name: alfaka-order-db-secret
                 optional: true
+            - secretRef:
+                name: alfaka-simulator-operator-secret
+                optional: true
           readinessProbe:
             httpGet:
               path: /health
