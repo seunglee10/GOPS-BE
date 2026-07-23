@@ -83,7 +83,7 @@ layout:
   top-nav-height: 48px
   bottom-nav-height: 64px
   control-size: 36px
-  app-ui-scale: 0.72
+  app-ui-scale: 0.96
   grid-gutter: "clamped 6px to 10px, based on viewport width"
   workspace-top-inset: 52px
   workspace-bottom-inset: 64px
@@ -219,9 +219,9 @@ The app is a fixed full-viewport shell:
 
 - `body`, `html`, and `#root` are `100vw`/`100vh` and `overflow: hidden`.
 - `canvas-workspace` fills the viewport.
-- The shell renders at `0.8` scale with an inverse-sized logical viewport,
-  matching the proportions of Firefox at roughly 72% zoom. Keep the runtime constant,
-  CSS fallback, and this document synchronized.
+- The shell renders at `0.96` scale with an inverse-sized logical viewport,
+  matching the previous `0.8` runtime viewed at 120% browser zoom. Keep the runtime
+  constant, CSS fallback, and this document synchronized.
 - A heatmap background layer can sit behind the active workspace.
 - Top and bottom nav are fixed overlays with pointer events only on controls.
 
