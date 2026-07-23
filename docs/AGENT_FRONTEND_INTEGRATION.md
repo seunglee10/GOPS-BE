@@ -136,6 +136,12 @@ fixture를 남기지 않고 `simulation_data_unavailable` 상태를 표시한다
 모드만을 이유로 숨기거나 다른 리포트로 교체하지 않는다. 프런트는 합성
 추천·뉴스·AI 보고서를 만들지 않는다. 차트는 서버가 반환한
 과거+replay candle과 replay WebSocket만 사용한다.
+고정 시연 dataset의 `NVDA/1D` 최초 캔들 요청은 뉴욕 시장일 `2026-01-21`
+(`2026-01-21T05:00:00Z`)부터 현재 replay `virtualTime`까지 최대 300개를 함께 읽는다.
+자동 작도는 timed anchor가 실제 로딩된 canonical candle에 있어야 표시되므로, 이 범위를
+SIM 전환 시 다시 요청해 수동 과거 백필 없이 저장 추세선이 첫 화면부터 해석되게 한다.
+이 확대 범위는 해당 dataset의 NVDA 일봉에만 적용하며 LIVE, 다른 종목, 다른 interval의
+기본 120봉 초기 로딩량은 유지한다.
 
 차트 초기 로딩에서는 저장 종합 해설의 경량 projection을 캔들과 병렬로 요청하고,
 전체 Geometry Asset은 현재 캔들이 첫 scene에 반영된 뒤 후순위로 요청한다. 해설 본문은
