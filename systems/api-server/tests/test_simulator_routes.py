@@ -393,6 +393,7 @@ class SimulatorRoutesTest(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("SIMULATOR_OPERATOR_EMAILS", None)
+        os.environ.pop("SIMULATOR_LOCAL_CONTROL_ENABLED", None)
 
     def test_mode_control_is_exposed_to_the_frontend(self):
         initial = self.client.get("/api/simulator/status")
@@ -430,6 +431,16 @@ class SimulatorRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(self.gateway.calls, [])
         self.assertFalse(self.client.get("/api/simulator/status").json()["canControl"])
+
+    def test_auth_disabled_local_control_can_run_without_an_operator_account(self):
+        os.environ["SIMULATOR_OPERATOR_EMAILS"] = ""
+        os.environ["SIMULATOR_LOCAL_CONTROL_ENABLED"] = "true"
+
+        response = self.client.post("/api/simulator/action", json={"action": "start"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["canControl"])
+        self.assertEqual(self.gateway.calls, [("action", "start")])
 
     def test_simulator_operator_email_matching_is_case_insensitive_and_trimmed(self):
         os.environ["SIMULATOR_OPERATOR_EMAILS"] = " other@example.com, DEV@GOPS.LOCAL "

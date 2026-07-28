@@ -95,6 +95,31 @@ contract uses SIP for `04:00-20:00 ET` and BOATS for `20:00-04:00 ET`:
 docker compose --profile alpaca up -d --build alpaca-ingestor alpaca-ingestor-boats
 ```
 
+### Backup replay simulator (local only)
+
+The simulator is an optional profile because it needs the large, immutable
+ClickHouse replay dataset. To restore the required simulator and chart tables
+from the private portable backup, run the checked script below. It verifies the
+archive checksum, replaces only the four local simulator/chart tables, and
+checks their expected row counts.
+
+```sh
+scripts/local/restore-simulator-backup.sh --execute
+docker compose --env-file .env --profile local-s3 --profile simulator up -d --build
+```
+
+Set these local-only values in uncommitted `.env` before starting the profile:
+
+```text
+GOPS_SIMULATOR_URL=http://gops-simulator:8765
+SIMULATOR_LOCAL_CONTROL_ENABLED=true
+SIM_AUTH_MODE=off
+```
+
+With `AUTH_ENABLED=false`, this lets the local browser start, pause, resume,
+and change the simulator speed without an operator account. It must remain off
+outside a private local Docker environment.
+
 Audit chart coverage:
 
 ```sh

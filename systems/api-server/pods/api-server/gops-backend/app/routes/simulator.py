@@ -38,6 +38,10 @@ def require_simulator_operator(
 
 
 def simulator_operator_allowed(user: AuthenticatedUser | None) -> bool:
+    # This is intentionally limited to the local auth-disabled runtime.  Production
+    # still requires an authenticated user whose email is on the operator allowlist.
+    if not auth_is_enabled() and _local_simulator_control_enabled():
+        return True
     if user is None:
         return False
     allowed_emails = {
@@ -46,6 +50,15 @@ def simulator_operator_allowed(user: AuthenticatedUser | None) -> bool:
         if email.strip()
     }
     return user.email.strip().casefold() in allowed_emails
+
+
+def _local_simulator_control_enabled() -> bool:
+    return os.getenv("SIMULATOR_LOCAL_CONTROL_ENABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 @router.get("/status")

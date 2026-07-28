@@ -1,0 +1,17 @@
+<clickhouse>
+    <!-- Services on the local Docker data network use clickhouse:8123. -->
+    <listen_host>0.0.0.0</listen_host>
+
+    <!-- Docker-local only: define and permit RESTORE ... FROM Disk('backups', ...). -->
+    <storage_configuration>
+        <disks>
+            <backups>
+                <type>local</type>
+                <path>/var/lib/clickhouse/backups/</path>
+            </backups>
+        </disks>
+    </storage_configuration>
+    <backups>
+        <allowed_disk>backups</allowed_disk>
+    </backups>
+</clickhouse>

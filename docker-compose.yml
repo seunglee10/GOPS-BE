@@ -174,12 +174,43 @@ services:
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - ./infra/clickhouse/initdb:/docker-entrypoint-initdb.d:ro
+      # Local portable-backup restore needs only ClickHouse's built-in backups disk.
+      - ./infra/clickhouse/config.d:/etc/clickhouse-server/config.d:ro
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --user alfaka --password alfaka --query 'SELECT 1' >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 20
     networks:
+      - data_net
+
+  gops-simulator:
+    profiles: ["simulator"]
+    image: gops-simulator
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-simulator
+    container_name: alfaka-gops-simulator
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      REDIS_URL: "redis://redis:6379/0"
+      SIM_AUTH_MODE: "${SIM_AUTH_MODE:-off}"
+      SIM_REPLAY_DATASET_ID: "${SIM_REPLAY_DATASET_ID:-sp500-full-20260715-kst-v3}"
+      SIM_CLICKHOUSE_TIMEOUT_SECONDS: "${SIM_CLICKHOUSE_TIMEOUT_SECONDS:-30}"
+      SIM_MAX_EVENTS_PER_PUMP: "${SIM_MAX_EVENTS_PER_PUMP:-50000}"
+    ports:
+      - "8765:8765"
+    restart: unless-stopped
+    networks:
+      - app_net
       - data_net
 
   graphdb:
