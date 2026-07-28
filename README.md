@@ -2,7 +2,6 @@
 
 GOPS is a real-time market-data, chart, and order-control platform.
 
-Product direction: **종목을 찾는 사람에게 기준을, 시장을 읽는 사람에게 방향을.**
 See `docs/AGENT_ARCHITECTURE.md` for the current agent direction and handoff boundaries. Future-facing product ideas are context, not implemented guarantees.
 
 ## Current Scope
