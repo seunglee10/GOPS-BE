@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       services:
-        description: "Optional service keys to deploy, e.g. frontend,backend. Use all to force every app image."
+        description: "Optional service keys to deploy, e.g. backend,simulator. Use all to force every app image. frontend는 gops-frontend 저장소가 배포합니다."
         required: false
         type: string
       run_order_migrations:
@@ -45,7 +45,6 @@ env:
   K8S_NAMESPACE: alfaka-market-data
   PLATFORM_KUSTOMIZE_OVERLAY: infra/k8s/base/platform
   KUSTOMIZE_OVERLAY: infra/k8s/overlays/aws-incluster-app-ci
-  ECR_FRONTEND_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
   ECR_API_SERVER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
   ECR_MARKET_INGESTOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
   ECR_MARKET_PROCESSOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-processor
@@ -100,24 +99,7 @@ jobs:
           python systems/agent-orchestration/jobs/chart-asset-migrations/main.py
           python scripts/erd/check_erd_drift.py --strict
 
-      - name: Set up Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: apps/gops-frontend/package-lock.json
-
-      - name: Install frontend dependencies
-        run: npm ci --prefix apps/gops-frontend
-
-      - name: Run chart tests
-        run: npm run test:chart --prefix apps/gops-frontend
-
-      - name: Build frontend
-        run: npm run build --prefix apps/gops-frontend
-
-      - name: Enforce frontend bundle budget
-        run: npm run test:bundle-size --prefix apps/gops-frontend
+      # 프론트엔드 테스트·빌드·번들 예산은 gops-frontend 저장소의 CI가 담당합니다.
 
       - name: Set up kubectl for manifest rendering
         uses: azure/setup-kubectl@v4
@@ -171,12 +153,6 @@ jobs:
       - name: Ensure Amazon ECR repositories
         if: steps.changes.outputs.has_services == 'true'
         run: ./scripts/aws/ensure-ecr-repositories.sh
-
-      - name: Load Logo.dev build key from AWS Secrets Manager
-        if: steps.changes.outputs.has_services == 'true' && contains(steps.changes.outputs.services, 'frontend')
-        env:
-          LOGODEV_SECRET_NAME: icon/logodev
-        run: ./scripts/aws/load-logodev-build-env.sh
 
       - name: Login to Amazon ECR
         if: steps.changes.outputs.has_services == 'true'
@@ -352,7 +328,6 @@ jobs:
       - name: Smoke test public endpoints
         if: steps.changes.outputs.has_services == 'true'
         env:
-          SMOKE_FRONTEND: ${{ steps.changes.outputs.smoke_frontend }}
           SMOKE_BACKEND: ${{ steps.changes.outputs.smoke_backend }}
         run: |
           smoke_url() {
@@ -369,9 +344,6 @@ jobs:
             curl -i -fsS "$url" >/dev/null
           }
 
-          if [[ "$SMOKE_FRONTEND" == "true" ]]; then
-            smoke_url https://stargops.com/
-          fi
           if [[ "$SMOKE_BACKEND" == "true" ]]; then
             smoke_url https://stargops.com/api/health
           fi

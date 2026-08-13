@@ -15,7 +15,8 @@ Use current code, this file, and the docs in `docs/` as the source of truth. If 
 ## Structure Rules
 
 - Keep feature code under `systems/<system>`.
-- Keep UI code under `apps/`.
+- UI 코드는 이 저장소에 없습니다. 프론트엔드는 gops-frontend 저장소가 담당합니다
+  (디자인 시스템 문서 `DESIGN.md` 포함). `docs/REPO_SPLIT.md` 참고.
 - Keep external/runtime dependency contracts under `platform/`.
 - Keep Docker, compose, k8s, Terraform, and AWS deployment assets under `infra/`.
 - Use root `shared/` only for stable cross-system contracts.

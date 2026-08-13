@@ -28,13 +28,15 @@ GOPS는 실시간 시장 데이터, 차트, 주문 제어 기능을 제공하는
 | `docs/AGENT_FRONTEND_INTEGRATION.md` | 에이전트 채팅 제출, `analysisId`, 리포트 표시, 레이아웃·차트 제안 처리 |
 | `docs/AGENT_AWS_BUILD.md` | 에이전트 이미지, EKS 리소스, Kafka, Redis/Valkey, ClickHouse, GraphDB, S3, 비밀값, 스모크 검사 |
 | `AGENTS.md` | Codex와 이후 기여자가 따라야 할 규칙 |
+| `docs/REPO_SPLIT.md` | 프론트/백 저장소 분리 내역과 배포 소유권 |
 
 ## 저장소 구조
 
-```text
-apps/gops-frontend/                React 프론트엔드
-apps/chart-engine/                 차트 문서·런타임·캔버스 엔진
+> 프론트엔드(`apps/gops-frontend`, `apps/chart-engine`)는 **gops-frontend 저장소**로
+> 분리되었습니다. 이 저장소는 백엔드·플랫폼·인프라·문서를 담당합니다.
+> 자세한 분리 내역은 [docs/REPO_SPLIT.md](docs/REPO_SPLIT.md)를 참고하세요.
 
+```text
 systems/api-server/                FastAPI 차트·주문·WebSocket 게이트웨이
 systems/market-data/               설정, 수집, 처리, 저장, 조회 도우미, 필요 시 데이터 보충
 systems/order/                     KIS 모의투자 주문 도메인, Outbox, 어댑터, 작업
@@ -370,8 +372,6 @@ PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems
 PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server python -m unittest discover systems/market-data/tests
 PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server python -m unittest discover systems/api-server/tests
 PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server python -m pytest systems/order/tests/kis_trader
-npm run test:chart --prefix apps/gops-frontend
-npm run build --prefix apps/gops-frontend
 docker compose config --quiet
 kubectl kustomize infra/k8s/base >/tmp/gops-k8s-base.yaml
 kubectl kustomize infra/k8s/overlays/aws >/tmp/gops-k8s-aws.yaml

@@ -44,6 +44,21 @@ patches:
         name: alfaka-openai-secret
         namespace: alfaka-market-data
       $patch: delete
+  # gops-frontend Deployment는 gops-frontend 저장소의 CI가 소유합니다. 이 overlay가
+  # 함께 apply하면 프론트가 배포한 이미지 태그를 덮어쓰므로 여기서는 제외합니다.
+  # Service와 Ingress는 트래픽 경로이므로 그대로 둡니다.
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: gops-frontend
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: gops-frontend
+        namespace: alfaka-market-data
+      $patch: delete
 
 images:
   - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
@@ -53,8 +68,6 @@ images:
   - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-storage
     newTag: "ci-placeholder"
   - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
-    newTag: "ci-placeholder"
-  - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
     newTag: "ci-placeholder"
   - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-order-worker
     newTag: "ci-placeholder"

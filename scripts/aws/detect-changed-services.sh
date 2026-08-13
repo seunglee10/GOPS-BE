@@ -164,11 +164,8 @@ select_services_for_path() {
     requirements.txt | .dockerignore)
       add_all_services
       ;;
-    apps/gops-frontend/* | apps/chart-engine/* | infra/docker/nginx/*)
-      add_service frontend
-      ;;
+    # 프론트엔드는 gops-frontend 저장소가 담당하므로 여기서 선택하지 않습니다.
     shared/chart-contract/*)
-      add_service frontend
       add_service agent-orchestrator
       ;;
     systems/api-server/pods/api-server/app/contracts/*)
@@ -237,9 +234,6 @@ select_services_for_path() {
       ;;
     infra/docker/Dockerfile.gops-backend)
       add_service backend
-      ;;
-    infra/docker/Dockerfile.gops-frontend)
-      add_service frontend
       ;;
     infra/docker/Dockerfile.gops-kis-adapter)
       add_service kis-adapter
@@ -317,14 +311,10 @@ fi
 services="${SELECTED_KEYS}"
 deployments="${SELECTED_DEPLOYMENTS}"
 has_services="false"
-smoke_frontend="false"
 smoke_backend="false"
 order_migrations_required="false"
 if [[ -n "${SELECTED_KEYS}" ]]; then
   has_services="true"
-fi
-if service_already_selected frontend; then
-  smoke_frontend="true"
 fi
 if service_already_selected backend; then
   smoke_backend="true"
@@ -335,6 +325,5 @@ fi
 write_output "has_services" "${has_services}"
 write_output "services" "${services}"
 write_output "deployments" "${deployments}"
-write_output "smoke_frontend" "${smoke_frontend}"
 write_output "smoke_backend" "${smoke_backend}"
 write_output "order_migrations_required" "${order_migrations_required}"

@@ -22,13 +22,13 @@ IMAGE_TAG=chart-readonly-test \
 DRY_RUN=true \
 bash "${DEPLOY_SCRIPT}"
 
-test "$(wc -l < "${TEMP_DIR}/kubectl.log" | tr -d ' ')" = "3"
-grep -q '^set image deployment/gops-frontend gops-frontend=.*gops-frontend:chart-readonly-test ' "${TEMP_DIR}/kubectl.log"
+# gops-frontend Deployment는 gops-frontend 저장소가 롤아웃하므로 여기서는 건드리지 않는다.
+test "$(wc -l < "${TEMP_DIR}/kubectl.log" | tr -d ' ')" = "2"
 grep -q '^set image deployment/agent-analysis-worker agent-analysis-worker=.*gops-agent-orchestrator:chart-readonly-test ' "${TEMP_DIR}/kubectl.log"
 grep -q '^set image deployment/agent-orchestrator agent-orchestrator=.*gops-agent-orchestrator:chart-readonly-test ' "${TEMP_DIR}/kubectl.log"
 grep -q -- '--dry-run=server' "${TEMP_DIR}/kubectl.log"
 
-if grep -Eq 'chart-asset-builder|chart-geometry-build|migration|cronjob| apply ' "${TEMP_DIR}/kubectl.log"; then
+if grep -Eq 'gops-frontend|chart-asset-builder|chart-geometry-build|migration|cronjob| apply ' "${TEMP_DIR}/kubectl.log"; then
   printf 'read-only chart deploy touched a forbidden workload:\n' >&2
   cat "${TEMP_DIR}/kubectl.log" >&2
   exit 1

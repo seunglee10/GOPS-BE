@@ -20,23 +20,21 @@ usage() {
   printf 'Usage: %s [service ...]\n\n' "${0##*/}"
   printf 'No service arguments: build and push all GOPS images.\n'
   printf 'With service arguments: build and push only those images.\n'
-  printf 'You can also set SERVICES="frontend,backend" or SERVICES="frontend backend".\n\n'
+  printf 'You can also set SERVICES="backend,simulator" or SERVICES="backend simulator".\n\n'
   printf 'Available services:\n'
   while IFS=$'\t' read -r key repository _env_var _dockerfile; do
     printf '  %-22s -> %s\n' "${key}" "${repository}"
   done < <(gops_image_entries)
   printf '\nExamples:\n'
-  printf '  AWS_ACCOUNT_ID=<aws-account-id> %s frontend\n' "${0##*/}"
-  printf '  AWS_ACCOUNT_ID=<aws-account-id> SERVICES=frontend,backend %s\n' "${0##*/}"
+  printf '  AWS_ACCOUNT_ID=<aws-account-id> %s backend\n' "${0##*/}"
+  printf '  AWS_ACCOUNT_ID=<aws-account-id> SERVICES=backend,simulator %s\n' "${0##*/}"
 }
 
 normalize_service_key() {
   local service="$1"
 
+  # frontend는 gops-frontend 저장소가 자체 CI에서 빌드·푸시합니다.
   case "${service}" in
-    gops-frontend)
-      echo "frontend"
-      ;;
     api-server | backend | gops-api-server | gops-backend)
       echo "backend"
       ;;
@@ -101,15 +99,6 @@ build_image() {
   local dockerfile="$1"
   local image="$2"
   local build_args=()
-
-  if [[ "${dockerfile}" == "infra/docker/Dockerfile.gops-frontend" ]]; then
-    local logo_dev_publishable_key="${LOGODEV_PUB_KEY:-${VITE_LOGO_DEV_PUBLISHABLE_KEY:-}}"
-    build_args+=(--build-arg "VITE_LOGO_DEV_ATTRIBUTION=${VITE_LOGO_DEV_ATTRIBUTION:-true}")
-    if [[ -n "${logo_dev_publishable_key}" ]]; then
-      build_args+=(--build-arg "LOGODEV_PUB_KEY=${logo_dev_publishable_key}")
-      build_args+=(--build-arg "VITE_LOGO_DEV_PUBLISHABLE_KEY=${logo_dev_publishable_key}")
-    fi
-  fi
 
   if docker buildx version >/dev/null 2>&1; then
     if [[ "${#build_args[@]}" -gt 0 ]]; then

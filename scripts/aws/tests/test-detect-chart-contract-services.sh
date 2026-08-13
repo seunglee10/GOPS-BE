@@ -11,7 +11,6 @@ git -C "${TEMP_REPO}" config user.email "codex-test@gops.local"
 git -C "${TEMP_REPO}" config user.name "GOPS contract test"
 mkdir -p "${TEMP_REPO}/shared/chart-contract"
 mkdir -p "${TEMP_REPO}/infra/docker"
-printf 'FROM scratch\n' > "${TEMP_REPO}/infra/docker/Dockerfile.gops-frontend"
 printf 'FROM scratch\n' > "${TEMP_REPO}/infra/docker/Dockerfile.gops-agent-orchestrator"
 printf 'FROM scratch\n' > "${TEMP_REPO}/infra/docker/Dockerfile.gops-order-worker"
 printf '%s\n' '{"version":1}' > "${TEMP_REPO}/shared/chart-contract/chart-explanation.schema.json"
@@ -27,12 +26,12 @@ OUTPUT="$(cd "${TEMP_REPO}" && BASE_SHA="${BASE_SHA}" HEAD_SHA="${HEAD_SHA}" EVE
 SERVICES="$(printf '%s\n' "${OUTPUT}" | sed -n 's/^services=//p')"
 
 case " ${SERVICES} " in
-  *" frontend "*) ;;
-  *) printf 'frontend was not selected: %s\n' "${SERVICES}" >&2; exit 1 ;;
-esac
-case " ${SERVICES} " in
   *" agent-orchestrator "*) ;;
   *) printf 'agent-orchestrator was not selected: %s\n' "${SERVICES}" >&2; exit 1 ;;
+esac
+# 프론트엔드는 gops-frontend 저장소가 담당하므로 여기서 선택되면 안 된다.
+case " ${SERVICES} " in
+  *" frontend "*) printf 'frontend must not be selected: %s\n' "${SERVICES}" >&2; exit 1 ;;
 esac
 
 printf 'chart contract service detection passed: %s\n' "${SERVICES}"

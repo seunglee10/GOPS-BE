@@ -25,10 +25,8 @@ gops_image_env_var_for_repository() {
 gops_normalize_service_key() {
   local service="$1"
 
+  # frontend는 gops-frontend 저장소가 자체 CI에서 빌드·푸시·롤아웃합니다.
   case "${service}" in
-    gops-frontend)
-      echo "frontend"
-      ;;
     api-server | backend | gops-api-server | gops-backend)
       echo "backend"
       ;;
@@ -125,9 +123,6 @@ gops_deployments_for_service() {
     backend)
       printf '%s\n' alert-evaluator gops-backend gops-heatmap-projection-worker recommendation-worker
       ;;
-    frontend)
-      printf '%s\n' gops-frontend
-      ;;
     kis-adapter)
       printf '%s\n' kis-broker-adapter
       ;;
@@ -168,9 +163,6 @@ gops_primary_deployment_for_service() {
       ;;
     backend)
       echo "gops-backend"
-      ;;
-    frontend)
-      echo "gops-frontend"
       ;;
     kis-adapter)
       echo "kis-broker-adapter"

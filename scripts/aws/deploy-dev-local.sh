@@ -41,20 +41,20 @@ Usage:
 Optional environment variables:
   REMOTE_BRANCH=branch-name              Deploy latest origin/<branch>; defaults to dev.
   LOCAL_REF=dev                          Deploy a committed local ref without pushing it.
-  FORCE_SERVICES=all|frontend,backend   Override automatic diff detection.
+  FORCE_SERVICES=all|backend,simulator  Override automatic diff detection.
   DRY_RUN=true                          Resolve target/diff and server-side dry-run only.
   RUN_ORDER_MIGRATIONS=true             Legacy force switch; requires order-worker selected.
   RUN_CHART_ASSET_MIGRATIONS=true       Legacy force switch; chart migrations run automatically with agent-orchestrator.
   REBUILD_NEWS_CACHE=true               Rebuild news Redis cache; requires market-storage selected.
   APPLY_PLATFORM_MANIFESTS=true         Apply dedicated platform manifests before app workloads.
-  CHART_INTERPRETATION_ONLY=true        Roll out only frontend and chart-analysis consumers.
+  CHART_INTERPRETATION_ONLY=true        Roll out only the chart-analysis consumers.
 
 The deploy target is the latest origin/<REMOTE_BRANCH> commit unless LOCAL_REF
 is set. Local uncommitted changes are never included in the build.
 Order migrations run automatically before rollout whenever order-worker is
 selected. Chart migrations run automatically whenever agent-orchestrator is
 selected. Selecting agent-orchestrator also selects both migration images.
-CHART_INTERPRETATION_ONLY requires FORCE_SERVICES=frontend,agent-orchestrator.
+CHART_INTERPRETATION_ONLY requires FORCE_SERVICES=agent-orchestrator.
 It never applies Kustomize, migrations, the chart asset builder, or Geometry CronJobs.
 USAGE
 }
@@ -413,13 +413,11 @@ resolve_selected_services() {
   local requested_services="$1"
   local detect_output
   local has_services
-  local smoke_frontend
   local smoke_backend
 
   if [[ -z "${requested_services}" ]]; then
     SELECTED_SERVICES=""
     SELECTED_DEPLOYMENTS=""
-    export LOCAL_DEPLOY_SMOKE_FRONTEND="false"
     export LOCAL_DEPLOY_SMOKE_BACKEND="false"
     return 0
   fi
@@ -436,9 +434,7 @@ resolve_selected_services() {
   has_services="$(sed -n 's/^has_services=//p' "${detect_output}" | tail -n 1)"
   SELECTED_SERVICES="$(sed -n 's/^services=//p' "${detect_output}" | tail -n 1)"
   SELECTED_DEPLOYMENTS="$(sed -n 's/^deployments=//p' "${detect_output}" | tail -n 1)"
-  smoke_frontend="$(sed -n 's/^smoke_frontend=//p' "${detect_output}" | tail -n 1)"
   smoke_backend="$(sed -n 's/^smoke_backend=//p' "${detect_output}" | tail -n 1)"
-  export LOCAL_DEPLOY_SMOKE_FRONTEND="${smoke_frontend:-false}"
   export LOCAL_DEPLOY_SMOKE_BACKEND="${smoke_backend:-false}"
   rm -f "${detect_output}"
 
@@ -477,8 +473,8 @@ apply_chart_interpretation_scope() {
     return 0
   fi
 
-  if [[ "${FORCE_SERVICES// /}" != "frontend,agent-orchestrator" && "${FORCE_SERVICES// /}" != "agent-orchestrator,frontend" ]]; then
-    printf 'CHART_INTERPRETATION_ONLY=true requires FORCE_SERVICES=frontend,agent-orchestrator.\n' >&2
+  if [[ "${FORCE_SERVICES// /}" != "agent-orchestrator" ]]; then
+    printf 'CHART_INTERPRETATION_ONLY=true requires FORCE_SERVICES=agent-orchestrator.\n' >&2
     exit 1
   fi
   if is_true "${RUN_ORDER_MIGRATIONS}" \
@@ -490,9 +486,8 @@ apply_chart_interpretation_scope() {
   fi
 
   # 일반 agent service의 order migration 및 공유-image workload 결합을 제거한다.
-  SELECTED_SERVICES="frontend agent-orchestrator"
-  SELECTED_DEPLOYMENTS="gops-frontend agent-analysis-worker agent-orchestrator"
-  export LOCAL_DEPLOY_SMOKE_FRONTEND="true"
+  SELECTED_SERVICES="agent-orchestrator"
+  SELECTED_DEPLOYMENTS="agent-analysis-worker agent-orchestrator"
   export LOCAL_DEPLOY_SMOKE_BACKEND="false"
   printf 'Reader-only chart deploy selected: chart-asset-builder is not updated; do not regenerate assets until a normal agent-orchestrator rollout completes.\n'
 }
@@ -510,32 +505,6 @@ validate_optional_tasks() {
     printf 'REBUILD_NEWS_CACHE=true requires market-storage to be selected.\n' >&2
     exit 1
   fi
-}
-
-load_frontend_build_secret() {
-  local env_file
-
-  if ! service_selected "frontend"; then
-    return 0
-  fi
-  if is_true "${DRY_RUN}"; then
-    printf 'DRY_RUN=true: skipping Logo.dev secret load.\n'
-    return 0
-  fi
-
-  env_file="$(mktemp)"
-  (
-    cd "${WORKTREE_DIR}"
-    GITHUB_ENV="${env_file}" scripts/aws/load-logodev-build-env.sh
-  )
-  while IFS= read -r env_line; do
-    case "${env_line}" in
-      LOGODEV_PUB_KEY=* | VITE_LOGO_DEV_PUBLISHABLE_KEY=*)
-        export "${env_line}"
-        ;;
-    esac
-  done < "${env_file}"
-  rm -f "${env_file}"
 }
 
 login_to_ecr() {
@@ -829,9 +798,6 @@ run_smoke_tests() {
     printf 'DRY_RUN=true: skipping public smoke tests.\n'
     return 0
   fi
-  if [[ "${LOCAL_DEPLOY_SMOKE_FRONTEND:-false}" == "true" ]]; then
-    smoke_url https://stargops.com/
-  fi
   if [[ "${LOCAL_DEPLOY_SMOKE_BACKEND:-false}" == "true" ]]; then
     smoke_url https://stargops.com/api/health
   fi
@@ -899,7 +865,6 @@ main() {
 
   validate_optional_tasks
   login_to_ecr
-  load_frontend_build_secret
 
   if ! is_true "${DRY_RUN}"; then
     (

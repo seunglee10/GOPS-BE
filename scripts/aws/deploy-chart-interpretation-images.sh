@@ -22,7 +22,6 @@ is_true() {
 }
 
 agent_image="$(gops_image_url_for_key agent-orchestrator):${IMAGE_TAG}"
-frontend_image="$(gops_image_url_for_key frontend):${IMAGE_TAG}"
 
 set_deployment_image() {
   local deployment="$1"
@@ -39,8 +38,8 @@ set_deployment_image() {
     -n "${K8S_NAMESPACE}"
 }
 
-# 의도적으로 이 세 consumer만 갱신한다. chart-asset-builder, Geometry CronJob,
+# 의도적으로 이 두 consumer만 갱신한다. chart-asset-builder, Geometry CronJob,
 # migration/maintenance Job 및 다른 agent runtime은 이 경로의 대상이 아니다.
-set_deployment_image gops-frontend gops-frontend "${frontend_image}"
+# gops-frontend Deployment는 gops-frontend 저장소의 CI가 롤아웃한다.
 set_deployment_image agent-analysis-worker agent-analysis-worker "${agent_image}"
 set_deployment_image agent-orchestrator agent-orchestrator "${agent_image}"

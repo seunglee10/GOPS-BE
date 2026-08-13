@@ -265,7 +265,7 @@ class CoachAwsContractTests(unittest.TestCase):
                     "IMAGE_TAG": "bash3-contract",
                     "KUSTOMIZE_OVERLAY": str(overlay),
                     "SERVICES": (
-                        "frontend backend market-ingestor market-processor market-storage "
+                        "backend market-ingestor market-processor market-storage "
                         "order-worker kis-adapter agent-orchestrator simulator"
                     ),
                 },
