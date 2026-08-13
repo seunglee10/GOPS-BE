@@ -30,80 +30,80 @@ ALTER TABLE market_data.company_journal_generation_events_v1 ADD COLUMN IF NOT E
 CREATE OR REPLACE VIEW market_data.symbols_latest AS
 SELECT
     symbol,
-    argMax(name, tuple(inserted_at, updated_at, cityHash64(toString(raw)))) AS name,
-    argMax(exchange, tuple(inserted_at, updated_at, cityHash64(toString(raw)))) AS exchange,
-    argMax(market, tuple(inserted_at, updated_at, cityHash64(toString(raw)))) AS market,
-    argMax(asset_class, tuple(inserted_at, updated_at, cityHash64(toString(raw)))) AS asset_class,
-    argMax(tradable, tuple(inserted_at, updated_at, cityHash64(toString(raw)))) AS tradable,
-    argMax(status, tuple(inserted_at, updated_at, cityHash64(toString(raw)))) AS status,
-    argMax(source, tuple(inserted_at, updated_at, cityHash64(toString(raw)))) AS source,
-    argMax(updated_at, tuple(inserted_at, updated_at, cityHash64(toString(raw)))) AS updated_at,
-    argMax(raw, tuple(inserted_at, updated_at, cityHash64(toString(raw)))) AS raw,
-    argMax(instrument_id, tuple(inserted_at, updated_at, cityHash64(toString(raw)))) AS instrument_id,
+    argMax(name, tuple(src.inserted_at, src.updated_at, cityHash64(toString(src.raw)))) AS name,
+    argMax(exchange, tuple(src.inserted_at, src.updated_at, cityHash64(toString(src.raw)))) AS exchange,
+    argMax(market, tuple(src.inserted_at, src.updated_at, cityHash64(toString(src.raw)))) AS market,
+    argMax(asset_class, tuple(src.inserted_at, src.updated_at, cityHash64(toString(src.raw)))) AS asset_class,
+    argMax(tradable, tuple(src.inserted_at, src.updated_at, cityHash64(toString(src.raw)))) AS tradable,
+    argMax(status, tuple(src.inserted_at, src.updated_at, cityHash64(toString(src.raw)))) AS status,
+    argMax(source, tuple(src.inserted_at, src.updated_at, cityHash64(toString(src.raw)))) AS source,
+    argMax(updated_at, tuple(src.inserted_at, src.updated_at, cityHash64(toString(src.raw)))) AS updated_at,
+    argMax(raw, tuple(src.inserted_at, src.updated_at, cityHash64(toString(src.raw)))) AS raw,
+    argMax(instrument_id, tuple(src.inserted_at, src.updated_at, cityHash64(toString(src.raw)))) AS instrument_id,
     max(inserted_at) AS inserted_at
-FROM market_data.symbols
+FROM market_data.symbols AS src
 GROUP BY symbol;
 
 CREATE OR REPLACE VIEW market_data.chart_candles_latest AS
 SELECT
     event_time, symbol, interval, feed_profile, market_session, bucket_policy_key,
-    argMax(open, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS open,
-    argMax(high, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS high,
-    argMax(low, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS low,
-    argMax(close, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS close,
-    argMax(volume, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS volume,
-    argMax(trade_count, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS trade_count,
-    argMax(vwap, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS vwap,
-    argMax(ma5, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS ma5,
-    argMax(ma20, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS ma20,
-    argMax(ma60, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS ma60,
-    argMax(is_closed, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS is_closed,
-    argMax(correction_type, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS correction_type,
-    argMax(source, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS source,
-    argMax(feed, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS feed,
-    argMax(price_adjustment, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS price_adjustment,
-    argMax(canonical_version, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS canonical_version,
-    argMax(bucket_policy, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS bucket_policy,
-    argMax(source_event_id, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS source_event_id,
-    argMax(created_at, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS created_at,
-    argMax(instrument_id, tuple(inserted_at, coalesce(source_event_id, ''), row_hash)) AS instrument_id,
+    argMax(open, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS open,
+    argMax(high, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS high,
+    argMax(low, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS low,
+    argMax(close, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS close,
+    argMax(volume, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS volume,
+    argMax(trade_count, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS trade_count,
+    argMax(vwap, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS vwap,
+    argMax(ma5, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS ma5,
+    argMax(ma20, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS ma20,
+    argMax(ma60, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS ma60,
+    argMax(is_closed, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS is_closed,
+    argMax(correction_type, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS correction_type,
+    argMax(source, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS source,
+    argMax(feed, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS feed,
+    argMax(price_adjustment, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS price_adjustment,
+    argMax(canonical_version, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS canonical_version,
+    argMax(bucket_policy, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS bucket_policy,
+    argMax(source_event_id, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS source_event_id,
+    argMax(created_at, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS created_at,
+    argMax(instrument_id, tuple(src.inserted_at, coalesce(src.source_event_id, ''), src.row_hash)) AS instrument_id,
     max(inserted_at) AS inserted_at
 FROM (
     SELECT *, cityHash64(toString(tuple(open, high, low, close, volume, coalesce(source_event_id, '')))) AS row_hash
     FROM market_data.chart_candles
-)
+) AS src
 GROUP BY event_time, symbol, interval, feed_profile, market_session, bucket_policy_key;
 
 CREATE OR REPLACE VIEW market_data.sec_company_tickers_latest AS
 SELECT
     symbol,
-    argMax(cik, tuple(updated_at, inserted_at, cityHash64(raw))) AS cik,
-    argMax(company_name, tuple(updated_at, inserted_at, cityHash64(raw))) AS company_name,
-    argMax(exchange, tuple(updated_at, inserted_at, cityHash64(raw))) AS exchange,
-    argMax(is_active_universe_member, tuple(updated_at, inserted_at, cityHash64(raw))) AS is_active_universe_member,
-    argMax(universe_source, tuple(updated_at, inserted_at, cityHash64(raw))) AS universe_source,
+    argMax(cik, tuple(src.updated_at, src.inserted_at, cityHash64(src.raw))) AS cik,
+    argMax(company_name, tuple(src.updated_at, src.inserted_at, cityHash64(src.raw))) AS company_name,
+    argMax(exchange, tuple(src.updated_at, src.inserted_at, cityHash64(src.raw))) AS exchange,
+    argMax(is_active_universe_member, tuple(src.updated_at, src.inserted_at, cityHash64(src.raw))) AS is_active_universe_member,
+    argMax(universe_source, tuple(src.updated_at, src.inserted_at, cityHash64(src.raw))) AS universe_source,
     max(updated_at) AS updated_at,
-    argMax(raw, tuple(updated_at, inserted_at, cityHash64(raw))) AS raw,
-    argMax(instrument_id, tuple(updated_at, inserted_at, cityHash64(raw))) AS instrument_id,
+    argMax(raw, tuple(src.updated_at, src.inserted_at, cityHash64(src.raw))) AS raw,
+    argMax(instrument_id, tuple(src.updated_at, src.inserted_at, cityHash64(src.raw))) AS instrument_id,
     max(inserted_at) AS inserted_at
-FROM market_data.sec_company_tickers
+FROM market_data.sec_company_tickers AS src
 GROUP BY symbol;
 
 CREATE OR REPLACE VIEW market_data.yahoo_analyst_summaries_latest AS
 SELECT
     symbol,
-    argMax(statement, tuple(collected_at, inserted_at, cityHash64(statement))) AS statement,
-    argMax(tone, tuple(collected_at, inserted_at, cityHash64(statement))) AS tone,
-    argMax(source_as_of, tuple(collected_at, inserted_at, cityHash64(statement))) AS source_as_of,
-    argMax(replay_statement, tuple(collected_at, inserted_at, cityHash64(statement))) AS replay_statement,
-    argMax(replay_tone, tuple(collected_at, inserted_at, cityHash64(statement))) AS replay_tone,
-    argMax(replay_source_as_of, tuple(collected_at, inserted_at, cityHash64(statement))) AS replay_source_as_of,
-    argMax(replay_cutoff, tuple(collected_at, inserted_at, cityHash64(statement))) AS replay_cutoff,
-    argMax(source, tuple(collected_at, inserted_at, cityHash64(statement))) AS source,
+    argMax(statement, tuple(src.collected_at, src.inserted_at, cityHash64(src.statement))) AS statement,
+    argMax(tone, tuple(src.collected_at, src.inserted_at, cityHash64(src.statement))) AS tone,
+    argMax(source_as_of, tuple(src.collected_at, src.inserted_at, cityHash64(src.statement))) AS source_as_of,
+    argMax(replay_statement, tuple(src.collected_at, src.inserted_at, cityHash64(src.statement))) AS replay_statement,
+    argMax(replay_tone, tuple(src.collected_at, src.inserted_at, cityHash64(src.statement))) AS replay_tone,
+    argMax(replay_source_as_of, tuple(src.collected_at, src.inserted_at, cityHash64(src.statement))) AS replay_source_as_of,
+    argMax(replay_cutoff, tuple(src.collected_at, src.inserted_at, cityHash64(src.statement))) AS replay_cutoff,
+    argMax(source, tuple(src.collected_at, src.inserted_at, cityHash64(src.statement))) AS source,
     max(collected_at) AS collected_at,
-    argMax(instrument_id, tuple(collected_at, inserted_at, cityHash64(statement))) AS instrument_id,
+    argMax(instrument_id, tuple(src.collected_at, src.inserted_at, cityHash64(src.statement))) AS instrument_id,
     max(inserted_at) AS inserted_at
-FROM market_data.yahoo_analyst_summaries
+FROM market_data.yahoo_analyst_summaries AS src
 GROUP BY symbol;
 
 CREATE OR REPLACE VIEW market_data.simulation_replay_datasets_latest AS
