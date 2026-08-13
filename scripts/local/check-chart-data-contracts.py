@@ -148,7 +148,8 @@ def dotenv_values(path: Path) -> dict[str, str]:
 
 
 def compose_defaults(compose: str, name: str) -> set[str]:
-    return set(re.findall(rf"\$\{{{re.escape(name)}:-([^}}]*)\}}", compose))
+    # 기본값 안에 ${AWS_ACCOUNT_ID} 처럼 중첩된 변수가 올 수 있으므로 한 단계 중첩을 허용한다.
+    return set(re.findall(rf"\$\{{{re.escape(name)}:-((?:[^{{}}]|\$\{{[^}}]*\}})*)\}}", compose))
 
 
 def terraform_variable_default(terraform: str, name: str) -> str | None:

@@ -2,7 +2,7 @@
 # 역할: 자동 배포된 dev EKS simulator의 데이터셋과 LIVE 대기 상태를 수동 점검합니다.
 set -Eeuo pipefail
 
-AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-<aws-account-id>}"
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:?AWS_ACCOUNT_ID를 넣어주세요. 예) export AWS_ACCOUNT_ID=\"$(aws sts get-caller-identity --query Account --output text)\"}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-gops-eks-cluster}"
 K8S_NAMESPACE="${K8S_NAMESPACE:-alfaka-market-data}"

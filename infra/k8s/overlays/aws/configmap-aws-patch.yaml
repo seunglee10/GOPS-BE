@@ -224,7 +224,7 @@ data:
   CLICKHOUSE_ENSURE_SCHEMA_ON_START: "false"
   CLICKHOUSE_HTTP_TIMEOUT_SECONDS: "10"
   REDIS_URL: redis://YOUR_REDIS_ENDPOINT:6379/0
-  S3_BUCKET: gops-market-data-<aws-account-id>-ap-northeast-2-an
+  S3_BUCKET: gops-market-data-${AWS_ACCOUNT_ID}-ap-northeast-2-an
   S3_RAW_PREFIX: market-data/rebuild-20260702-lazy-v1/raw/alpaca
   S3_FINAL_PREFIX: market-data/rebuild-20260702-lazy-v1/final
   S3_MANIFEST_PREFIX: market-data/rebuild-20260702-lazy-v1/manifest
@@ -313,7 +313,7 @@ data:
   AGENT_ANALYSIS_QUEUE_BACKEND: kafka
   AI_COACH_SNAPSHOT_ARCHIVE_ENABLED: "true"
   AI_COACH_SNAPSHOT_ARCHIVE_REQUIRED: "true"
-  AI_COACH_SNAPSHOT_S3_BUCKET: alfaka-dev-ai-coach-snapshots-<aws-account-id>-ap-northeast-2
+  AI_COACH_SNAPSHOT_S3_BUCKET: alfaka-dev-ai-coach-snapshots-${AWS_ACCOUNT_ID}-ap-northeast-2
   AI_COACH_SNAPSHOT_S3_PREFIX: ai-coach/snapshots
   AGENT_INTENT_CLASSIFIER_PROVIDER: deterministic
   AGENT_INTENT_CLASSIFIER_URL: http://agent-intent-classifier:8120/classify

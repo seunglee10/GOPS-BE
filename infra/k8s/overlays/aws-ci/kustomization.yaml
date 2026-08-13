@@ -33,19 +33,19 @@ patches:
         namespace: alfaka-market-data
       $patch: delete
 images:
-  - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
+  - name: ${AWS_ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
     newTag: "ci-placeholder"
-  - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-processor
+  - name: ${AWS_ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-processor
     newTag: "ci-placeholder"
-  - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-storage
+  - name: ${AWS_ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-storage
     newTag: "ci-placeholder"
-  - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
+  - name: ${AWS_ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
     newTag: "ci-placeholder"
-  - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
+  - name: ${AWS_ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-frontend
     newTag: "ci-placeholder"
-  - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-order-worker
+  - name: ${AWS_ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-order-worker
     newTag: "ci-placeholder"
-  - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-kis-adapter
+  - name: ${AWS_ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-kis-adapter
     newTag: "ci-placeholder"
-  - name: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-agent-orchestrator
+  - name: ${AWS_ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-agent-orchestrator
     newTag: "ci-placeholder"

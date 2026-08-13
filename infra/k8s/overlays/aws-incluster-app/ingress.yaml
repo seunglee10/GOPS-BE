@@ -5,7 +5,7 @@ metadata:
   name: gops-ingress
   namespace: alfaka-market-data
   annotations:
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-northeast-2:<aws-account-id>:certificate/d94bc5c6-249e-4aa1-90f0-b28079160050
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-northeast-2:${AWS_ACCOUNT_ID}:certificate/d94bc5c6-249e-4aa1-90f0-b28079160050
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/ssl-redirect: "443"

@@ -2,7 +2,7 @@
 # 역할: 원격 dev 또는 명시한 로컬 commit 기준으로 변경된 GOPS 서비스만 EKS dev에 배포합니다.
 set -euo pipefail
 
-AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-<aws-account-id>}"
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:?AWS_ACCOUNT_ID를 넣어주세요. 예) export AWS_ACCOUNT_ID=\"$(aws sts get-caller-identity --query Account --output text)\"}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-gops-eks-cluster}"
@@ -550,6 +550,10 @@ apply_platform_if_requested() {
 prepare_kustomize_overlay() {
   (
     cd "${WORKTREE_DIR}"
+    # 매니페스트의 ${AWS_ACCOUNT_ID} 자리표시자를 먼저 해석합니다. worktree 는 일회용이라
+    # 제자리 수정이 안전하고, 이후 단계가 실제 이미지 URL을 문자열로 비교합니다.
+    AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" scripts/aws/resolve-k8s-placeholders.sh
+
     IMAGE_TAG="${IMAGE_TAG}" \
       SERVICES="${SELECTED_SERVICES}" \
       AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \

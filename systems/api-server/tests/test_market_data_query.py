@@ -4704,7 +4704,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "AWS_ACCESS_KEY_ID": "AKIA_SHOULD_NOT_LEAK",
             "AWS_SECRET_ACCESS_KEY": "SECRET_SHOULD_NOT_LEAK",
             "AWS_SESSION_TOKEN": "",
-            "S3_BUCKET": "gops-market-data-<aws-account-id>-ap-northeast-2-an",
+            "S3_BUCKET": "gops-market-data-123456789012-ap-northeast-2-an",
             "S3_ENDPOINT_URL": "",
             "S3_RAW_PREFIX": "",
             "S3_FINAL_PREFIX": "",
@@ -4728,7 +4728,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual(payload["s3"]["endpointMode"], "real-aws")
         self.assertEqual(payload["s3"]["endpoint"], "EMPTY")
-        self.assertEqual(payload["s3"]["bucket"], "gops-market-data-<aws-account-id>-ap-northeast-2-an")
+        self.assertEqual(payload["s3"]["bucket"], "gops-market-data-123456789012-ap-northeast-2-an")
         self.assertEqual(payload["s3"]["finalPrefix"], "")
         self.assertEqual(payload["s3"]["manifestPrefix"], "")
         self.assertEqual(payload["aws"]["accessKeyId"], "SET")

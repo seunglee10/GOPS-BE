@@ -2,7 +2,7 @@
 # 역할: simulator Pod는 유지한 채 dev EKS를 LIVE로 전환하고 SIM 실행 상태만 정리합니다.
 set -euo pipefail
 
-AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-<aws-account-id>}"
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:?AWS_ACCOUNT_ID를 넣어주세요. 예) export AWS_ACCOUNT_ID=\"$(aws sts get-caller-identity --query Account --output text)\"}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-gops-eks-cluster}"
 K8S_NAMESPACE="${K8S_NAMESPACE:-alfaka-market-data}"

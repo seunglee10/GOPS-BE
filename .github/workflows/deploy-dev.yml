@@ -38,19 +38,19 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_ACCOUNT_ID: "<aws-account-id>"
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
   AWS_REGION: ap-northeast-2
   DOCKER_PLATFORM: linux/amd64
   EKS_CLUSTER_NAME: gops-eks-cluster
   K8S_NAMESPACE: alfaka-market-data
   PLATFORM_KUSTOMIZE_OVERLAY: infra/k8s/base/platform
   KUSTOMIZE_OVERLAY: infra/k8s/overlays/aws-incluster-app-ci
-  ECR_API_SERVER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
-  ECR_MARKET_INGESTOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
-  ECR_MARKET_PROCESSOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-processor
-  ECR_MARKET_STORAGE_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-storage
-  ECR_ORDER_WORKER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-order-worker
-  ECR_KIS_ADAPTER_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-kis-adapter
+  ECR_API_SERVER_REPO: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-api-server
+  ECR_MARKET_INGESTOR_REPO: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-ingestor
+  ECR_MARKET_PROCESSOR_REPO: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-processor
+  ECR_MARKET_STORAGE_REPO: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-market-storage
+  ECR_ORDER_WORKER_REPO: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-order-worker
+  ECR_KIS_ADAPTER_REPO: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-kis-adapter
 
 jobs:
   quality:
@@ -237,6 +237,12 @@ jobs:
         if: steps.changes.outputs.has_services == 'true' || github.event.inputs.apply_platform_manifests == 'true'
         run: ./scripts/aws/validate-dedicated-platform.sh
 
+      # 매니페스트에는 AWS 계정 ID 대신 ${AWS_ACCOUNT_ID} 자리표시자만 커밋되어 있습니다.
+      # 이미지 태그 갱신과 apply 는 실제 이미지 URL을 문자열로 비교하므로 그 전에 해석합니다.
+      - name: Resolve AWS account placeholders in manifests
+        if: steps.changes.outputs.has_services == 'true' || github.event.inputs.apply_platform_manifests == 'true'
+        run: ./scripts/aws/resolve-k8s-placeholders.sh
+
       - name: Point selected CI images at this commit image tag
         if: steps.changes.outputs.has_services == 'true'
         env:
@@ -246,7 +252,7 @@ jobs:
       - name: Import simulator replay dataset
         if: steps.changes.outputs.has_services == 'true' && contains(steps.changes.outputs.services, 'simulator')
         env:
-          SIMULATOR_IMAGE: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-simulator:${{ env.IMAGE_TAG }}
+          SIMULATOR_IMAGE: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-simulator:${{ env.IMAGE_TAG }}
         run: ./scripts/aws/run-simulator-replay-import.sh
 
       - name: Run order database migrations
@@ -268,7 +274,7 @@ jobs:
       - name: Run chart asset database migrations
         if: steps.changes.outputs.has_services == 'true' && contains(steps.changes.outputs.services, 'agent-orchestrator')
         env:
-          ECR_AGENT_ORCHESTRATOR_REPO: <aws-account-id>.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-agent-orchestrator
+          ECR_AGENT_ORCHESTRATOR_REPO: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com/alfaka-dev-gops-agent-orchestrator
         run: ./scripts/aws/run-chart-asset-migrations-job.sh
 
       - name: Server-side dry run

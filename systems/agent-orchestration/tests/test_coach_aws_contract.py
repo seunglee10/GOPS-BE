@@ -253,15 +253,27 @@ class CoachAwsContractTests(unittest.TestCase):
     def test_image_tag_updater_runs_on_system_bash_without_associative_arrays(self):
         updater = (REPO_ROOT / "scripts/aws/update-ci-image-tags.sh").read_text(encoding="utf-8")
         self.assertNotIn("declare -A", updater)
+        if shutil.which("envsubst") is None:
+            raise unittest.SkipTest("envsubst is required to resolve manifest placeholders")
         with tempfile.TemporaryDirectory() as temporary_dir:
             overlay = Path(temporary_dir) / "overlay"
             shutil.copytree(REPO_ROOT / "infra/k8s/overlays/aws-incluster-app-ci", overlay)
+            # 매니페스트에는 ${AWS_ACCOUNT_ID} 자리표시자만 커밋되어 있고, 배포도 이 순서를
+            # 따른다. 태그 갱신은 실제 이미지 URL을 문자열로 비교하므로 먼저 해석한다.
+            subprocess.run(
+                ["bash", "scripts/aws/resolve-k8s-placeholders.sh"],
+                cwd=REPO_ROOT,
+                env={**os.environ, "AWS_ACCOUNT_ID": "123456789012", "K8S_ROOT": str(overlay)},
+                check=True,
+                capture_output=True,
+                text=True,
+            )
             completed = subprocess.run(
                 ["bash", "scripts/aws/update-ci-image-tags.sh"],
                 cwd=REPO_ROOT,
                 env={
                     **os.environ,
-                    "AWS_ACCOUNT_ID": "<aws-account-id>",
+                    "AWS_ACCOUNT_ID": "123456789012",
                     "IMAGE_TAG": "bash3-contract",
                     "KUSTOMIZE_OVERLAY": str(overlay),
                     "SERVICES": (

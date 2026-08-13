@@ -2,7 +2,7 @@
 # 역할: dev EKS ClickHouse PVC를 데이터 보존 상태로 확장하고 실제 파일시스템 여유를 검증합니다.
 set -Eeuo pipefail
 
-AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-<aws-account-id>}"
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:?AWS_ACCOUNT_ID를 넣어주세요. 예) export AWS_ACCOUNT_ID=\"$(aws sts get-caller-identity --query Account --output text)\"}"
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-gops-eks-cluster}"
 K8S_NAMESPACE="${K8S_NAMESPACE:-alfaka-market-data}"
