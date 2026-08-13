@@ -7,9 +7,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any
 
-from alfaka.analytics.analysis_candles import canonicalize_candle_identity
-from alfaka.analytics.analysis_repair import AnalysisCandleRepairService
-from alfaka.analytics.geometry import ALGORITHM_VERSION, MINIMUM_BARS, TARGET_BARS, analyze_geometry
+from market_data.analytics.analysis_candles import canonicalize_candle_identity
+from market_data.analytics.analysis_repair import AnalysisCandleRepairService
+from market_data.analytics.geometry import ALGORITHM_VERSION, MINIMUM_BARS, TARGET_BARS, analyze_geometry
 
 from .candles import ChartAssetCandleLoader
 from .commentary import (

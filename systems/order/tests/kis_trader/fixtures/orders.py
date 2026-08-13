@@ -43,7 +43,7 @@ def sample_command(**overrides):
     return validate_order_envelope(sample_envelope(**overrides))
 
 
-def repository_with_received_order(payload=None):
+def repository_with_received_order(payload=None, *, user_sub: str | None = None):
     payload = payload or sample_order_request()
     request = validate_order_request_payload(payload, default_account_alias="demo-account")
     envelope = build_order_command_envelope(
@@ -60,6 +60,7 @@ def repository_with_received_order(payload=None):
         idempotency_key_hash=hash_idempotency_key("idem-1", "test-secret"),
         body_hash=stable_body_hash(payload),
         command=command,
+        user_sub=user_sub,
     )
     return repo, envelope, command
 

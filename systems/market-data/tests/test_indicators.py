@@ -9,7 +9,7 @@ if str(MARKET_SHARED) not in sys.path:
     sys.path.insert(0, str(MARKET_SHARED))
 
 
-from alfaka.serving.indicators import compute_indicator_payload, indicator_specs_from_csv  # noqa: E402
+from market_data.serving.indicators import compute_indicator_payload, indicator_specs_from_csv  # noqa: E402
 
 
 def candles(count):

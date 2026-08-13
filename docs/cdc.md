@@ -148,7 +148,7 @@ price-level volume analysis.
 | Latest price marker | Latest `price` | Chart engine |
 | Volume profile | `price`, `size` | Chart engine |
 | Price-level volume | `price`, `size` | Chart engine |
-| Order-flow profile | `trades` + `quotes` | `alfaka.orderflow`, estimated only |
+| Order-flow profile | `trades` + `quotes` | `market_data.orderflow`, estimated only |
 
 ### Other Notes
 

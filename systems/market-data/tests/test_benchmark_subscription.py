@@ -7,12 +7,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "systems/market-data/shared"))
 
-from alfaka.alpaca.subscription import (  # noqa: E402
+from market_data.alpaca.subscription import (  # noqa: E402
     configured_benchmark_symbols,
     configured_collection_symbols,
     load_symbols_and_channels,
 )
-from alfaka.alpaca.websocket_collector import benchmark_subscription_health  # noqa: E402
+from market_data.alpaca.websocket_collector import benchmark_subscription_health  # noqa: E402
 
 
 def test_spy_is_benchmark_subscription_but_not_collection_universe(monkeypatch) -> None:

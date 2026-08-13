@@ -139,7 +139,7 @@ class EntityCatalogProvider:
 
     def _symbol_entities_from_market_config(self) -> list[CatalogEntity]:
         try:
-            from alfaka.alpaca.subscription import configured_universe_symbols, load_request_config
+            from market_data.alpaca.subscription import configured_universe_symbols, load_request_config
 
             config = load_request_config()
             symbols = configured_universe_symbols(config)
@@ -467,7 +467,7 @@ def default_clickhouse_provider() -> Any:
     if not os.getenv("CLICKHOUSE_HTTP_URL"):
         return None
     try:
-        from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+        from market_data.serving.clickhouse_provider import ClickHouseMarketDataProvider
 
         return ClickHouseMarketDataProvider()
     except Exception:

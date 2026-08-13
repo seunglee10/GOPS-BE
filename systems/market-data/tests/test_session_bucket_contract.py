@@ -10,8 +10,8 @@ SHARED = ROOT / "systems" / "market-data" / "shared"
 if str(SHARED) not in sys.path:
     sys.path.insert(0, str(SHARED))
 
-from alfaka.backfill.gapfill import TradingCalendar  # noqa: E402
-from alfaka.serving.session_buckets import (  # noqa: E402
+from market_data.backfill.gapfill import TradingCalendar  # noqa: E402
+from market_data.serving.session_buckets import (  # noqa: E402
     BUCKET_POLICY_EXTENDED_SESSION,
     BUCKET_POLICY_REGULAR_SESSION,
     aggregate_regular_session_candles,
@@ -19,7 +19,7 @@ from alfaka.serving.session_buckets import (  # noqa: E402
     extended_session_bucket,
     regular_session_bucket,
 )
-from alfaka.streaming.transforms import ProvisionalCandleState  # noqa: E402
+from market_data.streaming.transforms import ProvisionalCandleState  # noqa: E402
 
 
 def test_hour_bucket_is_anchored_to_new_york_open_across_dst() -> None:
@@ -122,7 +122,7 @@ def test_extended_aggregation_keeps_only_visible_sessions_and_marks_live_bucket(
 
 
 def test_extended_aggregation_keeps_historical_sessions() -> None:
-    from alfaka.serving import session_buckets
+    from market_data.serving import session_buckets
 
     rows = [
         candle("2026-07-07T21:00:00.000Z", marketSession="after", close=90),

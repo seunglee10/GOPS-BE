@@ -10,7 +10,7 @@ MARKET_SHARED = ROOT / "systems" / "market-data" / "shared"
 if str(MARKET_SHARED) not in sys.path:
     sys.path.insert(0, str(MARKET_SHARED))
 
-from alfaka.analytics.trade_timing import evaluate_pattern_trade_timing  # noqa: E402
+from market_data.analytics.trade_timing import evaluate_pattern_trade_timing  # noqa: E402
 
 
 def test_confirmed_bullish_flag_becomes_buy_candidate_with_measured_move():

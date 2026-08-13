@@ -3,11 +3,11 @@ import json
 import types
 from unittest import mock
 
-from alfaka.common.redis_keys import RedisKeyBuilder
-from alfaka.orderflow import OrderFlowBinBuilder, PinnedQuoteCache
-from alfaka.orderflow.redis_model import encode_order_flow_minute_blob, order_flow_minute_blob
-from alfaka.serving.redis_provider import RedisMarketDataProvider
-from alfaka.streaming.processor import (
+from market_data.common.redis_keys import RedisKeyBuilder
+from market_data.orderflow import OrderFlowBinBuilder, PinnedQuoteCache
+from market_data.orderflow.redis_model import encode_order_flow_minute_blob, order_flow_minute_blob
+from market_data.serving.redis_provider import RedisMarketDataProvider
+from market_data.streaming.processor import (
     maybe_publish_order_flow_event,
     process_order_flow_live_path,
     restore_order_flow_live_minutes,
@@ -132,7 +132,7 @@ class OrderFlowBinBuilderTest(unittest.TestCase):
         state = types.SimpleNamespace(order_flow_builder=builder, order_flow_redis_flush_state={})
         clock = [100.0]
 
-        with mock.patch("alfaka.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
+        with mock.patch("market_data.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
             first = builder.update(_trade(timestamp="2026-07-09T13:30:10.000Z", price=158.341, size=10), "ask")
             write_order_flow_bin_to_redis(redis, keys, first, state=state)
             clock[0] = 100.10
@@ -160,7 +160,7 @@ class OrderFlowBinBuilderTest(unittest.TestCase):
         state = types.SimpleNamespace(order_flow_builder=builder, order_flow_redis_flush_state={})
         clock = [100.0]
 
-        with mock.patch("alfaka.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
+        with mock.patch("market_data.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
             first = builder.update(_trade(timestamp="2026-07-09T13:30:10.000Z", price=158.341, size=10), "ask")
             write_order_flow_bin_to_redis(redis, keys, first, state=state)
             clock[0] = 100.05
@@ -294,7 +294,7 @@ class OrderFlowBinBuilderTest(unittest.TestCase):
         clock = [100.0]
 
         first = builder.update(_trade(timestamp="2026-07-09T13:30:20.000Z", price=158.34, size=10), "ask")
-        with mock.patch("alfaka.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
+        with mock.patch("market_data.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
             maybe_publish_order_flow_event(redis, keys, state, first)
             clock[0] = 100.1
             same_minute = builder.update(_trade(timestamp="2026-07-09T13:30:30.000Z", price=158.35, size=5), "bid")

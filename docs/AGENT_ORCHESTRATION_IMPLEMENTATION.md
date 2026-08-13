@@ -124,7 +124,7 @@ flowchart LR
 
 ### Backend gateway
 
-경로: `systems/api-server/pods/api-server/gops-backend/app/`
+경로: `systems/api-server/pods/api-server/app/`
 
 - `contracts/agents.py`
   - `AgentAnalysisRequest` 추가

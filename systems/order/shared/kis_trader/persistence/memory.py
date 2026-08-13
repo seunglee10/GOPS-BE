@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from threading import RLock
 from typing import Any
 from uuid import uuid4
 
 from kis_trader.domain.commands import OrderCommand
-from kis_trader.domain.envelope import build_order_fill_envelope, build_order_status_envelope
+from kis_trader.domain.envelope import build_order_fill_envelope, build_order_status_envelope, enrich_order_envelope_identity
 from kis_trader.domain.status import OrderStatus, assert_transition_allowed, is_terminal_status
 from kis_trader.domain.topics import (
     ORDER_EVENTS_TOPIC,
@@ -40,6 +41,7 @@ class InMemoryOrderRepository:
         self.order_coach_fill_history: list[dict[str, Any]] = []
         self.dlq_events: list[dict[str, Any]] = []
         self.audit_logs: list[dict[str, Any]] = []
+        self.inbox_events: dict[tuple[str, str], dict[str, Any]] = {}
 
     def create_received_order(
         self,
@@ -84,7 +86,7 @@ class InMemoryOrderRepository:
                 ORDERS_COMMANDS_TOPIC,
                 command.order_id,
                 OrderStatus.RECEIVED,
-                command.to_envelope(),
+                enrich_order_envelope_identity(command.to_envelope(), order),
                 message_key=build_order_message_key(command.account_alias, command.symbol),
             )
             response = {
@@ -177,12 +179,87 @@ class InMemoryOrderRepository:
         events.sort(key=lambda event: event["created_at"])
         return events[:limit] if limit is not None else events
 
-    def mark_outbox_published(self, event_id: str) -> None:
+    def claim_pending_outbox(
+        self,
+        *,
+        worker_id: str,
+        limit: int | None = None,
+        topic: str | None = None,
+        lease_seconds: int = 30,
+    ) -> list[dict[str, Any]]:
+        now = datetime.now(timezone.utc)
+        with self._lock:
+            eligible = []
+            for event in self.outbox_events.values():
+                if event["published_at"] is not None or (topic is not None and event["topic"] != topic):
+                    continue
+                next_attempt_at = datetime.fromisoformat(event["next_attempt_at"])
+                locked_at = datetime.fromisoformat(event["locked_at"]) if event["locked_at"] else None
+                if next_attempt_at > now or (locked_at is not None and locked_at >= now - timedelta(seconds=lease_seconds)):
+                    continue
+                eligible.append(event)
+            eligible.sort(key=lambda event: (event["created_at"], event["event_id"]))
+            claimed = eligible[:limit] if limit is not None else eligible
+            for event in claimed:
+                event["delivery_status"] = "publishing"
+                event["attempt_count"] += 1
+                event["locked_at"] = now.isoformat()
+                event["lock_owner"] = worker_id
+            return [dict(event) for event in claimed]
+
+    def mark_outbox_published(self, event_id: str, *, worker_id: str | None = None) -> None:
         with self._lock:
             event = self.outbox_events[event_id]
+            if worker_id is not None and event["lock_owner"] not in (None, worker_id):
+                return
             event["published_at"] = utc_now_iso()
+            event["delivery_status"] = "published"
+            event["locked_at"] = None
+            event["lock_owner"] = None
+            event["last_error"] = None
             if event["topic"] == ORDERS_COMMANDS_TOPIC:
                 self.update_order_status(event["order_id"], OrderStatus.PUBLISHED)
+
+    def mark_outbox_failed(
+        self,
+        event_id: str,
+        error: Exception | str,
+        *,
+        worker_id: str | None = None,
+        retry_delay_seconds: int = 5,
+    ) -> None:
+        with self._lock:
+            event = self.outbox_events[event_id]
+            if worker_id is not None and event["lock_owner"] not in (None, worker_id):
+                return
+            event["delivery_status"] = "retry"
+            event["next_attempt_at"] = (datetime.now(timezone.utc) + timedelta(seconds=retry_delay_seconds)).isoformat()
+            event["last_error"] = str(error)[:4000]
+            event["locked_at"] = None
+            event["lock_owner"] = None
+
+    def inbox_event_seen(self, consumer_name: str, event_id: str) -> bool:
+        with self._lock:
+            return (consumer_name, event_id) in self.inbox_events
+
+    def record_inbox_event(
+        self,
+        consumer_name: str,
+        event_id: str,
+        *,
+        payload_digest: str | None = None,
+    ) -> bool:
+        with self._lock:
+            key = (consumer_name, event_id)
+            if key in self.inbox_events:
+                return False
+            self.inbox_events[key] = {
+                "consumer_name": consumer_name,
+                "event_id": event_id,
+                "payload_digest": payload_digest,
+                "processed_at": utc_now_iso(),
+            }
+            return True
 
     def claim_submission_intent(self, command: OrderCommand) -> SubmissionIntent:
         with self._lock:
@@ -391,6 +468,12 @@ class InMemoryOrderRepository:
             "order_id": order_id,
             "status": status.value,
             "payload": redact_sensitive(_json_ready(payload)),
+            "delivery_status": "pending",
+            "attempt_count": 0,
+            "next_attempt_at": utc_now_iso(),
+            "last_error": None,
+            "locked_at": None,
+            "lock_owner": None,
             "published_at": None,
             "created_at": utc_now_iso(),
         }

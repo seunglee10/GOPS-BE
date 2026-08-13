@@ -83,6 +83,25 @@ def test_consumer_commits_after_adapter_success():
     assert consumer.committed_messages == [(message, False)]
     assert consumer.closed is True
     assert repo.get_order("ord-1")["status"] == "SUBMITTED"
+    assert repo.inbox_event_seen("kis-broker-adapter", envelope["event_id"])
+
+
+def test_consumer_inbox_skips_duplicate_event_before_adapter_submit():
+    repo, envelope, _command = repository_with_published_order()
+    kis_client = FakeKisClient(["success"])
+    adapter = KisBrokerAdapter(repo, kis_client)
+    first_message = FakeKafkaMessage(envelope)
+    duplicate_message = FakeKafkaMessage(envelope)
+    consumer = FakeKafkaConsumer([first_message, duplicate_message])
+    runner = KafkaBrokerAdapterConsumer(consumer, adapter)
+
+    first = runner.consume_once()
+    duplicate = runner.consume_once()
+
+    assert first.status == "SUBMITTED"
+    assert duplicate.status == "DUPLICATE"
+    assert duplicate.skipped_external_submit is True
+    assert len(consumer.committed_messages) == 2
 
 
 def test_long_running_consumer_waits_for_missing_topic(monkeypatch):

@@ -1016,7 +1016,7 @@ def insert_batches(clickhouse_client: Any, table: str, rows: list[dict[str, Any]
 
 
 def build_clickhouse_client():
-    from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
+    from market_data.storage.clickhouse_loader import ClickHouseHttpClient
 
     return ClickHouseHttpClient(
         url=os.getenv("CLICKHOUSE_HTTP_URL", "http://localhost:8123"),
@@ -1036,7 +1036,7 @@ def build_redis_client():
 
 
 def build_s3_client():
-    from alfaka.common.s3_client import create_s3_client
+    from market_data.common.s3_client import create_s3_client
 
     return create_s3_client()
 

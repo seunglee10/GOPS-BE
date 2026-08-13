@@ -3,15 +3,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from alfaka.analytics.analysis_candles import (
+from market_data.analytics.analysis_candles import (
     AnalysisCandleBundle,
     AnalysisCandleSource,
     analysis_input_digest,
     compute_analysis_coverage,
 )
-from alfaka.analytics.geometry import SUPPORTED_INTERVALS, TARGET_BARS
-from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
-from alfaka.serving.provider import MarketDataProvider
+from market_data.analytics.geometry import SUPPORTED_INTERVALS, TARGET_BARS
+from market_data.serving.clickhouse_provider import ClickHouseMarketDataProvider
+from market_data.serving.provider import MarketDataProvider
 
 
 class _CanonicalSnapshotAdapter:

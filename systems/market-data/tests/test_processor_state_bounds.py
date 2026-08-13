@@ -2,15 +2,15 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
-from alfaka.common.redis_keys import RedisKeyBuilder
-from alfaka.streaming.processor import (
+from market_data.common.redis_keys import RedisKeyBuilder
+from market_data.streaming.processor import (
     ProcessorState,
     process_trade_live_path,
     processor_runtime_config,
     processor_state_sizes,
     publish_corrected_intraday_aggregates,
 )
-from alfaka.streaming.transforms import (
+from market_data.streaming.transforms import (
     DEFAULT_CLOSED_KEY_CAP,
     CalendarCandleAggregator,
     CandleAggregator,
@@ -108,7 +108,7 @@ class ProcessorStateBoundsTest(unittest.TestCase):
             (symbol, from_time, to_time)
         ) or rows
 
-        with mock.patch("alfaka.streaming.processor.publish_closed_candle") as publish:
+        with mock.patch("market_data.streaming.processor.publish_closed_candle") as publish:
             count = publish_corrected_intraday_aggregates(
                 mock.Mock(), mock.Mock(), RedisKeyBuilder(), state, {}, corrected
             )
@@ -141,9 +141,9 @@ class ProcessorStateBoundsTest(unittest.TestCase):
         redis = mock.Mock()
         redis.get.return_value = None
 
-        with mock.patch("alfaka.streaming.processor.publish_live_candle"), \
-                mock.patch("alfaka.streaming.processor.publish_derived_live_candles"), \
-                mock.patch("alfaka.streaming.processor.process_order_flow_live_path"):
+        with mock.patch("market_data.streaming.processor.publish_live_candle"), \
+                mock.patch("market_data.streaming.processor.publish_derived_live_candles"), \
+                mock.patch("market_data.streaming.processor.process_order_flow_live_path"):
             for index in range(100):
                 process_trade_live_path(
                     _trade(trade_id=index),

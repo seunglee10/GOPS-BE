@@ -4,7 +4,7 @@
 import argparse
 import sys
 
-from alfaka.alpaca.subscription import print_request
+from market_data.alpaca.subscription import print_request
 
 
 def main():

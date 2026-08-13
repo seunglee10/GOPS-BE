@@ -193,7 +193,7 @@ systems/agent-orchestration/shared
 systems/market-data/config
 systems/market-data/shared
 systems/order/shared
-systems/api-server/pods/api-server/gops-backend
+systems/api-server/pods/api-server
 ```
 
 `systems/agent-orchestration/config`가 빠지면 backend가 bootstrap seed로 degrade해
@@ -582,15 +582,15 @@ constraints with `minDomains=3`, so their three replicas cannot collapse onto
 one node. Their
 readiness/liveness probes check a local heartbeat updated after every bounded
 Kafka poll. The order outbox, paper-order matcher, and KIS adapter use the same
-loop-heartbeat pattern. `paper-order-matcher` is a single-replica consumer of
-`market.layer.quotes.v1` in group `gops-paper-order-matcher-v1`; it uses the
+loop-heartbeat pattern. `paper-live-matcher` is a single-replica consumer of
+`market.layer.quotes.v1` in group `gops-paper-live-matcher-v1`; it uses the
 existing `gops-order-worker` image and creates no additional Kafka topic.
 Because that image now includes `systems/market-data/shared` for Kafka and
 subscription contracts, market-data shared changes also rebuild `order-worker`.
 The matcher reconciles pending-order and current-position subscription cohorts
 from Postgres every `PAPER_SUBSCRIPTION_SYNC_SECONDS` (default 5 seconds), so a
 temporary API-to-Redis synchronization failure heals without a new order.
-`simulation-paper-matcher` is a separate single-replica deployment using the same
+`paper-replay-matcher` is a separate single-replica deployment using the same
 `gops-order-worker` image and no new Kafka topic. It pages simulator execution events,
 persists a per-run sequence checkpoint in Postgres, and matches only
 `execution_mode=simulation` rows for the active `runId`; the live paper matcher continues
@@ -1530,3 +1530,9 @@ encrypted conditional S3 write, but it does not prove an authenticated API reque
 RDS/ClickHouse reachability, Kafka topic health, Redis persistence, or report delivery.
 Those still require a staging EKS request plus report, worker log, Redis, and S3 evidence
 after Terraform apply and migration execution.
+
+## ERD 확장 migration gate
+
+Order migration Job은 PostgreSQL `schema_migrations` checksum을 검증하고 `0020`의 확장·백필·FK validation과 `0021`의 비트랜잭션 concurrent index 생성을 app rollout 전에 완료한다. `market-storage`가 선택된 배포는 `clickhouse-migrations` Job도 먼저 실행해 운영 ClickHouse의 `instrument_id`, 안정적 기업 저널 View, 결정적 `*_latest` View를 적용한다. 로컬 Docker도 기본 one-shot `clickhouse-migrations` 서비스를 포함한다.
+
+RLS는 배포 Job이 자동 활성화하지 않는다. `operations/provision_database_roles.sql`로 역할을 준비하고 최소 5거래일의 UUID 누락·소유권 불일치 0건을 확인한 다음, 별도 승인으로 `operations/enable_user_rls.sql`을 실행한다. 구 식별 컬럼 제거 역시 별도 계약 migration으로만 수행한다.

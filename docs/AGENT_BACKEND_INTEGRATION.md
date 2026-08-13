@@ -212,7 +212,7 @@ SIM의 `POST /api/orders`는 기존 `Idempotency-Key`와 리스크 검사를 유
 LIVE KIS는 기존 limit-only 계약을 유지한다. 주문 조회·event·WebSocket과
 `/api/trade-conditions`도 Postgres 공통 원장을 사용한다. 시장가는 제출 sequence의
 호가로 즉시 체결하고 지정가는 반드시 다음 sequence 이후 quote만 사용한다.
-`simulation-paper-matcher`가 `/api/control/execution-events`를 checkpoint 순서로 읽어
+`paper-replay-matcher`가 `/api/control/execution-events`를 checkpoint 순서로 읽어
 현재 run의 SIM 주문·조건만 평가한다. 재시작이나 LIVE 전환은 이전 run의 미체결 주문,
 예약 현금·수량, 미발동 조건만 취소하며 이미 체결된 현금·포지션·성과는 보존한다.
 Matcher는 현재 run의 pending order와 `watching|executing` 가격조건에서 활성 symbol을 먼저
@@ -263,7 +263,7 @@ SIM 계좌 평가는 `GET /api/control/quotes` 한 번으로 보유종목 전체
 `504 simulation_quote_timeout`, 연결/서비스 장애는 `503 simulation_service_unavailable`이다.
 세 경우를 같은 데이터 부재 오류로 합치지 않으며 LIVE 가격으로 대체하지 않는다.
 
-`paper-order-matcher`는 `market.layer.quotes.v1`의 모든 market session quote를
+`paper-live-matcher`는 `market.layer.quotes.v1`의 모든 market session quote를
 사용한다. 매수는 ask, 매도는 bid 최우선호가로 전량 체결하며 부분체결, 수수료,
 공매도는 지원하지 않는다. 모든 HTTP와 WebSocket 조회는 주문 소유자를 검사한다.
 가상투자 심볼 검색은 ClickHouse의 전체 symbol registry를 직접 조회하며
@@ -900,11 +900,11 @@ public route 전체 실패가 아니라 `narrative.status=failed`와 정량-only
 기존 구현을 참고할 때 볼 파일:
 
 ```text
-systems/api-server/pods/api-server/gops-backend/app/contracts/agents.py
-systems/api-server/pods/api-server/gops-backend/app/routes/agents.py
-systems/api-server/pods/api-server/gops-backend/app/services/agent_gateway.py
-systems/api-server/pods/api-server/gops-backend/app/services/agent_alert_payloads.py
-systems/api-server/pods/api-server/gops-backend/app/main.py
+systems/api-server/pods/api-server/app/contracts/agents.py
+systems/api-server/pods/api-server/app/routes/agents.py
+systems/api-server/pods/api-server/app/services/agent_gateway.py
+systems/api-server/pods/api-server/app/services/agent_alert_payloads.py
+systems/api-server/pods/api-server/app/main.py
 systems/api-server/tests/test_agent_routes.py
 ```
 
@@ -1045,6 +1045,14 @@ SIM의 NVDA headline은 제품 시연 계약에 따라 `엔비디아는 데이�
 목표가 평균·추천 분포를 포함하지 않는다. query는 `replay_cutoff <= cutoff`,
 `replay_source_as_of <= cutoff`, `collected_at >= now() - 24h`를 모두 강제한다. 적격 문장이 없으면
 `yahoo_analyst_summary`를 `missingData`에 명시하고 report·receipt·OpenAI 입력에는 복제하지 않는다.
+
+## ERD 확장과 내부 식별자 계약
+
+인증 session은 외부 Google `sub`와 내부 `app_user_id`를 함께 보관한다. legacy session은 최초 요청에서 지연 해석하며 HTTP URL과 public 응답에는 UUID를 노출하지 않는다. Watch List와 portfolio Redis 상태는 UUID v2 키에 우선 기록하고 기존 `sub` 키를 호환용으로 이중 쓰며, v2가 없을 때 기존 값을 copy-on-read한다.
+
+주문·알림·추천·모의투자 PostgreSQL 연결은 요청 context의 `app_user_id`를 `SET LOCAL app.current_user_id`로 전달한다. 모의체결의 원장은 `paper_executions`이고 `paper_orders`의 체결 수량·평균가는 조회 projection이다. 체결, 현금 원장, 포지션, 주문 이벤트는 한 transaction에서 기록한다. quote에 bid/ask size가 있으면 가용 수량만 체결해 `partially_filled`를 거치고, 수량이 없으면 기존처럼 전량 체결한다.
+
+Outbox publisher는 lease와 `FOR UPDATE SKIP LOCKED`로 row를 선점하고 성공 시에만 `published_at`을 기록한다. Kafka 소비자는 `(consumer_name, event_id)` Inbox 키로 정상적인 중복 처리를 차단한다. 내부 이벤트는 `schema_version`, `app_user_id`, `instrument_id`를 포함하고 호환 기간에는 `user_sub`, `symbol`도 유지한다.
 
 ## Failure Policy
 

@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[3]
 for path in (ROOT / "systems" / "market-data" / "shared", ROOT / "systems" / "agent-orchestration" / "shared"):
     if str(path) not in sys.path: sys.path.insert(0, str(path))
 
-from alfaka.analytics.analysis_candles import AnalysisCandleBundle  # noqa: E402
-from alfaka.analytics.analysis_repair import AnalysisRepairResult  # noqa: E402
+from market_data.analytics.analysis_candles import AnalysisCandleBundle  # noqa: E402
+from market_data.analytics.analysis_repair import AnalysisRepairResult  # noqa: E402
 from gops_agents.chart_assets.builder import ASSET_VERSION, ChartAssetBuilder  # noqa: E402
 from gops_agents.chart_assets.commentary import ChartCommentaryGenerationError  # noqa: E402
 from gops_agents.chart_assets.envelope import ChartAssetBuildEnvelope  # noqa: E402

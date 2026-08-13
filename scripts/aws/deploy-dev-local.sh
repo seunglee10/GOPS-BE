@@ -611,6 +611,22 @@ build_and_push_images() {
 }
 
 run_migrations_if_requested() {
+  if service_selected "market-storage"; then
+    if is_true "${DRY_RUN}"; then
+      printf 'DRY_RUN=true: versioned ClickHouse migration gate selected; skipping live Job.\n'
+    else
+      (
+        cd "${WORKTREE_DIR}"
+        # shellcheck source=scripts/aws/lib-gops-images.sh
+        source scripts/aws/lib-gops-images.sh
+        ECR_MARKET_STORAGE_REPO="${ECR_MARKET_STORAGE_REPO:-$(gops_image_url_for_key market-storage)}" \
+          IMAGE_TAG="${IMAGE_TAG}" \
+          K8S_NAMESPACE="${K8S_NAMESPACE}" \
+          scripts/aws/run-clickhouse-migrations-job.sh
+      )
+    fi
+  fi
+
   if service_selected "market-processor"; then
     if is_true "${DRY_RUN}"; then
       printf 'DRY_RUN=true: company journal benchmark candle bootstrap selected; skipping live Job.\n'

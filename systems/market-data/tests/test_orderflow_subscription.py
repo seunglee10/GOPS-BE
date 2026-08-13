@@ -6,9 +6,9 @@ from unittest import mock
 
 sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **kwargs: None))
 
-from alfaka.alpaca.websocket_collector import read_realtime_subscription_symbols_by_channel
-from alfaka.common.redis_keys import RedisKeyBuilder
-from alfaka.realtime.subscription_cohorts import (
+from market_data.alpaca.websocket_collector import read_realtime_subscription_symbols_by_channel
+from market_data.common.redis_keys import RedisKeyBuilder
+from market_data.realtime.subscription_cohorts import (
     ORDER_FLOW_SOURCE,
     PAPER_ORDER_SOURCE,
     PAPER_PORTFOLIO_SOURCE,

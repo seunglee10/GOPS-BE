@@ -5,7 +5,7 @@ series remain in ClickHouse.
 
 ```text
 docker-compose postgres
-systems/order/jobs/migrations
+systems/order/jobs/postgres-migrations
 systems/agent-orchestration/jobs/chart-asset-migrations
 ```
 

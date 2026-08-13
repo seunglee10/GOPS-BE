@@ -322,7 +322,7 @@ def publish_agent_outputs(report: dict[str, Any]) -> None:
 def kafka_producer():
     global _producer
     if _producer is None:
-        from alfaka.common.kafka_io import create_json_producer
+        from market_data.common.kafka_io import create_json_producer
 
         _producer = create_json_producer(
             os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
@@ -340,7 +340,7 @@ def run_kafka_worker(
     client_env: str = "AGENT_ANALYSIS_WORKER_CLIENT_ID",
     default_client: str = "gops-agent-analysis-worker",
 ) -> None:
-    from alfaka.common.kafka_io import create_json_consumer
+    from market_data.common.kafka_io import create_json_consumer
 
     warm_entity_catalog_cache()
     log_synthesis_runtime_diagnostics(default_client)

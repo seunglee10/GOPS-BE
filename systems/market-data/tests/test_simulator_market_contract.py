@@ -9,9 +9,9 @@ SHARED = ROOT / "systems" / "market-data" / "shared"
 if str(SHARED) not in sys.path:
     sys.path.insert(0, str(SHARED))
 
-from alfaka.common.market_messages import build_raw_envelope
-from alfaka.storage.clickhouse_loader import clickhouse_actions_for_payload
-from alfaka.streaming.transforms import normalize_quote, normalize_trade
+from market_data.common.market_messages import build_raw_envelope
+from market_data.storage.clickhouse_loader import clickhouse_actions_for_payload
+from market_data.streaming.transforms import normalize_quote, normalize_trade
 
 
 def simulator_payload(message_type: str) -> dict[str, object]:

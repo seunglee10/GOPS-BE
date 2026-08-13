@@ -20,4 +20,5 @@ COPY systems/market-data/pods/news-daily-summary-worker ./systems/market-data/po
 COPY systems/market-data/jobs/news-backfill ./systems/market-data/jobs/news-backfill
 COPY systems/market-data/jobs/news-intelligence-rebuild ./systems/market-data/jobs/news-intelligence-rebuild
 COPY systems/market-data/jobs/news-daily-summary-rebuild ./systems/market-data/jobs/news-daily-summary-rebuild
+COPY systems/market-data/jobs/clickhouse-migrations ./systems/market-data/jobs/clickhouse-migrations
 COPY systems/fundamentals ./systems/fundamentals

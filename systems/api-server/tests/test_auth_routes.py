@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[3]
 MARKET_SHARED = ROOT / "systems" / "market-data" / "shared"
 ORDER_SHARED = ROOT / "systems" / "order" / "shared"
 ORDER_TEST_ROOT = ROOT / "systems" / "order"
-BACKEND = ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"
+BACKEND = ROOT / "systems" / "api-server" / "pods" / "api-server"
 for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(ORDER_TEST_ROOT), str(BACKEND), str(ROOT)):
     if path not in sys.path:
         sys.path.insert(0, path)
@@ -26,8 +26,11 @@ sys.modules.setdefault(
 )
 
 from app.auth.config import AuthConfig, _load_auth_secret_values
+from app.auth.dependencies import optional_current_user
+from app.auth.identity import DeterministicIdentityResolver, deterministic_app_user_id
 from app.auth.models import AuthenticatedUser
 from app.auth.session_store import MemorySessionStore
+from kis_trader.persistence.user_context import bind_app_user_id, current_app_user_id
 
 try:
     from fastapi.testclient import TestClient
@@ -122,6 +125,64 @@ class AuthConfigSecretManagerTest(unittest.TestCase):
         config.require_oauth_settings()
 
 
+class AuthenticatedUserCompatibilityTest(unittest.TestCase):
+    def test_internal_uuid_round_trips_in_session_but_stays_out_of_public_payload(self):
+        app_user_id = deterministic_app_user_id("google-sub-1")
+        user = AuthenticatedUser(
+            "google-sub-1", "user@example.com", True, "Example User", None, app_user_id
+        )
+
+        restored = AuthenticatedUser.from_session(user.to_session())
+
+        self.assertEqual(restored.app_user_id, app_user_id)
+        self.assertNotIn("app_user_id", user.to_public())
+
+    def test_legacy_session_without_uuid_is_still_readable(self):
+        restored = AuthenticatedUser.from_session({
+            "sub": "legacy-sub",
+            "email": "legacy@example.com",
+            "email_verified": True,
+            "name": None,
+            "picture": None,
+        })
+
+        self.assertIsNone(restored.app_user_id)
+
+
+class AuthenticatedUserContextTest(unittest.IsolatedAsyncioTestCase):
+    async def test_async_dependency_binds_uuid_after_session_lookup_thread(self):
+        previous_enabled = os.environ.get("AUTH_ENABLED")
+        previous_secret = os.environ.get("AUTH_SESSION_SECRET")
+        os.environ["AUTH_ENABLED"] = "true"
+        os.environ["AUTH_SESSION_SECRET"] = "context-test-secret"
+        try:
+            config = AuthConfig.from_env()
+            store = MemorySessionStore(config)
+            app_user_id = deterministic_app_user_id("context-sub")
+            session_id = store.create_session(AuthenticatedUser(
+                "context-sub", "context@example.com", True, app_user_id=app_user_id,
+            ))
+            request = types.SimpleNamespace(
+                cookies={config.session_cookie_name: session_id},
+                app=types.SimpleNamespace(state=types.SimpleNamespace(auth_session_store=store)),
+            )
+
+            user = await optional_current_user(request)
+
+            self.assertEqual(user.app_user_id, app_user_id)
+            self.assertEqual(current_app_user_id(), app_user_id)
+        finally:
+            bind_app_user_id(None)
+            if previous_enabled is None:
+                os.environ.pop("AUTH_ENABLED", None)
+            else:
+                os.environ["AUTH_ENABLED"] = previous_enabled
+            if previous_secret is None:
+                os.environ.pop("AUTH_SESSION_SECRET", None)
+            else:
+                os.environ["AUTH_SESSION_SECRET"] = previous_secret
+
+
 @unittest.skipUnless(FASTAPI_TESTCLIENT_AVAILABLE, "FastAPI TestClient is not available")
 class AuthRoutesTest(unittest.TestCase):
     def setUp(self):
@@ -138,6 +199,7 @@ class AuthRoutesTest(unittest.TestCase):
         self.config = AuthConfig.from_env()
         self.store = MemorySessionStore(self.config)
         self.app.state.auth_session_store = self.store
+        self.app.state.user_identity_resolver = DeterministicIdentityResolver()
         self.app.state.google_oauth_client = FakeGoogleOAuthClient()
         self.app.state.order_repository = InMemoryOrderRepository()
         self.client = TestClient(self.app)

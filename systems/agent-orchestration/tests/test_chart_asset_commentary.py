@@ -15,7 +15,7 @@ for path in (ROOT / "systems" / "market-data" / "shared", ROOT / "systems" / "ag
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from alfaka.analytics.analysis_candles import AnalysisCandleBundle  # noqa: E402
+from market_data.analytics.analysis_candles import AnalysisCandleBundle  # noqa: E402
 from gops_agents.chart_assets import commentary as commentary_module  # noqa: E402
 from gops_agents.chart_assets.builder import ChartAssetBuilder  # noqa: E402
 from gops_agents.chart_assets.commentary import (  # noqa: E402

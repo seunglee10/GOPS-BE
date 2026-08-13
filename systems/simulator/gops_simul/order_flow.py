@@ -8,8 +8,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
-from alfaka.alpaca.feed_profiles import market_session_for_datetime
-from alfaka.orderflow import (
+from market_data.alpaca.feed_profiles import market_session_for_datetime
+from market_data.orderflow import (
     ORDER_FLOW_CLASSIFICATION_VERSION,
     ORDER_FLOW_SIDE_CLASSIFICATION,
     classify_trade_side,
@@ -17,7 +17,7 @@ from alfaka.orderflow import (
     quote_future_tolerance_ms_from_env,
     quote_max_age_ms_from_env,
 )
-from alfaka.orderflow.classification import normalize_quote, normalize_trade
+from market_data.orderflow.classification import normalize_quote, normalize_trade
 
 from gops_simul.dataset import DATASET_ID, REPLAY_SYMBOL_SET, REPLAY_SYMBOLS
 

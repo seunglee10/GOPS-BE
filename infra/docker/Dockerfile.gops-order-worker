@@ -13,9 +13,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY systems/order/shared ./systems/order/shared
 COPY systems/order/pods/order-outbox ./systems/order/pods/order-outbox
-COPY systems/order/pods/paper-order-matcher ./systems/order/pods/paper-order-matcher
-COPY systems/order/pods/simulation-paper-matcher ./systems/order/pods/simulation-paper-matcher
-COPY systems/order/jobs/migrations ./systems/order/jobs/migrations
+COPY systems/order/pods/paper-live-matcher ./systems/order/pods/paper-live-matcher
+COPY systems/order/pods/paper-replay-matcher ./systems/order/pods/paper-replay-matcher
+COPY systems/order/jobs/postgres-migrations ./systems/order/jobs/postgres-migrations
 COPY systems/order/jobs/reconciler ./systems/order/jobs/reconciler
 COPY systems/market-data/shared ./systems/market-data/shared
 

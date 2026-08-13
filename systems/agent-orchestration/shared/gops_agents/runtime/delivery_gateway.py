@@ -48,7 +48,7 @@ def default_redis_client():
 
 
 def run_delivery_gateway() -> None:
-    from alfaka.common.kafka_io import create_json_consumer
+    from market_data.common.kafka_io import create_json_consumer
 
     topic = os.getenv("AGENT_ANALYSIS_RESULTS_TOPIC", "agents.analysis-results.v1")
     consumer = create_json_consumer(

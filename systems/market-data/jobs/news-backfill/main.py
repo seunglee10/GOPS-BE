@@ -7,11 +7,11 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from alfaka.alpaca.news import build_news_event, iter_alpaca_news_pages
-from alfaka.common.env import load_dotenv, parse_csv, utc_now_iso
-from alfaka.common.kafka_io import create_json_producer
-from alfaka.common.secrets import load_alpaca_credentials
-from alfaka.storage.news_s3_archive import (
+from market_data.alpaca.news import build_news_event, iter_alpaca_news_pages
+from market_data.common.env import load_dotenv, parse_csv, utc_now_iso
+from market_data.common.kafka_io import create_json_producer
+from market_data.common.secrets import load_alpaca_credentials
+from market_data.storage.news_s3_archive import (
     article_published_at,
     news_backfill_chunk_marker_key,
     s3_object_exists,
@@ -35,7 +35,7 @@ def main():
     if not config["s3Bucket"]:
         raise SystemExit("S3_BUCKET is required for news backfill.")
 
-    from alfaka.common.s3_client import create_s3_client
+    from market_data.common.s3_client import create_s3_client
 
     s3 = create_s3_client()
     producer = None

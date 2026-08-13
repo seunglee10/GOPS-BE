@@ -3,11 +3,11 @@ import time
 
 import redis
 
-from alfaka.common.env import load_dotenv
-from alfaka.common.redis_keys import RedisKeyBuilder
-from alfaka.common.runtime_config import validate_required_values
-from alfaka.common.runtime_health import write_component_health
-from alfaka.realtime.feed_control import reconcile_active_feed
+from market_data.common.env import load_dotenv
+from market_data.common.redis_keys import RedisKeyBuilder
+from market_data.common.runtime_config import validate_required_values
+from market_data.common.runtime_health import write_component_health
+from market_data.realtime.feed_control import reconcile_active_feed
 
 
 def main():

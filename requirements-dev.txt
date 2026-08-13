@@ -1,5 +1,5 @@
 -r requirements.txt
--r systems/api-server/pods/api-server/gops-backend/requirements.txt
+-r systems/api-server/pods/api-server/requirements.txt
 
 pytest>=9.0.0
 PyYAML>=6.0.0

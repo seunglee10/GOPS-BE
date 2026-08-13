@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+import hashlib
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -44,6 +45,10 @@ class AgentAnalysisRequestEnvelope:
     user_id: str
     submitted_at: str
     payload: dict[str, Any]
+    schema_version: str = "agent-analysis-request.v2"
+    user_sub: str | None = None
+    app_user_id: str | None = None
+    instrument_id: str | None = None
     idempotency_key: str | None = None
     mode: str = "hot"
     priority: str = "interactive"
@@ -53,7 +58,11 @@ class AgentAnalysisRequestEnvelope:
     def to_dict(self) -> dict[str, Any]:
         return {
             "request_id": self.request_id,
+            "schema_version": self.schema_version,
             "user_id": self.user_id,
+            "user_sub": self.user_sub or self.user_id,
+            "app_user_id": self.app_user_id,
+            "instrument_id": self.instrument_id,
             "idempotency_key": self.idempotency_key,
             "submitted_at": self.submitted_at,
             "mode": self.mode,
@@ -68,6 +77,7 @@ def build_request_envelope(
     payload: dict[str, Any],
     *,
     user_id: str | None = None,
+    app_user_id: str | None = None,
     idempotency_key: str | None = None,
     request_id: str | None = None,
 ) -> AgentAnalysisRequestEnvelope:
@@ -91,11 +101,15 @@ def build_request_envelope(
     resolved_request_id = clean_string(request_id) or clean_string(clean_payload.pop("requestId", None))
     payload_result = sanitize_value(clean_payload)
     clean_payload = payload_result.value if isinstance(payload_result.value, dict) else {}
+    instrument_id = instrument_id_for_symbol(clean_string(clean_payload.get("symbol")))
     if not resolved_request_id:
         resolved_request_id = request_id_for_payload(user, idem_key, clean_payload, submitted_at)
     return AgentAnalysisRequestEnvelope(
         request_id=resolved_request_id,
         user_id=user,
+        user_sub=user,
+        app_user_id=clean_string(app_user_id),
+        instrument_id=instrument_id,
         idempotency_key=idem_key,
         submitted_at=submitted_at,
         mode=mode,
@@ -123,6 +137,10 @@ def request_envelope_from_dict(value: Any) -> AgentAnalysisRequestEnvelope | Non
     return AgentAnalysisRequestEnvelope(
         request_id=request_id,
         user_id=str(value.get("user_id") or value.get("userId") or "anonymous"),
+        schema_version=str(value.get("schema_version") or value.get("schemaVersion") or "agent-analysis-request.v1"),
+        user_sub=clean_string(value.get("user_sub") or value.get("userSub") or value.get("user_id") or value.get("userId")),
+        app_user_id=clean_string(value.get("app_user_id") or value.get("appUserId")),
+        instrument_id=clean_string(value.get("instrument_id") or value.get("instrumentId")),
         idempotency_key=clean_string(value.get("idempotency_key") or value.get("idempotencyKey")),
         submitted_at=str(value.get("submitted_at") or value.get("submittedAt") or utc_now_iso()),
         mode=normalize_choice(value.get("mode"), {"hot", "deep", "background-refresh"}, "hot"),
@@ -139,6 +157,16 @@ def request_envelope_from_dict(value: Any) -> AgentAnalysisRequestEnvelope | Non
         ),
         payload=dict(payload),
     )
+
+
+def instrument_id_for_symbol(symbol: str | None) -> str | None:
+    if not symbol:
+        return None
+    canonical = symbol.strip().upper().replace("-", ".")
+    if not canonical:
+        return None
+    digest = hashlib.md5(f"gops-instrument:{canonical}".encode("utf-8"), usedforsecurity=False).hexdigest()
+    return str(uuid.UUID(digest))
 
 
 def status_report_for_envelope(

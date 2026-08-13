@@ -57,6 +57,20 @@ jobs:
   quality:
     name: Test and validate deploy inputs
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: gops_erd_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d gops_erd_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,13 +83,22 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
-            systems/api-server/pods/api-server/gops-backend/requirements.txt
+            systems/api-server/pods/api-server/requirements.txt
 
       - name: Install Python dependencies
-        run: python -m pip install -r requirements.txt -r requirements-dev.txt -r systems/api-server/pods/api-server/gops-backend/requirements.txt
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt -r systems/api-server/pods/api-server/requirements.txt
 
       - name: Run Python tests
         run: python -m pytest
+
+      - name: Apply empty PostgreSQL migrations and check ERD drift
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gops_erd_ci
+          PYTHONPATH: systems/order/shared
+        run: |
+          python systems/order/jobs/postgres-migrations/main.py
+          python systems/agent-orchestration/jobs/chart-asset-migrations/main.py
+          python scripts/erd/check_erd_drift.py --strict
 
       - name: Set up Node.js 22
         uses: actions/setup-node@v4
@@ -107,6 +130,9 @@ jobs:
 
       - name: Verify simulator deploy contract
         run: bash scripts/aws/tests/test-simulator-deploy-contract.sh
+
+      - name: Verify ERD migration deploy contract
+        run: bash scripts/aws/tests/test-erd-migration-contract.sh
 
   deploy:
     name: Build images and deploy app workloads
@@ -250,6 +276,10 @@ jobs:
       - name: Run order database migrations
         if: steps.changes.outputs.has_services == 'true' && (steps.changes.outputs.order_migrations_required == 'true' || github.event.inputs.run_order_migrations == 'true')
         run: ./scripts/aws/run-order-migrations-job.sh
+
+      - name: Run versioned ClickHouse migrations
+        if: steps.changes.outputs.has_services == 'true' && contains(steps.changes.outputs.services, 'market-storage')
+        run: ./scripts/aws/run-clickhouse-migrations-job.sh
 
       - name: Run company journal ClickHouse migrations
         if: steps.changes.outputs.has_services == 'true' && steps.changes.outputs.smoke_backend == 'true'

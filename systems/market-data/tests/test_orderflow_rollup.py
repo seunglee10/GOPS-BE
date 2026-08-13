@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 from unittest import mock
 
-from alfaka.orderflow.rollup import fetch_alpaca_rows, iso, regular_session_bounds_utc, rollup_session
-from alfaka.serving.time_utils import parse_utc_time
+from market_data.orderflow.rollup import fetch_alpaca_rows, iso, regular_session_bounds_utc, rollup_session
+from market_data.serving.time_utils import parse_utc_time
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]

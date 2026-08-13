@@ -32,9 +32,9 @@ workflow for now.
 The chart-command implementation now lives in this package. Compatibility
 callers still depend on it through:
 
-- `systems/api-server/pods/api-server/gops-backend/app/routes/llm.py`
-- `systems/api-server/pods/api-server/gops-backend/app/services/ai_agents.py`
-- `systems/api-server/pods/api-server/gops-backend/app/contracts/chart.py`
+- `systems/api-server/pods/api-server/app/routes/llm.py`
+- `systems/api-server/pods/api-server/app/services/ai_agents.py`
+- `systems/api-server/pods/api-server/app/contracts/chart.py`
 - `apps/gops-frontend/src/agent/chartAgent.ts`
 - `apps/gops-frontend/src/components/ChartPanel.tsx`
 

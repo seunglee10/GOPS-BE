@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
-BACKEND = ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"
+BACKEND = ROOT / "systems" / "api-server" / "pods" / "api-server"
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 

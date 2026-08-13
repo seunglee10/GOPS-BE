@@ -44,15 +44,15 @@ Postgres는 관계형 데이터베이스다. 사용자, 주문, idempotency key,
 ## Main Paths
 
 - `systems/api-server/`
-- `systems/api-server/pods/api-server/gops-backend/app/`
-- `systems/api-server/pods/api-server/gops-backend/app/routes/`
-- `systems/api-server/pods/api-server/gops-backend/app/auth/`
-- `systems/api-server/pods/api-server/gops-backend/app/services/`
+- `systems/api-server/pods/api-server/app/`
+- `systems/api-server/pods/api-server/app/routes/`
+- `systems/api-server/pods/api-server/app/auth/`
+- `systems/api-server/pods/api-server/app/services/`
 - `systems/order/`
 - `systems/order/pods/order-outbox/`
 - `systems/order/pods/kis-adapter/`
 - `systems/order/shared/kis_trader/`
-- `systems/order/jobs/migrations/`
+- `systems/order/jobs/postgres-migrations/`
 - `systems/order/jobs/reconciler/`
 
 ## Source Sections

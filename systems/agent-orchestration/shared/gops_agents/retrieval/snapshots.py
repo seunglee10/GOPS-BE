@@ -786,8 +786,8 @@ def chart_asset_is_after_analysis_anchor(asset: dict[str, Any], chart_context: d
 
 
 def canonical_chart_asset_for_context(symbol: str, interval: str, chart_context: dict[str, Any], context: Any) -> dict[str, Any] | None:
-    from alfaka.analytics.geometry import analyze_geometry
-    from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+    from market_data.analytics.geometry import analyze_geometry
+    from market_data.serving.clickhouse_provider import ClickHouseMarketDataProvider
 
     analysis_window = chart_context.get("analysisWindow") if isinstance(chart_context.get("analysisWindow"), dict) else {}
     anchor = str(analysis_window.get("viewportTo") or "") or None

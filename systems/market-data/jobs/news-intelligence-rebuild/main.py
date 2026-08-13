@@ -4,15 +4,15 @@ import os
 
 import redis
 
-from alfaka.common.env import load_dotenv
-from alfaka.serving.news_hot_cache import (
+from market_data.common.env import load_dotenv
+from market_data.serving.news_hot_cache import (
     DEFAULT_NEWS_MAX_ITEMS,
     DEFAULT_NEWS_RETENTION_DAYS,
     DEFAULT_NEWS_TTL_SECONDS,
     write_localized_news_to_redis,
 )
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
-from alfaka.storage.news_intelligence import build_news_intelligence_record, news_intelligence_to_clickhouse_row, utc_now_iso
+from market_data.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
+from market_data.storage.news_intelligence import build_news_intelligence_record, news_intelligence_to_clickhouse_row, utc_now_iso
 
 
 def main():

@@ -327,7 +327,7 @@ class CoachAwsContractTests(unittest.TestCase):
     def test_portfolio_history_insert_is_atomic_and_change_only(self):
         repository = (
             REPO_ROOT
-            / "systems/api-server/pods/api-server/gops-backend/app/recommendations/repository.py"
+            / "systems/api-server/pods/api-server/app/recommendations/repository.py"
         ).read_text(encoding="utf-8")
         method = repository[repository.index("    def upsert_portfolio_snapshot", repository.index("class Postgres")) :]
         method = method[: method.index("    def latest_run")]

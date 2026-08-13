@@ -19,21 +19,21 @@ jobs/coverage-repair/       chart coverage and on-demand fill trace audit job
 jobs/news-backfill/         Alpaca News historical raw/archive backfill job
 jobs/news-intelligence-rebuild/ relevance v2 rebuild job for localized news
 config/                     market universe and subscription policy
-shared/alfaka/              market-data import namespace
+shared/market_data/              market-data import namespace
 tests/                      market-data tests
 ```
 
 ## Runtime Entrypoints
 
 ```text
-pods/market-ingestor/market_stream.py           wraps alfaka.alpaca.websocket_collector
-pods/market-processor/local_main.py             wraps alfaka.streaming.processor
+pods/market-ingestor/market_stream.py           wraps market_data.alpaca.websocket_collector
+pods/market-processor/local_main.py             wraps market_data.streaming.processor
 infra/k8s/base/app/deployment-market-processor.yaml current Kubernetes processor deployment
-pods/s3-sink/processed_sink.py                  wraps alfaka.storage.processed_s3_sink
-pods/s3-sink/raw_archive_sink.py                 wraps alfaka.storage.raw_s3_archive_sink
-pods/clickhouse-loader/processed_loader.py      wraps alfaka.storage.clickhouse_loader
+pods/s3-sink/processed_sink.py                  wraps market_data.storage.processed_s3_sink
+pods/s3-sink/raw_archive_sink.py                 wraps market_data.storage.raw_s3_archive_sink
+pods/clickhouse-loader/processed_loader.py      wraps market_data.storage.clickhouse_loader
 pods/news-intelligence-worker/main.py           precomputes Korean news intelligence records
-jobs/symbol-registry-sync/main.py               wraps alfaka.tools.sync_symbol_registry
+jobs/symbol-registry-sync/main.py               wraps market_data.tools.sync_symbol_registry
 jobs/coverage-repair/main.py                    audits /api/charts/candles fill traces
 jobs/news-backfill/main.py                      stores Alpaca News raw payloads once per articleId
 jobs/news-intelligence-rebuild/main.py          rebuilds relevance v2 fields for recent localized news
@@ -241,7 +241,7 @@ feed; `overnight` slices are BOATS live/on-demand only and appear as skipped
 routes in `fill.feedRoutes` until the active chart subscription produces live
 overnight candles.
 
-Before deleting or quarantining suspect ClickHouse candle rows, run `python -m alfaka.tools.canonical_candle_audit` with optional `CANONICAL_AUDIT_SYMBOL`, `CANONICAL_AUDIT_INTERVAL`, and `CANONICAL_AUDIT_LIMIT` to get duplicate/non-canonical/invalid OHLC row counts.
+Before deleting or quarantining suspect ClickHouse candle rows, run `python -m market_data.tools.canonical_candle_audit` with optional `CANONICAL_AUDIT_SYMBOL`, `CANONICAL_AUDIT_INTERVAL`, and `CANONICAL_AUDIT_LIMIT` to get duplicate/non-canonical/invalid OHLC row counts.
 Explicit operator repair may bypass existing canonical S3 processed objects and fetch Alpaca again when a previously materialized canonical object is known to contain bad values. For `1D`, suspicious split-day high/low outliers are validated against same-day split-adjusted `1m` bars; only the outlier high/low is repaired, while daily open/close/volume remain from dailyBars.
 
 Raw backup may be written as a side effect for audit, but missing raw backup must
@@ -271,7 +271,7 @@ Before any operator-approved bootstrap, prove S3-to-ClickHouse materialization
 with one explicit final candle object:
 
 ```bash
-S3_MATERIALIZE_KEYS=market-data/rebuild-20260702-lazy-v1/final/candles/.../canonical=v2.parquet python -m alfaka.storage.s3_materializer
+S3_MATERIALIZE_KEYS=market-data/rebuild-20260702-lazy-v1/final/candles/.../canonical=v2.parquet python -m market_data.storage.s3_materializer
 ```
 
 ## News Backfill And Hot Cache

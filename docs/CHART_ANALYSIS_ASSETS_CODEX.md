@@ -84,8 +84,8 @@ detected/stored가 일치해야 한다. v2 성공 payload의 candidate omitted c
 - `gops_agents.chart_assets.storage`: PostgreSQL-only conditional UPSERT, identity/v6 refs/
   drawing budget/payload size validation
 - `gops_agents.chart_assets.job_store`: PostgreSQL queue, `FOR UPDATE SKIP LOCKED`, lease 2회
-- `alfaka.analytics.geometry`: public asset와 atomic drawing groups
-- `alfaka.analytics.levels|trends|patterns`: 후보 계산과 hard gates
+- `market_data.analytics.geometry`: public asset와 atomic drawing groups
+- `market_data.analytics.levels|trends|patterns`: 후보 계산과 hard gates
 
 일반 manual build는 없는 자산만 만들고 기존 row는 선택 pair의 `manual + force`만
 교체한다. `scheduled` item은 candle 조회 전 `manual_refresh_only`로 종료한다.

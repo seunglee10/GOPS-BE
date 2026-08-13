@@ -47,7 +47,7 @@ Current mirrors:
 ```text
 apps/chart-engine/src/types.ts
 apps/chart-engine/src/capabilities.ts
-systems/api-server/pods/api-server/gops-backend/app/contracts/chart.py
+systems/api-server/pods/api-server/app/contracts/chart.py
 ```
 
 Rules:

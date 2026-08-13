@@ -10,7 +10,7 @@ shared_path = repo_root / "systems" / "market-data" / "shared"
 if str(shared_path) not in sys.path:
     sys.path.insert(0, str(shared_path))
 
-from alfaka.tools.live_path_trace import main
+from market_data.tools.live_path_trace import main
 
 
 if __name__ == "__main__":

@@ -34,8 +34,8 @@ resources:
   - deployment-trade-condition-executor.yaml
   - deployment-recommendation-worker.yaml
   - deployment-order-outbox-publisher.yaml
-  - deployment-paper-order-matcher.yaml
-  - deployment-simulation-paper-matcher.yaml
+  - deployment-paper-live-matcher.yaml
+  - deployment-paper-replay-matcher.yaml
   - deployment-kis-broker-adapter.yaml
   - deployment-gops-backend.yaml
   - deployment-gops-frontend.yaml

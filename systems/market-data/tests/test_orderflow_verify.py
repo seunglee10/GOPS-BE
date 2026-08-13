@@ -1,8 +1,8 @@
 import unittest
 from pathlib import Path
 
-from alfaka.orderflow.verify import build_order_flow_verification_report
-from alfaka.serving.time_utils import parse_utc_time
+from market_data.orderflow.verify import build_order_flow_verification_report
+from market_data.serving.time_utils import parse_utc_time
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]

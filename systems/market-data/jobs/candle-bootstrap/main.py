@@ -18,23 +18,23 @@ from pathlib import Path
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
-from alfaka.backfill.gapfill import TradingCalendar, parse_time, to_iso
-from alfaka.backfill.runner import (
+from market_data.backfill.gapfill import TradingCalendar, parse_time, to_iso
+from market_data.backfill.runner import (
     fetch_alpaca_bars,
     historical_feed_for_symbol,
     raw_bar_to_processed_candle,
 )
-from alfaka.common.env import load_dotenv, utc_now_iso
-from alfaka.serving.intervals import (
+from market_data.common.env import load_dotenv, utc_now_iso
+from market_data.serving.intervals import (
     INTRADAY_DERIVED_INTERVALS,
     INTRADAY_INTERVAL_MINUTES,
     alpaca_timeframe_for_interval,
     normalize_chart_interval,
 )
-from alfaka.serving.moving_average import MA_WINDOWS, attach_moving_averages
-from alfaka.serving.session_buckets import aggregate_regular_session_candles
-from alfaka.storage.candle_validation import invalid_candle_reason
-from alfaka.storage.clickhouse_loader import (
+from market_data.serving.moving_average import MA_WINDOWS, attach_moving_averages
+from market_data.serving.session_buckets import aggregate_regular_session_candles
+from market_data.storage.candle_validation import invalid_candle_reason
+from market_data.storage.clickhouse_loader import (
     ClickHouseHttpClient,
     candle_to_clickhouse_row,
     should_ensure_schema_on_start,

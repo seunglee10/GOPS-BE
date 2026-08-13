@@ -20,7 +20,7 @@ DEFAULT_EVENT_INPUT_TOPICS = ",".join([
 
 
 def main() -> None:
-    from alfaka.common.kafka_io import create_json_consumer, create_json_producer
+    from market_data.common.kafka_io import create_json_consumer, create_json_producer
 
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     input_topics = parse_csv(os.getenv(

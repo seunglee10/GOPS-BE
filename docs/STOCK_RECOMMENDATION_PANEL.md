@@ -178,14 +178,14 @@ flowchart TD
 
 | 파일 | 역할 |
 | --- | --- |
-| `systems/api-server/pods/api-server/gops-backend/app/recommendations/routes.py` | 프로필·latest·refresh API |
-| `systems/api-server/pods/api-server/gops-backend/app/recommendations/service.py` | 데이터 수집, 슬롯 멱등성, 저장, 알림 |
-| `systems/api-server/pods/api-server/gops-backend/app/recommendations/scoring.py` | 후보 생성, 1차 점수화, backend fallback |
-| `systems/api-server/pods/api-server/gops-backend/app/recommendations/professional.py` | 전문 9팩터와 스타일 prior |
-| `systems/api-server/pods/api-server/gops-backend/app/recommendations/professional_v2.py` | canonical fill 학습, 연속 선호, 위험예산, cutoff-safe 펀더멘털 overlay |
-| `systems/api-server/pods/api-server/gops-backend/app/recommendations/repository.py` | PostgreSQL·메모리 저장소 |
-| `systems/api-server/pods/api-server/gops-backend/app/recommendations/worker.py` | 프로필 사용자별 주기 실행 |
-| `systems/api-server/pods/api-server/gops-backend/app/routes/account.py` | 보유종목 sector 보강과 snapshot 저장 |
+| `systems/api-server/pods/api-server/app/recommendations/routes.py` | 프로필·latest·refresh API |
+| `systems/api-server/pods/api-server/app/recommendations/service.py` | 데이터 수집, 슬롯 멱등성, 저장, 알림 |
+| `systems/api-server/pods/api-server/app/recommendations/scoring.py` | 후보 생성, 1차 점수화, backend fallback |
+| `systems/api-server/pods/api-server/app/recommendations/professional.py` | 전문 9팩터와 스타일 prior |
+| `systems/api-server/pods/api-server/app/recommendations/professional_v2.py` | canonical fill 학습, 연속 선호, 위험예산, cutoff-safe 펀더멘털 overlay |
+| `systems/api-server/pods/api-server/app/recommendations/repository.py` | PostgreSQL·메모리 저장소 |
+| `systems/api-server/pods/api-server/app/recommendations/worker.py` | 프로필 사용자별 주기 실행 |
+| `systems/api-server/pods/api-server/app/routes/account.py` | 보유종목 sector 보강과 snapshot 저장 |
 | `systems/order/shared/kis_trader/migrations/0004_recommendations.sql` | 추천 프로필·run·item·portfolio snapshot 테이블 |
 | `systems/order/shared/kis_trader/migrations/0011_personalized_recommendations.sql` | 스타일, 모델 registry, outcome, 개인화 provenance |
 | `systems/order/shared/kis_trader/migrations/0012_continuous_recommendation_v2.sql` | continuous V2 선호·위험·펀더멘털 상태 |

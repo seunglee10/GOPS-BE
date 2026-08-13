@@ -14,10 +14,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
 from zoneinfo import ZoneInfo
 
-from alfaka.analytics.atr import atr_series, percentile_rank, true_ranges
-from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
-from alfaka.serving.indicators import compute_indicator_payload, indicator_specs_from_csv
-from alfaka.serving.volume_profile import compute_volume_profile_payload
+from market_data.analytics.atr import atr_series, percentile_rank, true_ranges
+from market_data.serving.clickhouse_provider import ClickHouseMarketDataProvider
+from market_data.serving.indicators import compute_indicator_payload, indicator_specs_from_csv
+from market_data.serving.volume_profile import compute_volume_profile_payload
 from gops_agents.orchestration.routing import parse_openai_text_json
 
 

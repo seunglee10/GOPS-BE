@@ -23,7 +23,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[3]
-BACKEND = ROOT / "systems/api-server/pods/api-server/gops-backend"
+BACKEND = ROOT / "systems/api-server/pods/api-server"
 sys.path.insert(0, str(BACKEND))
 
 from app.recommendations.explanations import deterministic_explanation  # noqa: E402

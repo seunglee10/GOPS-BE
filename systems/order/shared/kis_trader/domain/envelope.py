@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
+from uuid import UUID
 
 from .commands import OrderCommand, OrderRequest, order_command_from_envelope
 from .status import OrderContractError
@@ -88,9 +90,29 @@ def build_order_status_envelope(
         "source": source,
         "payload": payload,
     }
-    if order.get("user_sub"):
-        envelope["user_sub"] = str(order["user_sub"])
-    return envelope
+    return enrich_order_envelope_identity(envelope, order)
+
+
+def enrich_order_envelope_identity(envelope: dict[str, Any], order: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(envelope)
+    user_sub = str(order.get("user_sub") or "").strip()
+    symbol = str(order.get("symbol") or (enriched.get("payload") or {}).get("symbol") or "").strip()
+    if user_sub:
+        enriched["user_sub"] = user_sub
+        enriched["app_user_id"] = str(
+            order.get("app_user_id") or _deterministic_uuid("gops-app-user", user_sub)
+        )
+    if symbol:
+        canonical_symbol = symbol.upper().replace("-", ".")
+        enriched["instrument_id"] = str(
+            order.get("instrument_id") or _deterministic_uuid("gops-instrument", canonical_symbol)
+        )
+    return enriched
+
+
+def _deterministic_uuid(namespace: str, value: str) -> UUID:
+    digest = hashlib.md5(f"{namespace}:{value}".encode("utf-8"), usedforsecurity=False).hexdigest()
+    return UUID(digest)
 
 
 def build_order_fill_envelope(order: dict[str, Any], *, reason: str | None = None) -> dict[str, Any]:

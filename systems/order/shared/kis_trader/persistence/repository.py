@@ -72,7 +72,39 @@ class OrderRepository(Protocol):
     def fetch_pending_outbox(self, limit: int | None = None, topic: str | None = None) -> list[dict[str, Any]]:
         ...
 
-    def mark_outbox_published(self, event_id: str) -> None:
+    def claim_pending_outbox(
+        self,
+        *,
+        worker_id: str,
+        limit: int | None = None,
+        topic: str | None = None,
+        lease_seconds: int = 30,
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def mark_outbox_published(self, event_id: str, *, worker_id: str | None = None) -> None:
+        ...
+
+    def mark_outbox_failed(
+        self,
+        event_id: str,
+        error: Exception | str,
+        *,
+        worker_id: str | None = None,
+        retry_delay_seconds: int = 5,
+    ) -> None:
+        ...
+
+    def inbox_event_seen(self, consumer_name: str, event_id: str) -> bool:
+        ...
+
+    def record_inbox_event(
+        self,
+        consumer_name: str,
+        event_id: str,
+        *,
+        payload_digest: str | None = None,
+    ) -> bool:
         ...
 
     def claim_submission_intent(self, command: OrderCommand) -> SubmissionIntent:

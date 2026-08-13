@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[3]
 MARKET_SHARED = ROOT / "systems" / "market-data" / "shared"
 ORDER_SHARED = ROOT / "systems" / "order" / "shared"
 AGENT_SHARED = ROOT / "systems" / "agent-orchestration" / "shared"
-BACKEND = ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"
+BACKEND = ROOT / "systems" / "api-server" / "pods" / "api-server"
 for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(AGENT_SHARED), str(BACKEND)):
     if path not in sys.path:
         sys.path.insert(0, path)
@@ -104,7 +104,7 @@ from app.routes.health import runtime_config  # noqa: E402
 from app.services import alfaka_market_data as market_data_service  # noqa: E402
 from app.services.alfaka_market_data import configured_symbols  # noqa: E402
 from app.services.ai_agents import build_agent_market_analysis_context, chart_context_for_agent_prompt, is_live_feed_status_request, openai_agent_chat  # noqa: E402
-from alfaka.common.redis_keys import RedisKeyBuilder  # noqa: E402
+from market_data.common.redis_keys import RedisKeyBuilder  # noqa: E402
 
 
 class FakeProvider:
@@ -1692,7 +1692,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             },
         ])
         provider.redis_provider.redis = FakeWatchlistRedis()
-        from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+        from market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 
         RealtimeSubscriptionCohortService(provider.redis_provider.redis, auto_reconcile=False).replace_user_watchlist("user-a", ["NVDA", "AMD"])
         service = MarketDataQueryService(provider, backfill_service=FakeBackfillService())
@@ -1812,7 +1812,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             "publishedAt": "2026-07-02T12:00:00.000Z",
         }])
         provider.redis_provider.redis = FakeWatchlistRedis()
-        from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+        from market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 
         RealtimeSubscriptionCohortService(provider.redis_provider.redis, auto_reconcile=False).replace_user_watchlist("user-a", ["AAPL"])
         previous = query_routes.get_query_service
@@ -3063,7 +3063,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         finally:
             monitor_routes.get_monitor_service = previous
 
-        from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+        from market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 
         self.assertEqual(fake_redis.sets["gops:market:on-demand:v1:subscription:source:manual:symbols"], {"AAPL"})
         self.assertEqual(fake_redis.sets["gops:market:on-demand:v1:subscription:source:manual:AAPL"], {"candles,quotes,trades"})
@@ -3097,7 +3097,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         finally:
             chart_routes.get_market_data_provider = previous_provider
 
-        from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+        from market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 
         self.assertEqual(payload["symbol"], "MLM")
         self.assertTrue(payload["pendingReconcile"])
@@ -3117,7 +3117,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
     def test_realtime_monitor_reports_symbol_live_age_and_scoped_health(self):
         fake_redis = FakeMonitorRedis()
-        keys = __import__("alfaka.common.redis_keys", fromlist=["RedisKeyBuilder"]).RedisKeyBuilder()
+        keys = __import__("market_data.common.redis_keys", fromlist=["RedisKeyBuilder"]).RedisKeyBuilder()
         fake_redis.sadd(keys.subscription_symbols(), "MLM")
         fake_redis.sadd(keys.active_symbols(), "MLM")
         fake_redis.hset(keys.subscription_symbol("MLM"), mapping={
@@ -3318,7 +3318,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         self.assertEqual(redis_state.sets["gops:market:on-demand:v1:subscription:users:watchlist"], {"user-a"})
         self.assertNotIn("gops:market:on-demand:v1:subscription:symbols", redis_state.sets)
 
-        from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+        from market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 
         RealtimeSubscriptionCohortService(redis_state).reconcile()
         self.assertEqual(redis_state.sets["gops:market:on-demand:v1:subscription:source:watchlist:AAPL"], {"user-a"})
@@ -3342,6 +3342,62 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         self.assertEqual([item["symbol"] for item in payload["symbols"]], ["NVDA", "AAPL", "MSFT"])
 
+    def test_watchlist_uuid_v2_dual_write_and_copy_on_read(self):
+        provider = FakeWatchlistProvider()
+        app_user_id = "11111111-1111-4111-8111-111111111111"
+        previous = market_data_service.get_market_data_provider
+        previous_universe = market_data_service.configured_universe_symbols
+        market_data_service.get_market_data_provider = lambda: provider
+        market_data_service.configured_universe_symbols = lambda: ["AAPL", "MSFT", "NVDA"]
+        try:
+            market_data_service.replace_watchlist_symbols("google-sub", ["NVDA", "AAPL"])
+            copied = market_data_service.read_watchlist_symbols(app_user_id, legacy_user_id="google-sub")
+            market_data_service.replace_watchlist_symbols(
+                app_user_id,
+                ["MSFT"],
+                legacy_user_id="google-sub",
+            )
+        finally:
+            market_data_service.get_market_data_provider = previous
+            market_data_service.configured_universe_symbols = previous_universe
+
+        redis_state = provider.redis_provider.redis
+        prefix = "gops:market:on-demand:v1"
+        self.assertEqual(copied, ["NVDA", "AAPL"])
+        self.assertEqual(
+            redis_state.sets[f"{prefix}:user:v2:{app_user_id}:watchlist:symbols"],
+            {"MSFT"},
+        )
+        self.assertEqual(
+            redis_state.sets[f"{prefix}:user:google-sub:watchlist:symbols"],
+            {"MSFT"},
+        )
+        self.assertEqual(
+            redis_state.values[f"{prefix}:user:v2:{app_user_id}:migration:watchlist"],
+            "1",
+        )
+
+    def test_empty_uuid_v2_watchlist_does_not_fall_back_to_legacy(self):
+        provider = FakeWatchlistProvider()
+        app_user_id = "22222222-2222-4222-8222-222222222222"
+        previous = market_data_service.get_market_data_provider
+        previous_universe = market_data_service.configured_universe_symbols
+        market_data_service.get_market_data_provider = lambda: provider
+        market_data_service.configured_universe_symbols = lambda: ["AAPL"]
+        try:
+            market_data_service.replace_watchlist_symbols("google-sub", ["AAPL"])
+            market_data_service.replace_watchlist_symbols(
+                app_user_id,
+                [],
+                legacy_user_id="google-sub",
+            )
+            symbols = market_data_service.read_watchlist_symbols(app_user_id, legacy_user_id="google-sub")
+        finally:
+            market_data_service.get_market_data_provider = previous
+            market_data_service.configured_universe_symbols = previous_universe
+
+        self.assertEqual(symbols, [])
+
     def test_watchlist_read_uses_default_symbols_when_user_store_is_unavailable(self):
         provider = FakeWatchlistProvider()
         provider.redis_provider.redis.lrange = mock.Mock(side_effect=RuntimeError("redis unavailable"))
@@ -3361,7 +3417,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
     def test_watchlist_remove_preserves_active_chart_subscription_source(self):
         provider = FakeWatchlistProvider()
         redis_state = provider.redis_provider.redis
-        from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+        from market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
         controller = RealtimeSubscriptionCohortService(redis_state)
         controller.replace_user_watchlist("user-a", ["AAPL"])
         controller.refresh_active_chart("user-a", "session-1", "AAPL", 60)

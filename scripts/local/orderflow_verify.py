@@ -12,9 +12,9 @@ shared_path = repo_root / "systems" / "market-data" / "shared"
 if str(shared_path) not in sys.path:
     sys.path.insert(0, str(shared_path))
 
-from alfaka.orderflow.config import price_bin_size_from_env  # noqa: E402
-from alfaka.orderflow.rollup import create_clickhouse_client_from_env  # noqa: E402
-from alfaka.orderflow.verify import build_order_flow_verification_report, print_human_report  # noqa: E402
+from market_data.orderflow.config import price_bin_size_from_env  # noqa: E402
+from market_data.orderflow.rollup import create_clickhouse_client_from_env  # noqa: E402
+from market_data.orderflow.verify import build_order_flow_verification_report, print_human_report  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

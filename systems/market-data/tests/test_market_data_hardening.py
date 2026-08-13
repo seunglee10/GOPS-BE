@@ -17,9 +17,9 @@ sys.modules.setdefault("redis", types.SimpleNamespace(from_url=lambda *args, **k
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
-sys.path.insert(0, str(REPO_ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"))
+sys.path.insert(0, str(REPO_ROOT / "systems" / "api-server" / "pods" / "api-server"))
 
-from alfaka.alpaca.subscription import (
+from market_data.alpaca.subscription import (
     build_subscription_request,
     configured_collection_symbols,
     configured_seed_symbols,
@@ -28,25 +28,25 @@ from alfaka.alpaca.subscription import (
     load_symbols_and_channels,
     resolve_request_config_path,
 )
-from alfaka.alpaca.feed_profiles import feed_profile_active_for_session, market_session_for_timestamp, resolve_feed_profile, visible_extended_session_windows
-from alfaka.alpaca.trade_tiers import resolve_trade_subscription_plan
-from alfaka.alpaca.websocket_collector import (
+from market_data.alpaca.feed_profiles import feed_profile_active_for_session, market_session_for_timestamp, resolve_feed_profile, visible_extended_session_windows
+from market_data.alpaca.trade_tiers import resolve_trade_subscription_plan
+from market_data.alpaca.websocket_collector import (
     classify_alpaca_error,
     publish_worker_count_from_env,
     read_realtime_subscription_symbols_by_channel,
     read_trade_subscription_symbols,
     summarize_subscription_request,
 )
-from alfaka.alpaca.assets import asset_to_symbol_metadata
-from alfaka.alpaca.news import build_news_events, iter_alpaca_news_pages
-from alfaka.common.kafka_io import create_json_consumer, create_json_producer, producer_options_from_env
-from alfaka.common.market_messages import build_raw_envelope, raw_topic_name, source_event_id
-from alfaka.common.redis_keys import RedisKeyBuilder
-from alfaka.common.runtime_health import read_component_health, write_component_health
-from alfaka.common.runtime_config import has_placeholder_value, validate_required_values
-from alfaka.common.s3_client import create_s3_client
-from alfaka.common.secrets import load_alpaca_credentials, resolve_alpaca_credential_source
-from alfaka.backfill.runner import (
+from market_data.alpaca.assets import asset_to_symbol_metadata
+from market_data.alpaca.news import build_news_events, iter_alpaca_news_pages
+from market_data.common.kafka_io import create_json_consumer, create_json_producer, producer_options_from_env
+from market_data.common.market_messages import build_raw_envelope, raw_topic_name, source_event_id
+from market_data.common.redis_keys import RedisKeyBuilder
+from market_data.common.runtime_health import read_component_health, write_component_health
+from market_data.common.runtime_config import has_placeholder_value, validate_required_values
+from market_data.common.s3_client import create_s3_client
+from market_data.common.secrets import load_alpaca_credentials, resolve_alpaca_credential_source
+from market_data.backfill.runner import (
     BackfillRunner,
     BackfillUnavailable,
     canonical_historical_candles,
@@ -56,14 +56,14 @@ from alfaka.backfill.runner import (
     raw_bars_to_processed_candles,
     repair_daily_bar_outliers,
 )
-from alfaka.backfill.gapfill import TradingCalendar, detect_gapfill_ranges
-from alfaka.backfill.status import RedisBackfillStore, default_backfill_range, redis_response_error_type
-from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider, _rsi14_from_closes, clickhouse_param_value, merge_candle_rows
-from alfaka.serving.cursors import timestamp_from_cursor
-from alfaka.serving.dto import cursor_for, market_status_event, snapshot, websocket_event
-from alfaka.serving.hot_symbols import build_hot_symbols_payload, dollar_volume_from_candle
-from alfaka.serving.intervals import candle_count_for_1y, candle_count_for_24h, historical_source_interval_for, historical_target_bars, redis_closed_candle_cap, resolve_candle_limit
-from alfaka.serving.provider import (
+from market_data.backfill.gapfill import TradingCalendar, detect_gapfill_ranges
+from market_data.backfill.status import RedisBackfillStore, default_backfill_range, redis_response_error_type
+from market_data.serving.clickhouse_provider import ClickHouseMarketDataProvider, _rsi14_from_closes, clickhouse_param_value, merge_candle_rows
+from market_data.serving.cursors import timestamp_from_cursor
+from market_data.serving.dto import cursor_for, market_status_event, snapshot, websocket_event
+from market_data.serving.hot_symbols import build_hot_symbols_payload, dollar_volume_from_candle
+from market_data.serving.intervals import candle_count_for_1y, candle_count_for_24h, historical_source_interval_for, historical_target_bars, redis_closed_candle_cap, resolve_candle_limit
+from market_data.serving.provider import (
     MarketDataProvider,
     filter_stock_chart_candles,
     has_more_before_target,
@@ -72,8 +72,8 @@ from alfaka.serving.provider import (
     target_range_from_for_interval,
     with_coverage_metadata,
 )
-from alfaka.serving.redis_provider import RedisMarketDataProvider
-from alfaka.serving.news_hot_cache import (
+from market_data.serving.redis_provider import RedisMarketDataProvider
+from market_data.serving.news_hot_cache import (
     company_daily_summary_coverage_valid,
     read_company_daily_summaries_from_redis,
     read_company_daily_summary_coverage_from_redis,
@@ -81,9 +81,9 @@ from alfaka.serving.news_hot_cache import (
     write_company_daily_summaries_to_redis,
     write_localized_news_to_redis,
 )
-from alfaka.serving.symbol_registry import SymbolRegistry
-from alfaka.realtime.feed_control import active_feed_profile_for
-from alfaka.storage.clickhouse_loader import (
+from market_data.serving.symbol_registry import SymbolRegistry
+from market_data.realtime.feed_control import active_feed_profile_for
+from market_data.storage.clickhouse_loader import (
     ClickHouseHttpClient,
     RecentSourceEventIds,
     candle_to_clickhouse_row,
@@ -100,10 +100,10 @@ from alfaka.storage.clickhouse_loader import (
     trade_to_clickhouse_row,
     should_ensure_schema_on_start,
 )
-from alfaka.storage.candle_validation import invalid_candle_reason
-from alfaka.storage.news_daily_summary import attach_price_changes_to_daily_summaries, build_daily_summary_record, clickhouse_row_to_daily_summary, daily_summary_to_clickhouse_row
-from alfaka.storage.news_intelligence import build_news_intelligence_record, news_intelligence_to_clickhouse_row
-from alfaka.storage.s3_materializer import (
+from market_data.storage.candle_validation import invalid_candle_reason
+from market_data.storage.news_daily_summary import attach_price_changes_to_daily_summaries, build_daily_summary_record, clickhouse_row_to_daily_summary, daily_summary_to_clickhouse_row
+from market_data.storage.news_intelligence import build_news_intelligence_record, news_intelligence_to_clickhouse_row
+from market_data.storage.s3_materializer import (
     detect_s3_object_format,
     list_s3_objects,
     materialize_keys_from_env,
@@ -112,28 +112,28 @@ from alfaka.storage.s3_materializer import (
     normalize_processed_candle_row,
     read_s3_rows,
 )
-from alfaka.storage.processed_s3_sink import flush_buffer, flush_due_buffers, normalize_storage_row, processed_topics_from_env, run_processed_s3_sink, s3_partition_key
-from alfaka.storage.raw_s3_archive_sink import flush_raw_buffer, raw_archive_row, raw_envelope_partition_key, raw_s3_archive_runtime_config, run_raw_s3_archive_sink
-from alfaka.storage.raw_s3_archive import raw_chunk_partition_key, raw_object_suffix, raw_partition_key, upload_raw_page_to_s3
-from alfaka.storage.news_s3_archive import (
+from market_data.storage.processed_s3_sink import flush_buffer, flush_due_buffers, normalize_storage_row, processed_topics_from_env, run_processed_s3_sink, s3_partition_key
+from market_data.storage.raw_s3_archive_sink import flush_raw_buffer, raw_archive_row, raw_envelope_partition_key, raw_s3_archive_runtime_config, run_raw_s3_archive_sink
+from market_data.storage.raw_s3_archive import raw_chunk_partition_key, raw_object_suffix, raw_partition_key, upload_raw_page_to_s3
+from market_data.storage.news_s3_archive import (
     canonical_news_article_key,
     news_symbol_index_key,
     upload_canonical_news_article_to_s3,
     write_news_symbol_index_to_s3,
 )
-from alfaka.storage.s3_manifest import processed_candle_keys_from_manifest, raw_keys_from_manifest
-from alfaka.storage.s3_realtime_layout import symbol_shard
-from alfaka.streaming.processor import ProcessorState, flush_ready_closed_candles, process_raw_envelope, processor_runtime_config, recover_processor_state_from_clickhouse, recover_processor_state_from_redis, run_stream_processor, write_closed_candle_to_redis, write_live_candle_to_redis, write_trade_to_redis
-from alfaka.streaming.transforms import (
+from market_data.storage.s3_manifest import processed_candle_keys_from_manifest, raw_keys_from_manifest
+from market_data.storage.s3_realtime_layout import symbol_shard
+from market_data.streaming.processor import ProcessorState, flush_ready_closed_candles, process_raw_envelope, processor_runtime_config, recover_processor_state_from_clickhouse, recover_processor_state_from_redis, run_stream_processor, write_closed_candle_to_redis, write_live_candle_to_redis, write_trade_to_redis
+from market_data.streaming.transforms import (
     CandleAggregator,
     normalize_bar,
     normalize_status,
     normalize_trade,
 )
-from alfaka.tools import live_path_trace
-from alfaka.tools.canonical_candle_audit import canonical_candle_audit_query
+from market_data.tools import live_path_trace
+from market_data.tools.canonical_candle_audit import canonical_candle_audit_query
 from app.market_data.realtime.active_symbols import ActiveSymbolManager
-from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+from market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 
 
 class FakeRedisProvider:
@@ -1041,7 +1041,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
     def test_active_trade_subscription_waits_for_authenticated(self):
         import asyncio
-        from alfaka.alpaca import websocket_collector
+        from market_data.alpaca import websocket_collector
 
         profile = resolve_feed_profile({"ALPACA_FEED_PROFILE": "sip"})
         websocket = FakeWebSocket([
@@ -1079,7 +1079,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
     def test_alpaca_stream_session_reports_healthy_events_for_backoff_reset(self):
         import asyncio
-        from alfaka.alpaca import websocket_collector
+        from market_data.alpaca import websocket_collector
 
         profile = resolve_feed_profile({"ALPACA_FEED_PROFILE": "sip"})
         websocket = FakeWebSocket([
@@ -1115,7 +1115,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
 
     def test_kafka_publish_failure_does_not_block_alpaca_websocket_receive_loop(self):
         import asyncio
-        from alfaka.alpaca import websocket_collector
+        from market_data.alpaca import websocket_collector
 
         profile = resolve_feed_profile({"ALPACA_FEED_PROFILE": "sip"})
         websocket = FakeWebSocket([
@@ -1615,7 +1615,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(publish_worker_count_from_env({"ALPACA_KAFKA_PUBLISH_WORKERS": "not-a-number"}), 1)
 
     def test_on_demand_ingestor_keeps_dynamic_candle_channels_without_static_symbols(self):
-        from alfaka.alpaca import websocket_collector
+        from market_data.alpaca import websocket_collector
 
         self.assertEqual(
             websocket_collector.resolve_active_channels(
@@ -2130,7 +2130,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         state = ProcessorState()
         clock = [100.0]
 
-        with mock.patch("alfaka.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
+        with mock.patch("market_data.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
             process_raw_envelope(
                 build_raw_envelope({"T": "t", "S": "AAPL", "i": 123, "p": 195.2, "s": 10, "t": "2026-06-25T10:15:20.100Z"}, "sip"),
                 producer,
@@ -3016,7 +3016,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             calls.append((url, kwargs))
             return MemoryRedis()
 
-        import alfaka.serving.redis_provider as redis_provider_module
+        import market_data.serving.redis_provider as redis_provider_module
 
         with mock.patch.object(redis_provider_module, "redis", types.SimpleNamespace(from_url=fake_from_url)):
             with mock.patch.dict(os.environ, {
@@ -3812,7 +3812,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         )
 
         with mock.patch.dict(os.environ, {"S3_BUCKET": "bucket"}):
-            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", side_effect=AssertionError("Alpaca should not be called")):
+            with mock.patch("market_data.backfill.runner.fetch_alpaca_bars", side_effect=AssertionError("Alpaca should not be called")):
                 result = runner._run(record)
 
         self.assertEqual(result["source"], "clickhouse")
@@ -3852,7 +3852,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         )
 
         with mock.patch.dict(os.environ, {"S3_BUCKET": "bucket", "S3_FINAL_PREFIX": "market-data/rebuild-20260702-lazy-v1/final", "S3_PROCESSED_FORMAT": "jsonl"}):
-            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", return_value=[
+            with mock.patch("market_data.backfill.runner.fetch_alpaca_bars", return_value=[
                 alpaca_raw_bar("2026-06-25T13:30:00.000Z", open_price=10),
             ]):
                 result = runner._run(record)
@@ -3958,7 +3958,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "S3_MANIFEST_PREFIX": "manifest",
             "S3_PROCESSED_FORMAT": "jsonl",
         }):
-            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", return_value=[
+            with mock.patch("market_data.backfill.runner.fetch_alpaca_bars", return_value=[
                 alpaca_raw_bar("2026-07-08T00:00:00.000Z", open_price=100),
                 alpaca_raw_bar("2026-07-09T00:00:00.000Z", open_price=200),
             ]):
@@ -3996,7 +3996,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "S3_FINAL_PREFIX": "market-data/rebuild-20260702-lazy-v1/final",
             "S3_PROCESSED_FORMAT": "jsonl",
         }):
-            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", return_value=[
+            with mock.patch("market_data.backfill.runner.fetch_alpaca_bars", return_value=[
                 alpaca_raw_bar("2026-06-25T00:00:00.000Z", open_price=10)
             ]) as fetch:
                 result = runner._run(record)
@@ -4020,7 +4020,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         runner = BackfillRunner(s3=s3, clickhouse_client=RecordingClickHouseClient(), coverage_provider=StaticCoverageProvider({}))
 
         with mock.patch.dict(os.environ, {"S3_BUCKET": "bucket", "S3_MANIFEST_PREFIX": "market-data/rebuild-20260702-lazy-v1/manifest"}):
-            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", return_value=[]):
+            with mock.patch("market_data.backfill.runner.fetch_alpaca_bars", return_value=[]):
                 result = runner._run(record)
 
         marker_keys = [key for key in s3.objects if key.startswith("market-data/rebuild-20260702-lazy-v1/manifest/empty/candles/")]
@@ -4468,7 +4468,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         )
 
         with mock.patch.dict(os.environ, {"S3_BUCKET": "bucket", "S3_FINAL_PREFIX": "market-data/rebuild-20260702-lazy-v1/final", "S3_MANIFEST_PREFIX": "market-data/rebuild-20260702-lazy-v1/manifest"}):
-            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", side_effect=AssertionError("Alpaca should not be called")):
+            with mock.patch("market_data.backfill.runner.fetch_alpaca_bars", side_effect=AssertionError("Alpaca should not be called")):
                 result = runner._run(record)
 
         self.assertEqual(result["source"], "s3-processed")
@@ -4514,7 +4514,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         )
 
         with mock.patch.dict(os.environ, {"S3_BUCKET": "bucket", "S3_FINAL_PREFIX": "market-data/rebuild-20260702-lazy-v1/final", "S3_MANIFEST_PREFIX": "market-data/rebuild-20260702-lazy-v1/manifest", "S3_PROCESSED_FORMAT": "jsonl"}):
-            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", return_value=[
+            with mock.patch("market_data.backfill.runner.fetch_alpaca_bars", return_value=[
                 alpaca_raw_bar("2026-06-25T13:30:00.000Z", open_price=12),
             ]):
                 result = runner._run(record)
@@ -4568,7 +4568,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "S3_FINAL_PREFIX": "market-data/rebuild-20260702-lazy-v1/final",
             "S3_PROCESSED_FORMAT": "jsonl",
         }):
-            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", return_value=[
+            with mock.patch("market_data.backfill.runner.fetch_alpaca_bars", return_value=[
                 alpaca_raw_bar("2026-06-25T13:30:00.000Z", open_price=12),
             ]) as fetch:
                 result = runner._run(record)
@@ -4691,7 +4691,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "S3_RAW_PREFIX": "market-data/rebuild-20260702-lazy-v1/raw/alpaca",
             "S3_MANIFEST_PREFIX": "market-data/rebuild-20260702-lazy-v1/manifest",
         }):
-            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", return_value=[
+            with mock.patch("market_data.backfill.runner.fetch_alpaca_bars", return_value=[
                 alpaca_raw_bar("2026-06-25T13:30:00.000Z", open_price=10)
             ]) as fetch:
                 result = runner._run(record)
@@ -4740,7 +4740,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "S3_RAW_PREFIX": "market-data/rebuild-20260702-lazy-v1/raw/alpaca",
             "S3_MANIFEST_PREFIX": "market-data/rebuild-20260702-lazy-v1/manifest",
         }):
-            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", return_value=[
+            with mock.patch("market_data.backfill.runner.fetch_alpaca_bars", return_value=[
                 alpaca_raw_bar("2026-06-25T13:30:00.000Z", open_price=10)
             ]) as fetch:
                 result = runner._run(record)
@@ -4882,7 +4882,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         )
 
         with mock.patch.dict(os.environ, {"S3_BUCKET": "bucket", "S3_FINAL_PREFIX": "market-data/rebuild-20260702-lazy-v1/final", "S3_PROCESSED_FORMAT": "jsonl"}):
-            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", side_effect=fake_fetch):
+            with mock.patch("market_data.backfill.runner.fetch_alpaca_bars", side_effect=fake_fetch):
                 result = runner._run(record)
 
         self.assertEqual(calls, [{
@@ -4919,7 +4919,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         )
 
         with mock.patch.dict(os.environ, {"S3_BUCKET": "bucket", "S3_FINAL_PREFIX": "market-data/rebuild-20260702-lazy-v1/final", "S3_PROCESSED_FORMAT": "jsonl"}):
-            with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", side_effect=fake_fetch):
+            with mock.patch("market_data.backfill.runner.fetch_alpaca_bars", side_effect=fake_fetch):
                 result = runner._run(record)
 
         self.assertEqual(calls[0]["timeframe"], "10Min")
@@ -4993,7 +4993,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "HISTORICAL_RETRY_SLEEP_SECONDS": "0",
             "HISTORICAL_RETRY_MAX_SLEEP_SECONDS": "0",
         }):
-            with mock.patch("alfaka.common.secrets.load_alpaca_credentials", return_value=("key", "secret")):
+            with mock.patch("market_data.common.secrets.load_alpaca_credentials", return_value=("key", "secret")):
                 with mock.patch("requests.get", side_effect=fake_get):
                     rows = fetch_alpaca_bars(
                         "AAPL",
@@ -5024,7 +5024,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "ALPACA_CRYPTO_LOCATION": "us",
             "HISTORICAL_MAX_RETRIES": "1",
         }):
-            with mock.patch("alfaka.common.secrets.load_alpaca_credentials", return_value=("key", "secret")):
+            with mock.patch("market_data.common.secrets.load_alpaca_credentials", return_value=("key", "secret")):
                 with mock.patch("requests.get", side_effect=fake_get):
                     rows = fetch_alpaca_bars(
                         "BTCUSD",
@@ -5058,7 +5058,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             {"t": "2024-06-11T03:59:00Z", "o": 121.7, "h": 121.9, "l": 121.4, "c": 121.79, "v": 300, "n": 3, "vw": 121.75},
         ]
 
-        with mock.patch("alfaka.backfill.runner.fetch_alpaca_bars", return_value=minute_rows) as fetch:
+        with mock.patch("market_data.backfill.runner.fetch_alpaca_bars", return_value=minute_rows) as fetch:
             repaired = repair_daily_bar_outliers("NVDA", [daily_bar], "sip")
 
         self.assertEqual(fetch.call_args.args[4], "1Min")
@@ -5388,7 +5388,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "CLICKHOUSE_PROVIDER_RETRY_ATTEMPTS": "2",
         }):
             with mock.patch("requests.post", side_effect=fake_post):
-                with mock.patch("alfaka.serving.clickhouse_provider.time.sleep") as sleep:
+                with mock.patch("market_data.serving.clickhouse_provider.time.sleep") as sleep:
                     rows = provider.query_json_each_row("SELECT 1", {"symbol": "AAPL"})
 
         self.assertEqual(rows, [{"ok": 1}])
@@ -5997,7 +5997,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             clickhouse_provider=clickhouse,
         )
 
-        with mock.patch("alfaka.serving.provider.target_range_from_for_interval", return_value="2020-07-01T00:00:00.000Z"):
+        with mock.patch("market_data.serving.provider.target_range_from_for_interval", return_value="2020-07-01T00:00:00.000Z"):
             payload = provider.candle_snapshot("AAPL", "1M", 80)
 
         self.assertEqual(clickhouse.calls[-1]["from_time"], "2020-07-01T00:00:00.000Z")
@@ -6036,7 +6036,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             clickhouse_provider=clickhouse,
         )
 
-        with mock.patch("alfaka.serving.provider.target_range_from_for_interval", return_value="2020-07-01T00:00:00.000Z"):
+        with mock.patch("market_data.serving.provider.target_range_from_for_interval", return_value="2020-07-01T00:00:00.000Z"):
             payload = provider.candle_snapshot(
                 "AAPL",
                 "1M",
@@ -6089,7 +6089,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             clickhouse_provider=clickhouse,
         )
 
-        with mock.patch("alfaka.serving.provider.target_range_from_for_interval", return_value="2020-07-01T00:00:00.000Z"):
+        with mock.patch("market_data.serving.provider.target_range_from_for_interval", return_value="2020-07-01T00:00:00.000Z"):
             payload = provider.candle_snapshot(
                 "AAPL",
                 "1M",
@@ -6134,7 +6134,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             clickhouse_provider=clickhouse,
         )
 
-        with mock.patch("alfaka.serving.provider.target_range_from_for_interval", return_value="2026-05-23T04:00:00.000Z"):
+        with mock.patch("market_data.serving.provider.target_range_from_for_interval", return_value="2026-05-23T04:00:00.000Z"):
             payload = provider.candle_snapshot(
                 "NVDA",
                 "1D",
@@ -6177,7 +6177,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             clickhouse_provider=clickhouse,
         )
 
-        with mock.patch("alfaka.serving.provider.target_range_from_for_interval", return_value="2020-07-01T00:00:00.000Z"):
+        with mock.patch("market_data.serving.provider.target_range_from_for_interval", return_value="2020-07-01T00:00:00.000Z"):
             payload = provider.candle_snapshot(
                 "AAPL",
                 "1m",
@@ -6867,7 +6867,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[3]
         os.environ["ALFAKA_REQUEST_CONFIG"] = "systems/market-data/config/market-data-request.json"
         try:
-            os.chdir(repo_root / "systems" / "api-server" / "pods" / "api-server" / "gops-backend")
+            os.chdir(repo_root / "systems" / "api-server" / "pods" / "api-server")
             self.assertTrue(resolve_request_config_path().exists())
             config = load_request_config()
             self.assertEqual(config["defaultUniverse"], "sp500")
@@ -6941,7 +6941,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             }]),
         )
 
-        with self.assertLogs("alfaka.serving.provider", level="WARNING") as logs:
+        with self.assertLogs("market_data.serving.provider", level="WARNING") as logs:
             candles = provider.candles_since_cursor("AAPL", "1m", "v1:AAPL:1m:2026-06-25T10:15:00.000Z:abc")
             profile = provider.volume_profile_bins("AAPL", "2026-06-25T10:15:00.000Z", "2026-06-25T10:17:00.000Z", "auto")
 
@@ -7052,7 +7052,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             clickhouse_provider=FakeClickHouseProvider(),
         )
 
-        with mock.patch("alfaka.serving.provider.datetime") as fake_datetime:
+        with mock.patch("market_data.serving.provider.datetime") as fake_datetime:
             fake_datetime.now.return_value = datetime(2026, 7, 8, 20, 10, tzinfo=timezone.utc)
             fake_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
             payload_5m = provider.candle_snapshot("AAPL", "5m", 5, ma_windows=())
@@ -7147,7 +7147,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             clickhouse_provider=clickhouse,
         )
 
-        with mock.patch("alfaka.serving.provider.datetime") as fake_datetime:
+        with mock.patch("market_data.serving.provider.datetime") as fake_datetime:
             fake_datetime.now.return_value = datetime(2026, 7, 4, 14, 0, tzinfo=timezone.utc)
             fake_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
             payload = provider.candle_snapshot("AAPL", "1m", 20)
@@ -7181,7 +7181,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             clickhouse_provider=clickhouse,
         )
 
-        with mock.patch("alfaka.serving.provider.datetime") as fake_datetime:
+        with mock.patch("market_data.serving.provider.datetime") as fake_datetime:
             fake_datetime.now.return_value = datetime(2026, 7, 14, 0, 0, tzinfo=timezone.utc)
             fake_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
             payload = provider.candle_snapshot("ANET", "4h", 120, ma_windows=())
@@ -7223,7 +7223,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             clickhouse_provider=clickhouse,
         )
 
-        with mock.patch("alfaka.serving.provider.datetime") as fake_datetime:
+        with mock.patch("market_data.serving.provider.datetime") as fake_datetime:
             fake_datetime.now.return_value = datetime(2026, 7, 6, 14, 47, tzinfo=timezone.utc)
             fake_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
             payload = provider.candle_snapshot("AAPL", "1m", 20)
@@ -7516,7 +7516,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         )
 
         self.assertIsNone(timestamp_from_cursor("v1:INTC:1m:empty:00000000"))
-        with self.assertNoLogs("alfaka.serving.provider", level="WARNING"):
+        with self.assertNoLogs("market_data.serving.provider", level="WARNING"):
             candles = provider.candles_since_cursor("INTC", "1m", "v1:INTC:1m:empty:00000000")
 
         self.assertEqual(candles, [])
@@ -7857,7 +7857,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "articleId": "worker-news-1",
             "headline": "Apple supplier expands",
             "summary": "Apple supplier plans expansion.",
-            "publishedAt": "2026-06-29T01:02:03.000Z",
+            "publishedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "url": "https://example.com/worker-aapl",
             "source": "alpaca",
             "symbols": ["AAPL"],
@@ -8154,7 +8154,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         )
         row = daily_summary_to_clickhouse_row(record)
         redis_client = MemoryRedis()
-        from alfaka.serving.news_hot_cache import write_company_daily_summary_to_redis
+        from market_data.serving.news_hot_cache import write_company_daily_summary_to_redis
 
         write_company_daily_summary_to_redis(redis_client, record, locale="ko-KR", ttl_seconds=86400, max_items=30)
         cached = read_company_daily_summaries_from_redis(redis_client, "AAPL", locale="ko-KR")
@@ -8219,7 +8219,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn(RedisKeyBuilder().news_daily_coverage_v2("ko-KR", "AAPL"), redis_client.values)
 
     def test_daily_summary_redis_replaces_older_versions_for_same_date(self):
-        from alfaka.serving.news_hot_cache import write_company_daily_summary_to_redis
+        from market_data.serving.news_hot_cache import write_company_daily_summary_to_redis
 
         redis_client = MemoryRedis()
         key = RedisKeyBuilder().news_daily_v2("ko-KR", "NVDA")
@@ -8385,7 +8385,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "articleId": "nvda-apple-mention",
             "headline": "Jim Cramer says Nvidia recommendation made a fortune",
             "summary": "Apple is only present in provider metadata.",
-            "publishedAt": "2026-06-29T01:02:03.000Z",
+            "publishedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "url": "https://example.com/nvda",
             "source": "alpaca",
             "symbols": ["AAPL", "NVDA", "MSFT", "META"],
@@ -8785,7 +8785,7 @@ class MarketDataHardeningContractTest(unittest.TestCase):
             "S3_SESSION_TOKEN": "",
             "AWS_REGION": "ap-northeast-2",
         }, clear=False):
-            with mock.patch("alfaka.common.s3_client.boto3.client", side_effect=fake_client):
+            with mock.patch("market_data.common.s3_client.boto3.client", side_effect=fake_client):
                 create_s3_client()
 
         self.assertEqual(captured["service"], "s3")

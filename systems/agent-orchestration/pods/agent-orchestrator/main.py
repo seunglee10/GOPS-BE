@@ -101,7 +101,7 @@ def publish_agent_outputs(report: dict[str, Any]) -> None:
 def kafka_producer():
     global _producer
     if _producer is None:
-        from alfaka.common.kafka_io import create_json_producer
+        from market_data.common.kafka_io import create_json_producer
 
         _producer = create_json_producer(
             os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),

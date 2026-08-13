@@ -20,7 +20,7 @@ rollback. Architecture and public contracts are in
 ## Validation Gate
 
 ```bash
-export PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend
+export PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server
 .venv/bin/python -m compileall -q systems scripts/local scripts/aws
 .venv/bin/python -m unittest discover -s systems/market-data/tests -p 'test_*.py'
 .venv/bin/python -m unittest discover -s systems/api-server/tests -p 'test_*.py'

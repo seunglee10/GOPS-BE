@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import time
 from typing import Any
@@ -16,6 +17,9 @@ from kis_trader.persistence.postgres import PostgresOrderRepository
 from kis_trader.runtime_heartbeat import touch_heartbeat
 
 from .adapter import BrokerProcessResult, KisBrokerAdapter
+
+
+CONSUMER_NAME = "kis-broker-adapter"
 
 
 def build_broker_adapter_consumer_config(bootstrap_servers: str, **overrides: Any) -> dict[str, Any]:
@@ -75,7 +79,23 @@ class KafkaBrokerAdapterConsumer:
         if message.error():
             raise KafkaException(message.error())
         payload = json.loads(message.value().decode("utf-8"))
+        event_id = str(payload.get("event_id") or payload.get("eventId") or "").strip()
+        repository = self.adapter.repository
+        if event_id and repository.inbox_event_seen(CONSUMER_NAME, event_id):
+            result = BrokerProcessResult(
+                order_id=str(payload.get("order_id") or payload.get("orderId") or "") or None,
+                status="DUPLICATE",
+                skipped_external_submit=True,
+                reason="Kafka event already processed",
+            )
+            self.consumer.commit(message=message, asynchronous=False)
+            return result
         result = self.adapter.process_message(payload)
+        if event_id:
+            digest = hashlib.sha256(
+                json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            repository.record_inbox_event(CONSUMER_NAME, event_id, payload_digest=digest)
         self.consumer.commit(message=message, asynchronous=False)
         return result
 

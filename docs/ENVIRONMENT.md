@@ -431,7 +431,7 @@ Current local stage:
 
 ```text
 docker-compose postgres
-systems/order/jobs/migrations
+systems/order/jobs/postgres-migrations
 ```
 
 Common env:

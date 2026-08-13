@@ -4,11 +4,11 @@ import os
 import sys
 import time
 
-from alfaka.alpaca.news import build_news_events, fetch_alpaca_news, normalize_article_symbols
-from alfaka.common.env import load_dotenv, parse_csv, utc_now_iso
-from alfaka.common.kafka_io import create_json_producer
-from alfaka.common.secrets import load_alpaca_credentials
-from alfaka.storage.news_s3_archive import upload_canonical_news_article_to_s3, write_news_symbol_index_to_s3
+from market_data.alpaca.news import build_news_events, fetch_alpaca_news, normalize_article_symbols
+from market_data.common.env import load_dotenv, parse_csv, utc_now_iso
+from market_data.common.kafka_io import create_json_producer
+from market_data.common.secrets import load_alpaca_credentials
+from market_data.storage.news_s3_archive import upload_canonical_news_article_to_s3, write_news_symbol_index_to_s3
 
 
 def main():
@@ -31,7 +31,7 @@ def main():
     s3_prefix = os.getenv("S3_RAW_PREFIX", "market-data/raw/alpaca")
     archive_to_s3 = os.getenv("NEWS_S3_ARCHIVE_ENABLED", "false").lower() in {"1", "true", "yes"} and bool(s3_bucket)
     if archive_to_s3:
-        from alfaka.common.s3_client import create_s3_client
+        from market_data.common.s3_client import create_s3_client
 
         s3 = create_s3_client()
     seen_ids = set()

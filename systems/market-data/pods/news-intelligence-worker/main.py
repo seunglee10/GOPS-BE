@@ -7,16 +7,16 @@ import urllib.request
 
 import redis
 
-from alfaka.common.env import load_dotenv
-from alfaka.common.kafka_io import create_json_consumer
-from alfaka.serving.news_hot_cache import (
+from market_data.common.env import load_dotenv
+from market_data.common.kafka_io import create_json_consumer
+from market_data.serving.news_hot_cache import (
     DEFAULT_NEWS_MAX_ITEMS,
     DEFAULT_NEWS_RETENTION_DAYS,
     DEFAULT_NEWS_TTL_SECONDS,
     write_localized_news_to_redis,
 )
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
-from alfaka.storage.news_intelligence import (
+from market_data.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
+from market_data.storage.news_intelligence import (
     build_news_intelligence_record,
     deterministic_news_intelligence,
     news_intelligence_to_clickhouse_row,
@@ -49,7 +49,7 @@ def main():
         and bool_env("NEWS_DAILY_SUMMARY_EVENT_DRIVEN_ENABLED", False)
     ):
         try:
-            from alfaka.common.kafka_io import create_json_producer
+            from market_data.common.kafka_io import create_json_producer
 
             daily_summary_producer = create_json_producer(kafka_servers, "alfaka-news-intelligence-daily-summary")
         except Exception as exc:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from alfaka.tools.sync_symbol_registry import main as sync_main
+from market_data.tools.sync_symbol_registry import main as sync_main
 
 
 if __name__ == "__main__":

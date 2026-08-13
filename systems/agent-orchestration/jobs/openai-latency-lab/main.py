@@ -662,7 +662,7 @@ def ensure_repo_paths() -> None:
     for path in [
         root / "systems" / "agent-orchestration" / "shared",
         root / "systems" / "market-data" / "shared",
-        root / "systems" / "api-server" / "pods" / "api-server" / "gops-backend",
+        root / "systems" / "api-server" / "pods" / "api-server",
     ]:
         text = str(path)
         if text not in sys.path:

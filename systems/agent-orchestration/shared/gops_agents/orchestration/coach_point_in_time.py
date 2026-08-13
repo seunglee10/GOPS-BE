@@ -781,7 +781,7 @@ class StoreCoachPointInTimeContextProvider:
 
     def _clickhouse_provider(self):
         if self._clickhouse is None:
-            from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+            from market_data.serving.clickhouse_provider import ClickHouseMarketDataProvider
 
             self._clickhouse = ClickHouseMarketDataProvider()
         return self._clickhouse

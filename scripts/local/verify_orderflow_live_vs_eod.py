@@ -15,9 +15,9 @@ shared_path = repo_root / "systems" / "market-data" / "shared"
 if str(shared_path) not in sys.path:
     sys.path.insert(0, str(shared_path))
 
-from alfaka.common.redis_keys import RedisKeyBuilder  # noqa: E402
-from alfaka.orderflow.redis_model import order_flow_blob_to_bins, parse_order_flow_minute_blob  # noqa: E402
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient  # noqa: E402
+from market_data.common.redis_keys import RedisKeyBuilder  # noqa: E402
+from market_data.orderflow.redis_model import order_flow_blob_to_bins, parse_order_flow_minute_blob  # noqa: E402
+from market_data.storage.clickhouse_loader import ClickHouseHttpClient  # noqa: E402
 
 
 SIDES = ("ask", "bid", "unknown")

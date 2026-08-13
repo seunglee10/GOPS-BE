@@ -6,9 +6,9 @@ Owns the KIS overseas demo order domain, persistent paper trading, account holdi
 
 ```text
 pods/order-outbox/       long-running outbox publisher runtime
-pods/paper-order-matcher/ realtime quote matcher for persistent paper orders
+pods/paper-live-matcher/ realtime quote matcher for persistent paper orders
 pods/kis-adapter/        long-running KIS adapter runtime
-jobs/migrations/         Postgres migration job
+jobs/postgres-migrations/         Postgres migration job
 jobs/reconciler/         limited/manual reconciliation job
 shared/kis_trader/       order import namespace
 tests/kis_trader/        order tests
@@ -20,9 +20,9 @@ SQL migration files currently live in `shared/kis_trader/migrations` because run
 
 ```text
 pods/order-outbox/main.py    wraps kis_trader.cli outbox-publish --limit 100 in a 2 second loop
-pods/paper-order-matcher/main.py consumes market.layer.quotes.v1 and fills paper limit orders
+pods/paper-live-matcher/main.py consumes market.layer.quotes.v1 and fills paper limit orders
 pods/kis-adapter/main.py     wraps kis_trader.cli broker-adapter --timeout-seconds 1.0
-jobs/migrations/main.py      wraps kis_trader.cli migrate
+jobs/postgres-migrations/main.py      wraps kis_trader.cli migrate
 jobs/reconciler/main.py      wraps kis_trader.cli reconcile --rows-json []
 ```
 
@@ -36,7 +36,7 @@ for the order ticket, and reads KIS credentials from AWS Secrets Manager
 ## Images
 
 ```text
-gops-order-worker   order-outbox, paper-order-matcher, migrations, reconciler
+gops-order-worker   order-outbox, paper-live-matcher, migrations, reconciler
 gops-kis-adapter    kis-adapter
 ```
 
@@ -65,7 +65,7 @@ or removed by an explicit account reset.
 
 Migration `0006_paper_trading.sql` creates account generations, positions,
 orders, events, and an append-only cash ledger. Deploy it before starting
-`paper-order-matcher`. The matcher also keeps pending-order symbols in the
+`paper-live-matcher`. The matcher also keeps pending-order symbols in the
 highest-priority Alpaca realtime subscription cohort; the configured default is
 at most 100 distinct pending symbols.
 

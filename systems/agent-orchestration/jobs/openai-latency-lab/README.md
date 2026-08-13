@@ -80,7 +80,7 @@ docker compose run --rm agent-orchestrator \
 Use the repository `.venv` and set `PYTHONPATH` if running outside Docker:
 
 ```sh
-PYTHONPATH=systems/agent-orchestration/shared:systems/market-data/shared:systems/api-server/pods/api-server/gops-backend \
+PYTHONPATH=systems/agent-orchestration/shared:systems/market-data/shared:systems/api-server/pods/api-server \
   .venv/bin/python systems/agent-orchestration/jobs/openai-latency-lab/main.py --mode openai
 ```
 

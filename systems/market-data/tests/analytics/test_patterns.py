@@ -13,9 +13,9 @@ MARKET_SHARED = ROOT / "systems" / "market-data" / "shared"
 if str(MARKET_SHARED) not in sys.path:
     sys.path.insert(0, str(MARKET_SHARED))
 
-from alfaka.analytics.patterns import compute_patterns  # noqa: E402
-from alfaka.analytics import compute_feature_pack  # noqa: E402
-import alfaka.analytics.geometry as geometry_kernel  # noqa: E402
+from market_data.analytics.patterns import compute_patterns  # noqa: E402
+from market_data.analytics import compute_feature_pack  # noqa: E402
+import market_data.analytics.geometry as geometry_kernel  # noqa: E402
 
 
 def _row(index: int, *, high: float, low: float, close: float, volume: float = 1_000) -> dict:

@@ -11,7 +11,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[3]
-BACKEND = ROOT / "systems/api-server/pods/api-server/gops-backend"
+BACKEND = ROOT / "systems/api-server/pods/api-server"
 MARKET_SHARED = ROOT / "systems/market-data/shared"
 ORDER_SHARED = ROOT / "systems/order/shared"
 AGENT_SHARED = ROOT / "systems/agent-orchestration/shared"

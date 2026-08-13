@@ -8,7 +8,7 @@ from gops_agents.events.publisher import RedisNotificationPublisher
 
 
 def main() -> None:
-    from alfaka.common.kafka_io import create_json_consumer
+    from market_data.common.kafka_io import create_json_consumer
 
     kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     decisions_topic = os.getenv("AGENT_NOTIFICATION_DECISIONS_TOPIC", "agents.notification-decisions.v1")

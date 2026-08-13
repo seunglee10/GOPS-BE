@@ -14,7 +14,7 @@ for path in (
     ROOT / "systems" / "market-data" / "shared",
     ROOT / "systems" / "order" / "shared",
     ROOT / "systems" / "agent-orchestration" / "shared",
-    ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend",
+    ROOT / "systems" / "api-server" / "pods" / "api-server",
     ROOT,
 ):
     if str(path) not in sys.path:

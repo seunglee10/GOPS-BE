@@ -26,7 +26,7 @@ from zoneinfo import ZoneInfo
 
 
 REPOSITORY_ROOT = Path(os.getenv("REPOSITORY_ROOT") or Path(__file__).resolve().parents[3])
-BACKEND_ROOT = REPOSITORY_ROOT / "systems/api-server/pods/api-server/gops-backend"
+BACKEND_ROOT = REPOSITORY_ROOT / "systems/api-server/pods/api-server"
 sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.recommendations.explanations import (  # noqa: E402

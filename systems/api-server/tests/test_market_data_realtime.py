@@ -4,8 +4,8 @@ import unittest
 from collections import Counter
 from datetime import datetime, timezone
 
-from alfaka.common.redis_keys import RedisKeyBuilder
-from alfaka.serving.dto import websocket_event
+from market_data.common.redis_keys import RedisKeyBuilder
+from market_data.serving.dto import websocket_event
 from app.market_data.realtime.stream_hub import StreamSession, SymbolStreamHub
 
 

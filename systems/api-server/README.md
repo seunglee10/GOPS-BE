@@ -5,7 +5,7 @@ Owns the single FastAPI server that brokers chart API, order API, orderable cash
 ## Folders
 
 ```text
-pods/api-server/gops-backend/   FastAPI application
+pods/api-server/   FastAPI application
 tests/                          API server tests
 .env.example                    optional backend-local env example
 ```
@@ -25,7 +25,7 @@ ignored local file explicitly so every chart module receives the same process
 environment:
 
 ```bash
-PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend \
+PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server \
   .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 \
   --env-file systems/api-server/.env
 ```

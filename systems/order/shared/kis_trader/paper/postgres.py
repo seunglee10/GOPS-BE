@@ -10,6 +10,7 @@ import psycopg
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from kis_trader.persistence.user_context import apply_postgres_user_context
 
 from kis_trader.domain.commands import OrderRequest
 
@@ -27,10 +28,12 @@ from .fixture import (
 )
 
 from .models import (
+    ACTIVE_STATUSES,
     CANCELLED_STATUS,
     DEFAULT_STARTING_CASH,
     FILLED_STATUS,
     MAX_ACTIVE_ORDER_SYMBOLS,
+    PARTIALLY_FILLED_STATUS,
     PENDING_STATUS,
     PaperCapacityError,
     PaperIdempotencyConflictError,
@@ -102,7 +105,7 @@ class PostgresPaperTradingRepository:
                 open_orders = conn.execute(
                     """
                     SELECT * FROM paper_orders
-                    WHERE user_id = %s AND generation = %s AND status = 'pending'
+                    WHERE user_id = %s AND generation = %s AND status IN ('pending', 'partially_filled')
                     ORDER BY created_at DESC, order_id DESC
                     """,
                     (user_id, account["current_generation"]),
@@ -165,7 +168,7 @@ class PostgresPaperTradingRepository:
                         SELECT count(DISTINCT symbol) AS symbol_count,
                                bool_or(symbol = %s) AS symbol_exists
                         FROM paper_orders
-                        WHERE status = 'pending' AND execution_mode = 'paper'
+                        WHERE status IN ('pending', 'partially_filled') AND execution_mode = 'paper'
                         """,
                         (request.symbol,),
                     ).fetchone()
@@ -344,7 +347,7 @@ class PostgresPaperTradingRepository:
                 ).fetchone()
                 if row is None:
                     raise PaperOrderNotFoundError("paper order not found")
-                if row["status"] != PENDING_STATUS:
+                if row["status"] not in ACTIVE_STATUSES:
                     return public_order(dict(row))
                 run = self._run(conn, user_id, row["generation"], for_update=True)
                 reserved_delta = self._release_reservation(conn, row, run)
@@ -400,6 +403,8 @@ class PostgresPaperTradingRepository:
         ask_price: Decimal | None,
         quote_timestamp: str | None,
         quote_event_id: str | None,
+        bid_size: Decimal | None = None,
+        ask_size: Decimal | None = None,
         execution_mode: str = "paper",
         simulation_run_id: str | None = None,
         quote_sequence: int | None = None,
@@ -408,13 +413,15 @@ class PostgresPaperTradingRepository:
         symbol = symbol.upper()
         bid = Decimal(bid_price) if bid_price is not None else None
         ask = Decimal(ask_price) if ask_price is not None else None
+        bid_liquidity = Decimal(bid_size) if bid_size is not None else None
+        ask_liquidity = Decimal(ask_size) if ask_size is not None else None
         matched: list[dict[str, Any]] = []
         with self._connect() as conn:
             with conn.transaction():
                 rows = conn.execute(
                     """
                     SELECT * FROM paper_orders
-                    WHERE symbol = %s AND status = 'pending' AND execution_mode = %s
+                    WHERE symbol = %s AND status IN ('pending', 'partially_filled') AND execution_mode = %s
                       AND (%s <> 'simulation' OR simulation_run_id = %s)
                       AND (%s::bigint IS NULL OR simulation_submitted_sequence IS NULL
                            OR (order_type = 'market' AND simulation_submitted_sequence <= %s::bigint)
@@ -431,6 +438,27 @@ class PostgresPaperTradingRepository:
                     if fill_price is None or fill_price <= 0:
                         continue
 
+                    remaining_qty = row["qty"] - row["filled_qty"]
+                    available_qty = ask_liquidity if row["side"] == "buy" else bid_liquidity
+                    execution_qty = min(remaining_qty, available_qty) if available_qty is not None else remaining_qty
+                    if execution_qty <= 0:
+                        continue
+
+                    execution_id = self._record_execution(
+                        conn,
+                        row,
+                        quantity=execution_qty,
+                        price=fill_price,
+                        quote_event_id=quote_event_id,
+                        quote_timestamp=quote_timestamp,
+                        executed_at=virtual_timestamp or quote_timestamp,
+                    )
+                    if execution_id is None:
+                        continue
+                    if row["side"] == "buy" and ask_liquidity is not None:
+                        ask_liquidity -= execution_qty
+                    if row["side"] == "sell" and bid_liquidity is not None:
+                        bid_liquidity -= execution_qty
                     run = self._run(conn, row["user_id"], row["generation"], for_update=True)
                     position = self._ensure_position(
                         conn,
@@ -439,7 +467,7 @@ class PostgresPaperTradingRepository:
                         row["symbol"],
                         for_update=True,
                     )
-                    qty = row["qty"]
+                    qty = execution_qty
                     if row["side"] == "buy":
                         reserved = qty * row["limit_price"]
                         cost = qty * fill_price
@@ -486,28 +514,45 @@ class PostgresPaperTradingRepository:
                         cash_delta = proceeds
                         reserved_delta = Decimal("0")
 
+                    previous_filled_qty = row["filled_qty"] or Decimal("0")
+                    next_filled_qty = previous_filled_qty + qty
+                    previous_average = row["fill_price"] or Decimal("0")
+                    next_fill_average = (
+                        (previous_filled_qty * previous_average) + (qty * fill_price)
+                    ) / next_filled_qty
+                    next_status = FILLED_STATUS if next_filled_qty == row["qty"] else PARTIALLY_FILLED_STATUS
+                    event_type = "order.filled" if next_status == FILLED_STATUS else "order.partially_filled"
+
                     conn.execute(
                         """
                         UPDATE paper_orders
-                        SET status = 'filled', filled_qty = qty, fill_price = %s,
+                        SET status = %s, filled_qty = %s, fill_price = %s,
                             quote_event_id = %s, quote_timestamp = %s,
-                            filled_at = now(), virtual_filled_at = %s,
+                            filled_at = CASE WHEN %s = 'filled' THEN now() ELSE NULL END,
+                            virtual_filled_at = CASE WHEN %s = 'filled' THEN %s::timestamptz ELSE NULL END,
                             updated_at = now(), reason = NULL
                         WHERE order_id = %s
                         """,
-                        (fill_price, quote_event_id, quote_timestamp, virtual_timestamp, row["order_id"]),
+                        (
+                            next_status, next_filled_qty, next_fill_average,
+                            quote_event_id, quote_timestamp,
+                            next_status, next_status, virtual_timestamp, row["order_id"],
+                        ),
                     )
                     updated = conn.execute("SELECT * FROM paper_orders WHERE order_id = %s", (row["order_id"],)).fetchone()
                     self._append_event(
                         conn,
                         updated,
-                        "order.filled",
-                        FILLED_STATUS,
+                        event_type,
+                        next_status,
                         payload={
+                            "execution_id": execution_id,
+                            "execution_quantity": str(qty),
                             "fill_price": str(fill_price),
                             "quote_event_id": quote_event_id,
                             "quote_timestamp": quote_timestamp,
                         },
+                        execution_id=execution_id,
                     )
                     current_run = self._run(conn, row["user_id"], row["generation"])
                     self._append_ledger(
@@ -515,8 +560,9 @@ class PostgresPaperTradingRepository:
                         row["user_id"],
                         row["generation"],
                         current_run,
-                        "order.filled",
+                        event_type,
                         order_id=row["order_id"],
+                        execution_id=execution_id,
                         cash_delta=cash_delta,
                         reserved_cash_delta=reserved_delta,
                     )
@@ -537,7 +583,8 @@ class PostgresPaperTradingRepository:
                 rows = conn.execute(
                     """
                     SELECT * FROM paper_orders
-                    WHERE execution_mode = 'simulation' AND simulation_run_id = %s AND status = 'pending'
+                    WHERE execution_mode = 'simulation' AND simulation_run_id = %s
+                      AND status IN ('pending', 'partially_filled')
                     ORDER BY created_at, order_id
                     FOR UPDATE
                     """,
@@ -584,7 +631,7 @@ class PostgresPaperTradingRepository:
     def active_order_symbols(self) -> list[str]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT DISTINCT symbol FROM paper_orders WHERE status = 'pending' AND execution_mode = 'paper' ORDER BY symbol"
+                "SELECT DISTINCT symbol FROM paper_orders WHERE status IN ('pending', 'partially_filled') AND execution_mode = 'paper' ORDER BY symbol"
             ).fetchall()
             return [str(row["symbol"]) for row in rows]
 
@@ -603,7 +650,9 @@ class PostgresPaperTradingRepository:
             return [str(row["symbol"]) for row in rows]
 
     def _connect(self) -> psycopg.Connection:
-        return psycopg.connect(self.conninfo, row_factory=dict_row)
+        conn = psycopg.connect(self.conninfo, row_factory=dict_row)
+        apply_postgres_user_context(conn)
+        return conn
 
     def _ensure_account(
         self,
@@ -750,24 +799,34 @@ class PostgresPaperTradingRepository:
                 ),
             )
             order = conn.execute("SELECT * FROM paper_orders WHERE order_id = %s", (order_id,)).fetchone()
+            execution_id = self._record_execution(
+                conn,
+                order,
+                quantity=fill.quantity,
+                price=fill.price,
+                quote_event_id=f"seed:{SEED_PROFILE}:{generation}:{index}",
+                quote_timestamp=fill.filled_at,
+                executed_at=fill.filled_at,
+            )
             self._append_event(
                 conn, order, "order.filled", FILLED_STATUS,
-                payload={"seed_profile": SEED_PROFILE, "fill_price": str(fill.price)},
+                payload={"seed_profile": SEED_PROFILE, "fill_price": str(fill.price), "execution_id": execution_id},
+                execution_id=execution_id,
             )
             cash_delta = fill.quantity * fill.price * (Decimal("-1") if fill.side == "buy" else Decimal("1"))
             seed_cash += cash_delta
             conn.execute(
                 """
                 INSERT INTO paper_cash_ledger (
-                    entry_id, user_id, generation, order_id, event_type,
+                    entry_id, user_id, generation, order_id, execution_id, event_type,
                     cash_delta, reserved_cash_delta, cash_balance_after,
                     reserved_cash_after, payload, created_at
-                ) VALUES (%s, %s, %s, %s, 'order.filled', %s, 0, %s, 0, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, 'order.filled', %s, 0, %s, 0, %s, %s)
                 ON CONFLICT (entry_id) DO NOTHING
                 """,
                 (
                     f"paper_seed_led_{uuid5(NAMESPACE_URL, f'{seed_key}:ledger').hex}",
-                    user_id, generation, order_id, cash_delta, seed_cash,
+                    user_id, generation, order_id, execution_id, cash_delta, seed_cash,
                     Jsonb({"seed_profile": SEED_PROFILE}), fill.filled_at,
                 ),
             )
@@ -899,22 +958,32 @@ class PostgresPaperTradingRepository:
             if not inserted:
                 continue
             order = dict(inserted)
+            execution_id = self._record_execution(
+                conn,
+                order,
+                quantity=fill.quantity,
+                price=fill.price,
+                quote_event_id=f"seed:{SEED_PROFILE}:{generation}:{index}",
+                quote_timestamp=fill.filled_at,
+                executed_at=fill.filled_at,
+            )
             self._append_event(
                 conn, order, "order.filled", FILLED_STATUS,
-                payload={"seed_profile": SEED_PROFILE, "fill_price": str(fill.price)},
+                payload={"seed_profile": SEED_PROFILE, "fill_price": str(fill.price), "execution_id": execution_id},
+                execution_id=execution_id,
             )
             conn.execute(
                 """
                 INSERT INTO paper_cash_ledger (
-                    entry_id, user_id, generation, order_id, event_type,
+                    entry_id, user_id, generation, order_id, execution_id, event_type,
                     cash_delta, reserved_cash_delta, cash_balance_after,
                     reserved_cash_after, payload, created_at
-                ) VALUES (%s, %s, %s, %s, 'order.filled', %s, 0, %s, 0, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, 'order.filled', %s, 0, %s, 0, %s, %s)
                 ON CONFLICT (entry_id) DO NOTHING
                 """,
                 (
                     f"paper_seed_led_{uuid5(NAMESPACE_URL, f'{seed_key}:ledger').hex}",
-                    user_id, generation, order_id, cash_delta, seed_cash,
+                    user_id, generation, order_id, execution_id, cash_delta, seed_cash,
                     Jsonb({"seed_profile": SEED_PROFILE}), fill.filled_at,
                 ),
             )
@@ -945,7 +1014,7 @@ class PostgresPaperTradingRepository:
         pending = conn.execute(
             """
             SELECT * FROM paper_orders
-            WHERE user_id = %s AND generation = %s AND status = 'pending'
+            WHERE user_id = %s AND generation = %s AND status IN ('pending', 'partially_filled')
             FOR UPDATE
             """,
             (user_id, generation),
@@ -1121,8 +1190,9 @@ class PostgresPaperTradingRepository:
         order: dict[str, Any],
         run: dict[str, Any],
     ) -> Decimal:
+        remaining_qty = order["qty"] - (order["filled_qty"] or Decimal("0"))
         if order["side"] == "buy":
-            released = order["qty"] * order["limit_price"]
+            released = remaining_qty * order["limit_price"]
             conn.execute(
                 """
                 UPDATE paper_account_runs SET reserved_cash = reserved_cash - %s
@@ -1143,7 +1213,7 @@ class PostgresPaperTradingRepository:
             UPDATE paper_positions SET reserved_qty = reserved_qty - %s, updated_at = now()
             WHERE user_id = %s AND generation = %s AND symbol = %s
             """,
-            (order["qty"], order["user_id"], order["generation"], order["symbol"]),
+            (remaining_qty, order["user_id"], order["generation"], order["symbol"]),
         )
         return Decimal("0")
 
@@ -1155,18 +1225,21 @@ class PostgresPaperTradingRepository:
         status: str,
         reason: str | None = None,
         payload: dict[str, Any] | None = None,
+        execution_id: str | None = None,
     ) -> None:
         conn.execute(
             """
             INSERT INTO paper_order_events (
-                event_id, order_id, user_id, generation, event_type, status, reason, payload
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                event_id, order_id, user_id, generation, execution_id,
+                event_type, status, reason, payload
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 f"paper_evt_{uuid4().hex}",
                 order["order_id"],
                 order["user_id"],
                 order["generation"],
+                execution_id,
                 event_type,
                 status,
                 reason,
@@ -1183,21 +1256,23 @@ class PostgresPaperTradingRepository:
         event_type: str,
         *,
         order_id: str | None = None,
+        execution_id: str | None = None,
         cash_delta: Decimal = Decimal("0"),
         reserved_cash_delta: Decimal = Decimal("0"),
     ) -> None:
         conn.execute(
             """
             INSERT INTO paper_cash_ledger (
-                entry_id, user_id, generation, order_id, event_type,
+                entry_id, user_id, generation, order_id, execution_id, event_type,
                 cash_delta, reserved_cash_delta, cash_balance_after, reserved_cash_after
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 f"paper_led_{uuid4().hex}",
                 user_id,
                 generation,
                 order_id,
+                execution_id,
                 event_type,
                 cash_delta,
                 reserved_cash_delta,
@@ -1205,3 +1280,40 @@ class PostgresPaperTradingRepository:
                 run["reserved_cash"],
             ),
         )
+
+    def _record_execution(
+        self,
+        conn: psycopg.Connection,
+        order: dict[str, Any],
+        *,
+        quantity: Decimal,
+        price: Decimal,
+        quote_event_id: str | None,
+        quote_timestamp: str | None,
+        executed_at: str | None,
+    ) -> str | None:
+        if quote_event_id is not None:
+            duplicate = conn.execute(
+                "SELECT execution_id FROM paper_executions WHERE order_id = %s AND quote_event_id = %s",
+                (order["order_id"], quote_event_id),
+            ).fetchone()
+            if duplicate is not None:
+                return None
+        sequence = conn.execute(
+            "SELECT COALESCE(max(execution_sequence), 0) + 1 AS sequence FROM paper_executions WHERE order_id = %s",
+            (order["order_id"],),
+        ).fetchone()["sequence"]
+        execution_key = f"{order['order_id']}:{sequence}"
+        execution_id = f"paper_exec_{uuid5(NAMESPACE_URL, execution_key).hex}"
+        inserted = conn.execute(
+            """
+            INSERT INTO paper_executions (
+                execution_id, order_id, execution_sequence, quantity, price, fee,
+                quote_event_id, quote_timestamp, executed_at
+            ) VALUES (%s, %s, %s, %s, %s, 0, %s, %s, COALESCE(%s::timestamptz, now()))
+            ON CONFLICT DO NOTHING
+            RETURNING execution_id
+            """,
+            (execution_id, order["order_id"], sequence, quantity, price, quote_event_id, quote_timestamp, executed_at),
+        ).fetchone()
+        return str(inserted["execution_id"]) if inserted is not None else None

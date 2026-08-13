@@ -192,7 +192,7 @@ GOPS_PORTABLE_BACKUP_ROOT="/absolute/path/to/aws-portable-backup/20260727T030132
 
 ```sh
 docker compose --env-file .env --profile local-s3 --profile simulator \
-  stop gops-backend simulation-paper-matcher
+  stop gops-backend paper-replay-matcher
 ```
 
 복원이 성공하면 전체 로컬 스택을 실행하거나 새로고침합니다.
@@ -366,10 +366,10 @@ WS   /ws/orders/{order_id}
 변경 사항을 공유하기 전에 관련 검사를 실행한다.
 
 ```sh
-PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend python -m compileall -q systems
-PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend python -m unittest discover systems/market-data/tests
-PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend python -m unittest discover systems/api-server/tests
-PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server/gops-backend python -m pytest systems/order/tests/kis_trader
+PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server python -m compileall -q systems
+PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server python -m unittest discover systems/market-data/tests
+PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server python -m unittest discover systems/api-server/tests
+PYTHONPATH=systems/market-data/shared:systems/order/shared:systems/order:systems/api-server/pods/api-server python -m pytest systems/order/tests/kis_trader
 npm run test:chart --prefix apps/gops-frontend
 npm run build --prefix apps/gops-frontend
 docker compose config --quiet

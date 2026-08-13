@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -240,8 +241,9 @@ class ChartAssetStorageTest(unittest.TestCase):
         self.assertIn("primaryTriangle", connection.executions[0][0])
 
     def test_factory_is_postgres_only(self):
-        with self.assertRaises(RuntimeError):
-            build_chart_asset_storage_from_env()
+        with mock.patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(RuntimeError):
+                build_chart_asset_storage_from_env()
 
     def test_save_rejects_drawing_from_another_interval(self):
         asset = _asset()

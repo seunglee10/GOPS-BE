@@ -155,7 +155,7 @@ flowchart LR
 
 | 위치 | 책임 | 포함하지 않을 것 |
 | --- | --- | --- |
-| `systems/market-data/shared/alfaka/analytics/` | 순수 시계열 계산, pivot, feature schema와 버전 | LLM prompt, UI drawing, 투자 서술 |
+| `systems/market-data/shared/market_data/analytics/` | 순수 시계열 계산, pivot, feature schema와 버전 | LLM prompt, UI drawing, 투자 서술 |
 | `systems/agent-orchestration/shared/gops_agents/chart_intelligence/` | feature 조회, rule engine, finding, visual intent, guardrail | pixel 좌표, 브라우저 상태 |
 | `systems/agent-orchestration/.../orchestration/` | capability 호출, provider join, deadline, report synthesis | 지표 수식 |
 | stable shared chart contract | `ChartCommand`, proposal, canonical anchor 계약 | provider 구현 |

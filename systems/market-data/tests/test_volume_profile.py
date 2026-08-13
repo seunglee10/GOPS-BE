@@ -1,6 +1,6 @@
 import unittest
 
-from alfaka.serving.volume_profile import compute_volume_profile_payload
+from market_data.serving.volume_profile import compute_volume_profile_payload
 
 
 class VolumeProfileCalculationTest(unittest.TestCase):

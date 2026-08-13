@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import unittest
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +11,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 MARKET_SHARED = ROOT / "systems" / "market-data" / "shared"
 ORDER_SHARED = ROOT / "systems" / "order" / "shared"
-BACKEND = ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"
+BACKEND = ROOT / "systems" / "api-server" / "pods" / "api-server"
 for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(BACKEND), str(ROOT)):
     if path not in sys.path:
         sys.path.insert(0, path)
@@ -19,7 +20,7 @@ try:
     from fastapi.testclient import TestClient
 
     import app.routes.paper_trading as paper_routes
-    from alfaka.serving.symbol_registry import SymbolRegistry
+    from market_data.serving.symbol_registry import SymbolRegistry
     from app.auth.models import AuthenticatedUser
     from app.main import create_app
     from kis_trader.paper.memory import InMemoryPaperTradingRepository
@@ -216,6 +217,9 @@ class PaperTradingRoutesTest(unittest.TestCase):
             upsert_portfolio_snapshot=lambda *_args: None,
         )
         self.app.state.portfolio_benchmark_provider = lambda *_args: None
+        self.app.state.portfolio_performance_now_provider = lambda: datetime(
+            2026, 7, 18, tzinfo=timezone.utc
+        )
 
         account = self.client.get("/api/paper/account").json()
         holdings = self.client.get("/api/account/holdings").json()

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[3]
-BACKEND = ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"
+BACKEND = ROOT / "systems" / "api-server" / "pods" / "api-server"
 MARKET_SHARED = ROOT / "systems" / "market-data" / "shared"
 for path in (str(BACKEND), str(MARKET_SHARED)):
     if path not in sys.path:

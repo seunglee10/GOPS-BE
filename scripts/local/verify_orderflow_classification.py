@@ -15,8 +15,8 @@ shared_path = repo_root / "systems" / "market-data" / "shared"
 if str(shared_path) not in sys.path:
     sys.path.insert(0, str(shared_path))
 
-from alfaka.orderflow.config import price_bin_size_from_env
-from alfaka.orderflow.rollup import (  # noqa: E402
+from market_data.orderflow.config import price_bin_size_from_env
+from market_data.orderflow.rollup import (  # noqa: E402
     OrderFlowDailyAggregate,
     RecentIdDeduper,
     accumulate_order_flow,
@@ -28,8 +28,8 @@ from alfaka.orderflow.rollup import (  # noqa: E402
     query_trade_rows,
     regular_session_bounds_utc,
 )
-from alfaka.orderflow.classification import normalize_quotes, normalize_trades  # noqa: E402
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient  # noqa: E402
+from market_data.orderflow.classification import normalize_quotes, normalize_trades  # noqa: E402
+from market_data.storage.clickhouse_loader import ClickHouseHttpClient  # noqa: E402
 
 
 def main() -> int:

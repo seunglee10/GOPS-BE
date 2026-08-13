@@ -76,6 +76,78 @@ class PaperTradingRepositoryTest(unittest.TestCase):
         self.assertEqual(filled["account"]["reserved_cash"], Decimal("0"))
         self.assertEqual(filled["positions"][0]["qty"], Decimal("10"))
         self.assertEqual(filled["positions"][0]["average_price"], Decimal("99"))
+        execution = next(iter(self.repository.executions.values()))
+        self.assertEqual(execution["quantity"], Decimal("10"))
+        self.assertEqual(execution["price"], Decimal("99"))
+        self.assertEqual(execution["execution_sequence"], 1)
+        filled_event = self.repository.events[created["order_id"]][-1]
+        self.assertEqual(filled_event["execution_id"], execution["execution_id"])
+        filled_ledger = next(row for row in self.repository.ledger if row["event_type"] == "order.filled")
+        self.assertEqual(filled_ledger["execution_id"], execution["execution_id"])
+
+    def test_partial_fills_have_weighted_average_and_duplicate_quote_is_ignored(self):
+        created = self.create().order
+
+        first = self.repository.match_quote(
+            symbol="AAPL",
+            bid_price=Decimal("98.5"),
+            ask_price=Decimal("99"),
+            ask_size=Decimal("4"),
+            quote_timestamp="2026-07-14T10:00:00Z",
+            quote_event_id="quote-partial-1",
+        )
+        duplicate = self.repository.match_quote(
+            symbol="AAPL",
+            bid_price=Decimal("98.5"),
+            ask_price=Decimal("99"),
+            ask_size=Decimal("4"),
+            quote_timestamp="2026-07-14T10:00:00Z",
+            quote_event_id="quote-partial-1",
+        )
+        second = self.repository.match_quote(
+            symbol="AAPL",
+            bid_price=Decimal("97.5"),
+            ask_price=Decimal("98"),
+            ask_size=Decimal("10"),
+            quote_timestamp="2026-07-14T10:00:01Z",
+            quote_event_id="quote-partial-2",
+        )
+
+        self.assertEqual(first[0]["status"], "partially_filled")
+        self.assertEqual(first[0]["filled_qty"], Decimal("4"))
+        self.assertEqual(duplicate, [])
+        self.assertEqual(second[0]["status"], "filled")
+        self.assertEqual(second[0]["filled_qty"], Decimal("10"))
+        self.assertEqual(second[0]["fill_price"], Decimal("98.4"))
+        executions = sorted(self.repository.executions.values(), key=lambda row: row["execution_sequence"])
+        self.assertEqual([row["quantity"] for row in executions], [Decimal("4"), Decimal("6")])
+        self.assertEqual(
+            sum(row["quantity"] * row["price"] for row in executions) / sum(row["quantity"] for row in executions),
+            second[0]["fill_price"],
+        )
+        snapshot = self.repository.account_snapshot(self.user_id)
+        self.assertEqual(snapshot["account"]["cash_balance"], Decimal("99016"))
+        self.assertEqual(snapshot["account"]["reserved_cash"], Decimal("0"))
+        self.assertEqual(snapshot["positions"][0]["qty"], Decimal("10"))
+        self.assertEqual(snapshot["positions"][0]["average_price"], Decimal("98.4"))
+        self.assertEqual(self.repository.get_order(self.user_id, created["order_id"])["status"], "filled")
+
+    def test_cancelling_partial_fill_releases_only_remaining_reservation(self):
+        created = self.create().order
+        self.repository.match_quote(
+            symbol="AAPL", bid_price=Decimal("98.5"), ask_price=Decimal("99"),
+            ask_size=Decimal("4"), quote_timestamp="2026-07-14T10:00:00Z",
+            quote_event_id="quote-partial-cancel",
+        )
+
+        cancelled = self.repository.cancel_order(self.user_id, created["order_id"])
+        snapshot = self.repository.account_snapshot(self.user_id)
+
+        self.assertEqual(cancelled["status"], "cancelled")
+        self.assertEqual(cancelled["filled_qty"], Decimal("4"))
+        self.assertEqual(snapshot["account"]["cash_balance"], Decimal("99604"))
+        self.assertEqual(snapshot["account"]["reserved_cash"], Decimal("0"))
+        self.assertEqual(snapshot["positions"][0]["qty"], Decimal("4"))
 
     def test_sell_rejects_unowned_quantity_then_realizes_profit(self):
         with self.assertRaises(PaperOrderError):

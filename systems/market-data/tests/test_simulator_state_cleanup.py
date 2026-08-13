@@ -10,7 +10,7 @@ SHARED = ROOT / "systems" / "market-data" / "shared"
 if str(SHARED) not in sys.path:
     sys.path.insert(0, str(SHARED))
 
-from alfaka.tools.cleanup_simulator_state import cleanup_simulator_market_state
+from market_data.tools.cleanup_simulator_state import cleanup_simulator_market_state
 
 
 class FakeRedis:

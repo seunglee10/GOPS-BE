@@ -13,7 +13,7 @@ for path in (
     ROOT / "systems" / "market-data" / "shared",
     ROOT / "systems" / "order" / "shared",
     ROOT / "systems" / "agent-orchestration" / "shared",
-    ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend",
+    ROOT / "systems" / "api-server" / "pods" / "api-server",
 ):
     if str(path) not in sys.path: sys.path.insert(0, str(path))
 

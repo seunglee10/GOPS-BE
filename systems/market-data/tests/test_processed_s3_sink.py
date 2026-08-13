@@ -3,14 +3,14 @@ import types
 import unittest
 from collections import defaultdict
 
-from alfaka.storage.processed_s3_sink import (
+from market_data.storage.processed_s3_sink import (
     flush_buffer,
     processed_realtime_partition_keys,
     processed_s3_runtime_config,
     run_processed_s3_sink,
     start_processed_s3_sink,
 )
-from alfaka.storage.s3_realtime_layout import canonical_rows_with_duplicate_count, symbol_shard
+from market_data.storage.s3_realtime_layout import canonical_rows_with_duplicate_count, symbol_shard
 
 
 class ProcessedS3SinkV2Test(unittest.TestCase):

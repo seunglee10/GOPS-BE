@@ -121,8 +121,8 @@ def explicit_market_registry_path_configured() -> bool:
 
 def configured_market_registry_symbols() -> list[str]:
     try:
-        from alfaka.alpaca.subscription import configured_seed_symbols, configured_universe_symbols, load_universe_registry_symbols
-        from alfaka.serving.symbol_registry import SymbolRegistry
+        from market_data.alpaca.subscription import configured_seed_symbols, configured_universe_symbols, load_universe_registry_symbols
+        from market_data.serving.symbol_registry import SymbolRegistry
 
         symbols: list[str] = []
         for loader in (configured_universe_symbols, load_universe_registry_symbols, configured_seed_symbols):
@@ -146,7 +146,7 @@ def market_symbol_registry_supports(symbol: str) -> bool:
     if not normalized:
         return False
     try:
-        from alfaka.serving.symbol_registry import SymbolRegistry
+        from market_data.serving.symbol_registry import SymbolRegistry
 
         SymbolRegistry().detail(normalized)
         return True

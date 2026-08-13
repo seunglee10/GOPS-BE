@@ -36,3 +36,6 @@ spec:
             - secretRef:
                 name: alfaka-clickhouse-secret
                 optional: true
+            - secretRef:
+                name: alfaka-order-db-secret
+                optional: true

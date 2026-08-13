@@ -6,6 +6,7 @@ resources:
   - app
   - job-order-migrations.yaml
   - job-company-journal-migrations.yaml
+  - job-clickhouse-migrations.yaml
   - job-company-journal-benchmark-bootstrap.yaml
   - job-order-reconciler.yaml
   - job-symbol-registry-sync.yaml

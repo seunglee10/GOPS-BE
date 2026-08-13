@@ -17,6 +17,7 @@ from kis_trader.operations.metrics import alert_conditions
 from kis_trader.outbox.producer import KafkaJsonProducer, RecordingProducer
 from kis_trader.outbox.publisher import publish_pending_outbox
 from kis_trader.persistence.memory import InMemoryOrderRepository
+from kis_trader.persistence.erd_expansion import run_erd_backfills, validate_erd_constraints, validate_erd_expansion
 from kis_trader.persistence.migrations import reset_public_schema, run_migrations
 from kis_trader.persistence.postgres import PostgresOrderRepository
 from kis_trader.persistence.repository import OrderRepository
@@ -62,8 +63,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         uvicorn.run("kis_trader.api.app:app", host=args.host, port=args.port)
         return 0
     if args.command == "migrate":
-        applied = run_migrations(_database_url())
-        print(json.dumps({"applied": applied}, ensure_ascii=False, sort_keys=True))
+        database_url = _database_url()
+        applied = run_migrations(database_url)
+        backfilled = run_erd_backfills(database_url)
+        validation = validate_erd_expansion(database_url)
+        validated_constraints = validate_erd_constraints(database_url)
+        print(json.dumps(
+            {
+                "applied": applied,
+                "backfilled": backfilled,
+                "validation": validation,
+                "validated_constraints": validated_constraints,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ))
         return 0
     if args.command == "reset-test-db":
         if not args.yes:

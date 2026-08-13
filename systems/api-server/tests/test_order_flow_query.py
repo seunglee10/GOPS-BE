@@ -13,7 +13,7 @@ for path in (
     ROOT / "systems" / "market-data" / "shared",
     ROOT / "systems" / "order" / "shared",
     ROOT / "systems" / "order",
-    ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend",
+    ROOT / "systems" / "api-server" / "pods" / "api-server",
 ):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
@@ -25,7 +25,7 @@ from fastapi import HTTPException
 from app.market_data.query.service import MarketDataQueryService
 from app.market_data.realtime.stream_hub import StreamSession, should_deliver_to_session
 from app.routes.streams import _serve_simulation_chart
-from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+from market_data.serving.clickhouse_provider import ClickHouseMarketDataProvider
 
 
 class OrderFlowQueryServiceTest(unittest.TestCase):
@@ -37,7 +37,7 @@ class OrderFlowQueryServiceTest(unittest.TestCase):
         self.assertEqual(payload["priceBinSize"], 0.01)
         self.assertEqual(payload["sideClassification"], "estimated")
 
-    def test_daily_groups_rows_totals_caps_days_and_provider_uses_final(self):
+    def test_daily_groups_rows_totals_caps_days_and_provider_uses_latest_view(self):
         clickhouse = CapturingClickHouseProvider([
             row("2026-07-08", 102.0, ask=8, bid=3, unknown=2, ask_count=2, bid_count=1, unknown_count=1),
             row("2026-07-07", 101.0, ask=5, bid=7, unknown=0, ask_count=1, bid_count=2, unknown_count=0),
@@ -52,7 +52,8 @@ class OrderFlowQueryServiceTest(unittest.TestCase):
         self.assertEqual([day["sessionDate"] for day in payload["days"]], ["2026-07-07", "2026-07-08"])
         self.assertEqual(payload["days"][1]["totals"]["delta"], 5)
         self.assertEqual(payload["days"][1]["totals"]["volume"], 13)
-        self.assertIn("FINAL", clickhouse.last_query)
+        self.assertIn("order_flow_profile_daily_latest", clickhouse.last_query)
+        self.assertNotIn("FINAL", clickhouse.last_query)
         self.assertIn("ORDER BY session_date DESC, price_bin ASC", clickhouse.last_query)
 
     def test_daily_wide_range_keeps_most_recent_complete_days(self):

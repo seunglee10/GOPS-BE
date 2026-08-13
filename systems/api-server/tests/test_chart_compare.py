@@ -62,7 +62,7 @@ class CanonicalChartCompareTest(unittest.TestCase):
 
     def test_current_candle_callers_share_the_canonical_query_boundary(self):
         root = Path(__file__).resolve().parents[3]
-        backend = root / "systems/api-server/pods/api-server/gops-backend/app"
+        backend = root / "systems/api-server/pods/api-server/app"
         query_source = (backend / "market_data/query/service.py").read_text()
         compare_source = (backend / "market_data/compare/service.py").read_text()
 

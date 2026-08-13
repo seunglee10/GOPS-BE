@@ -29,13 +29,20 @@ def test_postgres_order_accept_and_outbox_transaction():
         idempotency_key_hash=hash_idempotency_key("idem-1", "secret"),
         body_hash=stable_body_hash(sample_order_request()),
         command=command,
+        user_sub="postgres-user",
     )
 
     assert result.response["status"] == OrderStatus.RECEIVED.value
     assert repo.get_order("ord-1")["status"] == OrderStatus.RECEIVED.value
-    assert repo.fetch_pending_outbox()[0]["topic"] == "orders.commands.v1"
+    pending = repo.fetch_pending_outbox()[0]
+    assert pending["topic"] == "orders.commands.v1"
+    assert pending["payload"]["user_sub"] == "postgres-user"
+    assert pending["payload"]["app_user_id"]
+    assert pending["payload"]["instrument_id"]
 
     count = publish_pending_outbox(repo, RecordingProducer())
 
     assert count == 1
     assert repo.get_order("ord-1")["status"] == OrderStatus.PUBLISHED.value
+    published = repo.fetch_pending_outbox()
+    assert published == []

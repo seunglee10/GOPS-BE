@@ -171,11 +171,11 @@ select_services_for_path() {
       add_service frontend
       add_service agent-orchestrator
       ;;
-    systems/api-server/pods/api-server/gops-backend/app/contracts/*)
+    systems/api-server/pods/api-server/app/contracts/*)
       add_service backend
       add_service agent-orchestrator
       ;;
-    systems/api-server/pods/api-server/gops-backend/requirements.txt)
+    systems/api-server/pods/api-server/requirements.txt)
       add_service backend
       add_service agent-orchestrator
       ;;
@@ -218,7 +218,7 @@ select_services_for_path() {
     systems/market-data/pods/market-processor/* | systems/market-data/pods/feed-session-controller/* | systems/market-data/pods/subscription-controller/* | systems/market-data/jobs/symbol-registry-sync/* | systems/market-data/jobs/coverage-repair/*)
       add_service market-processor
       ;;
-    systems/market-data/pods/s3-sink/* | systems/market-data/pods/clickhouse-loader/* | systems/market-data/pods/news-intelligence-worker/* | systems/market-data/pods/news-daily-summary-worker/* | systems/market-data/jobs/news-backfill/* | systems/market-data/jobs/news-intelligence-rebuild/* | systems/market-data/jobs/news-daily-summary-rebuild/*)
+    systems/market-data/pods/s3-sink/* | systems/market-data/pods/clickhouse-loader/* | systems/market-data/pods/news-intelligence-worker/* | systems/market-data/pods/news-daily-summary-worker/* | systems/market-data/jobs/clickhouse-migrations/* | systems/market-data/jobs/news-backfill/* | systems/market-data/jobs/news-intelligence-rebuild/* | systems/market-data/jobs/news-daily-summary-rebuild/*)
       add_service market-storage
       ;;
     systems/order/shared/*)
@@ -226,7 +226,7 @@ select_services_for_path() {
       add_service order-worker
       add_service kis-adapter
       ;;
-    systems/order/pods/order-outbox/* | systems/order/pods/paper-order-matcher/* | systems/order/pods/simulation-paper-matcher/* | systems/order/jobs/*)
+    systems/order/pods/order-outbox/* | systems/order/pods/paper-live-matcher/* | systems/order/pods/paper-replay-matcher/* | systems/order/jobs/*)
       add_service order-worker
       ;;
     systems/order/pods/kis-adapter/*)
@@ -267,6 +267,9 @@ select_services_for_path() {
       ;;
     infra/k8s/overlays/aws/scheduled/cronjob-notification-schedules.yaml | infra/k8s/overlays/aws/scheduled/cronjob-company-journal-worker.yaml | infra/k8s/overlays/aws/scheduled/cronjob-company-journal-post-market.yaml | infra/clickhouse/initdb/03-company-journal.sql)
       add_service backend
+      ;;
+    infra/clickhouse/initdb/04-instrument-identity.sql | infra/k8s/base/job-clickhouse-migrations.yaml)
+      add_service market-storage
       ;;
     infra/k8s/overlays/aws/scheduled/cronjob-sec-fundamentals-sync.yaml | infra/k8s/overlays/aws/scheduled/cronjob-10k-profile-sync.yaml | infra/k8s/overlays/aws/scheduled/cronjob-yahoo-estimates-sync.yaml | infra/k8s/overlays/aws/scheduled/externalsecret-sec-fundamentals.yaml)
       add_service market-storage

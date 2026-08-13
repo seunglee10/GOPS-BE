@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import asdict
+from datetime import timezone
 from decimal import Decimal
 from typing import Any
 from uuid import uuid4
@@ -14,7 +15,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from kis_trader.domain.commands import OrderCommand
-from kis_trader.domain.envelope import build_order_fill_envelope, build_order_status_envelope
+from kis_trader.domain.envelope import build_order_fill_envelope, build_order_status_envelope, enrich_order_envelope_identity
 from kis_trader.domain.status import OrderStatus, assert_transition_allowed
 from kis_trader.domain.topics import (
     ORDER_EVENTS_TOPIC,
@@ -30,6 +31,7 @@ from kis_trader.security.redaction import redact_sensitive
 
 from .fills import canonical_fill_observation
 from .repository import IdempotencyConflictError, OrderCreationResult, OrderNotFoundError, SubmissionIntent, utc_now_iso
+from .user_context import apply_postgres_user_context
 
 
 class PostgresOrderRepository:
@@ -69,16 +71,16 @@ class PostgresOrderRepository:
                     order = conn.execute("SELECT * FROM orders WHERE order_id = %s", (existing["order_id"],)).fetchone()
                     response = dict(existing["response"] or {})
                     response["idempotent_replay"] = True
-                    return OrderCreationResult(False, True, dict(order), response, None)
+                    return OrderCreationResult(False, True, _public_order(order), response, None)
 
                 conn.execute(
                     """
                     INSERT INTO orders (
                         order_id, request_id, client_order_id, account_alias, market, symbol, side,
                         qty, price, exchange, order_division, status, broker_order_id, reason, occurred_at,
-                        user_sub
+                        occurred_at_ts, user_sub
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s::timestamptz, %s)
                     """,
                     (
                         command.order_id,
@@ -95,16 +97,21 @@ class PostgresOrderRepository:
                         OrderStatus.RECEIVED.value,
                         command.broker_order_id,
                         command.occurred_at,
+                        command.occurred_at,
                         user_sub,
                     ),
                 )
+                internal_order = conn.execute(
+                    "SELECT * FROM orders WHERE order_id = %s",
+                    (command.order_id,),
+                ).fetchone()
                 self._append_order_event(conn, command.order_id, OrderStatus.RECEIVED, None)
                 outbox_event_id = self._insert_outbox_event(
                     conn,
                     ORDERS_COMMANDS_TOPIC,
                     command.order_id,
                     OrderStatus.RECEIVED,
-                    command.to_envelope(),
+                    enrich_order_envelope_identity(command.to_envelope(), dict(internal_order)),
                     build_order_message_key(command.account_alias, command.symbol),
                 )
                 response = {
@@ -123,7 +130,7 @@ class PostgresOrderRepository:
                     (idempotency_key_hash, body_hash, command.order_id, Jsonb(redact_sensitive(response))),
                 )
                 order = conn.execute("SELECT * FROM orders WHERE order_id = %s", (command.order_id,)).fetchone()
-                return OrderCreationResult(True, False, dict(order), response, outbox_event_id)
+                return OrderCreationResult(True, False, _public_order(order), response, outbox_event_id)
 
     def find_idempotent_response(self, idempotency_key_hash: str, body_hash: str) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -138,7 +145,7 @@ class PostgresOrderRepository:
     def get_order(self, order_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM orders WHERE order_id = %s", (order_id,)).fetchone()
-            return dict(row) if row else None
+            return _public_order(row) if row else None
 
     def list_order_events(self, order_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -154,7 +161,9 @@ class PostgresOrderRepository:
 
     def fetch_pending_outbox(self, limit: int | None = None, topic: str | None = None) -> list[dict[str, Any]]:
         query = """
-            SELECT event_id, topic, message_key, message_key AS key, order_id, status, payload, published_at, created_at
+            SELECT event_id, topic, message_key, message_key AS key, order_id, status, payload,
+                   delivery_status, attempt_count, next_attempt_at, last_error,
+                   locked_at, lock_owner, published_at, created_at
             FROM outbox_events
             WHERE published_at IS NULL
         """
@@ -169,13 +178,128 @@ class PostgresOrderRepository:
         with self._connect() as conn:
             return conn.execute(query, params).fetchall()
 
-    def mark_outbox_published(self, event_id: str) -> None:
+    def claim_pending_outbox(
+        self,
+        *,
+        worker_id: str,
+        limit: int | None = None,
+        topic: str | None = None,
+        lease_seconds: int = 30,
+    ) -> list[dict[str, Any]]:
+        filters = """
+            published_at IS NULL
+            AND delivery_status IN ('pending', 'retry', 'publishing')
+            AND next_attempt_at <= now()
+            AND (locked_at IS NULL OR locked_at < now() - (%s * interval '1 second'))
+        """
+        params: list[Any] = [lease_seconds]
+        if topic is not None:
+            filters += " AND topic = %s"
+            params.append(topic)
+        limit_sql = ""
+        if limit is not None:
+            limit_sql = " LIMIT %s"
+            params.append(limit)
+        params.append(worker_id)
+
+        query = f"""
+            WITH candidates AS (
+                SELECT event_id
+                FROM outbox_events
+                WHERE {filters}
+                ORDER BY next_attempt_at, created_at, event_id
+                FOR UPDATE SKIP LOCKED
+                {limit_sql}
+            )
+            UPDATE outbox_events AS event
+            SET delivery_status = 'publishing',
+                attempt_count = event.attempt_count + 1,
+                locked_at = now(),
+                lock_owner = %s
+            FROM candidates
+            WHERE event.event_id = candidates.event_id
+            RETURNING event.event_id, event.topic, event.message_key,
+                      event.message_key AS key, event.order_id, event.status,
+                      event.payload, event.delivery_status, event.attempt_count,
+                      event.next_attempt_at, event.last_error, event.locked_at,
+                      event.lock_owner, event.published_at, event.created_at
+        """
+        with self._connect() as conn:
+            with conn.transaction():
+                rows = conn.execute(query, params).fetchall()
+        return sorted(rows, key=lambda row: (row["created_at"], row["event_id"]))
+
+    def mark_outbox_published(self, event_id: str, *, worker_id: str | None = None) -> None:
         with self._connect() as conn:
             with conn.transaction():
                 event = conn.execute("SELECT * FROM outbox_events WHERE event_id = %s FOR UPDATE", (event_id,)).fetchone()
-                conn.execute("UPDATE outbox_events SET published_at = now() WHERE event_id = %s", (event_id,))
+                if event is None:
+                    return
+                if worker_id is not None and event["lock_owner"] not in (None, worker_id):
+                    return
+                conn.execute(
+                    """
+                    UPDATE outbox_events
+                    SET published_at = now(), delivery_status = 'published',
+                        locked_at = NULL, lock_owner = NULL, last_error = NULL
+                    WHERE event_id = %s
+                    """,
+                    (event_id,),
+                )
                 if event["topic"] == ORDERS_COMMANDS_TOPIC:
                     self._update_order_status(conn, event["order_id"], OrderStatus.PUBLISHED, None)
+
+    def mark_outbox_failed(
+        self,
+        event_id: str,
+        error: Exception | str,
+        *,
+        worker_id: str | None = None,
+        retry_delay_seconds: int = 5,
+    ) -> None:
+        error_text = str(error)[:4000]
+        with self._connect() as conn:
+            with conn.transaction():
+                conn.execute(
+                    """
+                    UPDATE outbox_events
+                    SET delivery_status = 'retry',
+                        next_attempt_at = now() + (%s * interval '1 second'),
+                        last_error = %s,
+                        locked_at = NULL,
+                        lock_owner = NULL
+                    WHERE event_id = %s
+                      AND (%s IS NULL OR lock_owner IS NULL OR lock_owner = %s)
+                    """,
+                    (retry_delay_seconds, error_text, event_id, worker_id, worker_id),
+                )
+
+    def inbox_event_seen(self, consumer_name: str, event_id: str) -> bool:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT 1 FROM inbox_events WHERE consumer_name = %s AND event_id = %s",
+                (consumer_name, event_id),
+            ).fetchone() is not None
+
+    def record_inbox_event(
+        self,
+        consumer_name: str,
+        event_id: str,
+        *,
+        payload_digest: str | None = None,
+    ) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO inbox_events (consumer_name, event_id, payload_digest)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (consumer_name, event_id) DO NOTHING
+                RETURNING event_id
+                """,
+                (consumer_name, event_id, payload_digest),
+            ).fetchone()
+            conn.commit()
+        return row is not None
 
     def claim_submission_intent(self, command: OrderCommand) -> SubmissionIntent:
         existing = self.find_submission(command.request_id, command.client_order_id)
@@ -445,7 +569,9 @@ class PostgresOrderRepository:
             return dict(row)
 
     def _connect(self) -> psycopg.Connection:
-        return psycopg.connect(self.conninfo, row_factory=dict_row)
+        conn = psycopg.connect(self.conninfo, row_factory=dict_row)
+        apply_postgres_user_context(conn)
+        return conn
 
     def _update_order_status(
         self,
@@ -532,3 +658,13 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, list):
         return [_json_ready(child) for child in value]
     return value
+
+
+def _public_order(row: Any) -> dict[str, Any]:
+    public = dict(row)
+    occurred_at_ts = public.get("occurred_at_ts")
+    if occurred_at_ts is not None:
+        public["occurred_at"] = occurred_at_ts.astimezone(timezone.utc).isoformat()
+    for internal_column in ("occurred_at_ts", "app_user_id", "instrument_id"):
+        public.pop(internal_column, None)
+    return public

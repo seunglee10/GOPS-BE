@@ -4,12 +4,12 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app/systems/agent-orchestration/shared:/app/systems/market-data/shared:/app/systems/api-server/pods/api-server/gops-backend
+    PYTHONPATH=/app/systems/agent-orchestration/shared:/app/systems/market-data/shared:/app/systems/api-server/pods/api-server
 
 WORKDIR /app
 
 COPY requirements.txt /tmp/alfaka-requirements.txt
-COPY systems/api-server/pods/api-server/gops-backend/requirements.txt /tmp/gops-backend-requirements.txt
+COPY systems/api-server/pods/api-server/requirements.txt /tmp/gops-backend-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/alfaka-requirements.txt -r /tmp/gops-backend-requirements.txt
 
 COPY systems/agent-orchestration ./systems/agent-orchestration
@@ -17,7 +17,7 @@ COPY systems/market-data/shared ./systems/market-data/shared
 COPY shared/chart-contract ./shared/chart-contract
 COPY systems/market-data/config/sp500-universe.json ./systems/market-data/config/sp500-universe.json
 COPY systems/market-data/config/sp500-heatmap-seed.json ./systems/market-data/config/sp500-heatmap-seed.json
-COPY systems/api-server/pods/api-server/gops-backend/app/contracts ./systems/api-server/pods/api-server/gops-backend/app/contracts
+COPY systems/api-server/pods/api-server/app/contracts ./systems/api-server/pods/api-server/app/contracts
 
 WORKDIR /app/systems/agent-orchestration/pods/agent-orchestrator
 

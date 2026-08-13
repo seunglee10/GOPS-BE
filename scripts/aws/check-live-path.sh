@@ -23,7 +23,7 @@ if [[ "${TRACE_STRICT:-0}" == "1" ]]; then
 fi
 
 TRACE_CMD=(
-  python -m alfaka.tools.live_path_trace "${SYMBOL}"
+  python -m market_data.tools.live_path_trace "${SYMBOL}"
   --interval "${INTERVAL}"
   --api-base-url "${API_BASE_URL}"
   --json

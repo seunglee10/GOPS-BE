@@ -5,7 +5,7 @@ import sys
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "systems" / "market-data" / "shared"))
 
-from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+from market_data.serving.clickhouse_provider import ClickHouseMarketDataProvider
 
 
 class RecordingClickHouseProvider(ClickHouseMarketDataProvider):

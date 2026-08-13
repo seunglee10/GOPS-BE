@@ -4,6 +4,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -76,8 +77,9 @@ class GeometryAssetContractTest(unittest.TestCase):
     def test_runtime_asset_store_is_postgres_geometry_table(self):
         self.assertEqual(POSTGRES_TABLE, "chart_assets.geometry_assets")
         self.assertEqual(POSTGRES_SNAPSHOT_TABLE, "chart_assets.geometry_asset_snapshots")
-        with self.assertRaises(RuntimeError):
-            build_chart_asset_storage_from_env()
+        with mock.patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(RuntimeError):
+                build_chart_asset_storage_from_env()
 
     def test_postgres_queue_claim_uses_skip_locked_and_lease(self):
         connection = _Connection()

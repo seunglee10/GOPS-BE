@@ -67,9 +67,9 @@ from gops_agents.orchestration.routing import route_intent
 from gops_agents.orchestration.request import normalize_request_state
 from gops_agents.orchestration.cache import analysis_cache_key_for_state
 from gops_agents.synthesis import FinalAnswerSynthesizer
-import alfaka.alpaca.news  # noqa: F401
-import alfaka.common.secrets  # noqa: F401
-from alfaka.news.relevance import classify_subject_relevance
+import market_data.alpaca.news  # noqa: F401
+import market_data.common.secrets  # noqa: F401
+from market_data.news.relevance import classify_subject_relevance
 
 
 class FakeSparqlClient:
@@ -3204,8 +3204,8 @@ class AgentOrchestrationTests(unittest.TestCase):
             "symbols": ["NVDA"],
         }
 
-        with patch("alfaka.common.secrets.load_alpaca_credentials", return_value=("key", "secret")):
-            with patch("alfaka.alpaca.news.fetch_alpaca_news", return_value=[article]) as fetch:
+        with patch("market_data.common.secrets.load_alpaca_credentials", return_value=("key", "secret")):
+            with patch("market_data.alpaca.news.fetch_alpaca_news", return_value=[article]) as fetch:
                 evidence = provider.fetch(ProviderRequest("NVDA", "뉴스 보여줘"))
 
         fetch.assert_called_once()
@@ -3303,8 +3303,8 @@ class AgentOrchestrationTests(unittest.TestCase):
             "symbols": ["NVDA"],
         }
 
-        with patch("alfaka.common.secrets.load_alpaca_credentials", return_value=("key", "secret")):
-            with patch("alfaka.alpaca.news.fetch_alpaca_news", return_value=[article]) as fetch:
+        with patch("market_data.common.secrets.load_alpaca_credentials", return_value=("key", "secret")):
+            with patch("market_data.alpaca.news.fetch_alpaca_news", return_value=[article]) as fetch:
                 first = provider.fetch(ProviderRequest("NVDA", "뉴스 보여줘"))
                 second = provider.fetch(ProviderRequest("NVDA", "뉴스 다시 보여줘"))
 
@@ -3369,7 +3369,7 @@ class AgentOrchestrationTests(unittest.TestCase):
         ])
         provider = ClickHouseNewsProvider(clickhouse_provider=clickhouse, limit=5, publish_fallback=False)
 
-        with patch("alfaka.alpaca.news.fetch_alpaca_news") as fetch:
+        with patch("market_data.alpaca.news.fetch_alpaca_news") as fetch:
             evidence = provider.fetch(ProviderRequest("NVDA", "뉴스 보여줘"))
 
         fetch.assert_not_called()

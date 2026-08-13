@@ -136,8 +136,8 @@ data:
   KAFKA_TRADES_LAYER_TOPIC: market.layer.trades.v1
   KAFKA_QUOTES_LAYER_TOPIC: market.layer.quotes.v1
   PAPER_ORDER_QUOTES_TOPIC: market.layer.quotes.v1
-  PAPER_ORDER_MATCHER_GROUP_ID: gops-paper-order-matcher-v1
-  PAPER_ORDER_MATCHER_CLIENT_ID: gops-paper-order-matcher
+  PAPER_ORDER_MATCHER_GROUP_ID: gops-paper-live-matcher-v1
+  PAPER_ORDER_MATCHER_CLIENT_ID: gops-paper-live-matcher
   PAPER_ORDER_MATCHER_MAX_POLL_RECORDS: "100"
   PAPER_SUBSCRIPTION_SYNC_SECONDS: "5"
   PAPER_MAX_ACTIVE_ORDER_SYMBOLS: "100"

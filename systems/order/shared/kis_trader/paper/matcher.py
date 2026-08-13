@@ -14,6 +14,8 @@ def match_quote_payload(repository, payload: Any, *, fallback_event_id: str | No
         symbol=symbol,
         bid_price=optional_positive_decimal(payload.get("bidPrice")),
         ask_price=optional_positive_decimal(payload.get("askPrice")),
+        bid_size=optional_positive_decimal(payload.get("bidSize")),
+        ask_size=optional_positive_decimal(payload.get("askSize")),
         quote_timestamp=str(payload.get("timestamp") or payload.get("receivedAt") or "") or None,
         quote_event_id=str(payload.get("sourceEventId") or "").strip() or fallback_event_id,
     )

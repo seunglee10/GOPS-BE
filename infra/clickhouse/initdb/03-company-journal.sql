@@ -6,6 +6,8 @@ CREATE DATABASE IF NOT EXISTS market_data;
 CREATE TABLE IF NOT EXISTS market_data.company_journal_reports_v1
 (
     symbol LowCardinality(String),
+    instrument_id Nullable(UUID),
+    schema_version LowCardinality(String) DEFAULT 'company-journal.v2',
     analysis_as_of Date,
     generated_at DateTime64(3, 'UTC'),
     input_digest String,
@@ -37,6 +39,8 @@ CREATE TABLE IF NOT EXISTS market_data.company_journal_generation_events_v1
 (
     request_id String,
     symbol LowCardinality(String),
+    instrument_id Nullable(UUID),
+    schema_version LowCardinality(String) DEFAULT 'company-journal.v2',
     analysis_as_of Date,
     input_digest String,
     status LowCardinality(String),
@@ -48,3 +52,9 @@ CREATE TABLE IF NOT EXISTS market_data.company_journal_generation_events_v1
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(analysis_as_of)
 ORDER BY (request_id, occurred_at);
+
+CREATE OR REPLACE VIEW market_data.company_journal_reports AS
+SELECT * FROM market_data.company_journal_reports_v1;
+
+CREATE OR REPLACE VIEW market_data.company_journal_generation_events AS
+SELECT * FROM market_data.company_journal_generation_events_v1;

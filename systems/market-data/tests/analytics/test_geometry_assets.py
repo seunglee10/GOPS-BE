@@ -13,7 +13,7 @@ SHARED = ROOT / "systems" / "market-data" / "shared"
 if str(SHARED) not in sys.path:
     sys.path.insert(0, str(SHARED))
 
-from alfaka.analytics.geometry import (  # noqa: E402
+from market_data.analytics.geometry import (  # noqa: E402
     ALGORITHM_VERSION,
     EVALUATION_BARS,
     MINIMUM_BARS,
@@ -27,8 +27,8 @@ from alfaka.analytics.geometry import (  # noqa: E402
     analyze_geometry,
     compute_sma_snapshot,
 )
-from alfaka.analytics.atr import latest_atr  # noqa: E402
-from alfaka.analytics.pivots import compute_pivots  # noqa: E402
+from market_data.analytics.atr import latest_atr  # noqa: E402
+from market_data.analytics.pivots import compute_pivots  # noqa: E402
 
 
 class GeometryAssetKernelTest(unittest.TestCase):
@@ -205,7 +205,7 @@ class GeometryAssetKernelTest(unittest.TestCase):
         fixture = ROOT / "systems" / "market-data" / "tests" / "fixtures" / "chart_assets_v2" / "amd-1d.json"
         rows = json.loads(fixture.read_text(encoding="utf-8"))[-TARGET_BARS["1D"]:]
 
-        with patch("alfaka.analytics.geometry._contextual_level_pass", return_value=False):
+        with patch("market_data.analytics.geometry._contextual_level_pass", return_value=False):
             strict_only = analyze_geometry("AMD", "1D", rows)
         contextual = analyze_geometry("AMD", "1D", rows)
 
@@ -333,7 +333,7 @@ class GeometryAssetKernelTest(unittest.TestCase):
             "evidenceConfirmedIndex": None,
         }
 
-        with patch("alfaka.analytics.geometry.compute_levels", return_value=[candidate]):
+        with patch("market_data.analytics.geometry.compute_levels", return_value=[candidate]):
             supports, resistances, _ = _confirmed_horizontal_levels(
                 "TEST", "1D", rows, current=102.0, atr=1.0, pivots=pivots,
             )
@@ -347,7 +347,7 @@ class GeometryAssetKernelTest(unittest.TestCase):
         self.assertEqual(len(reference["evidence"]), 2)
 
         single_swing = {**candidate, "memberPivotIds": [pivots[0]["id"]]}
-        with patch("alfaka.analytics.geometry.compute_levels", return_value=[single_swing]):
+        with patch("market_data.analytics.geometry.compute_levels", return_value=[single_swing]):
             supports, _, _ = _confirmed_horizontal_levels(
                 "TEST", "1D", rows, current=102.0, atr=1.0, pivots=pivots,
             )
@@ -481,7 +481,7 @@ class GeometryAssetKernelTest(unittest.TestCase):
     def test_geometry_computes_one_common_pivot_registry(self):
         rows = _triangle_rows(180, interval="1D")
 
-        with patch("alfaka.analytics.geometry.compute_pivots", wraps=compute_pivots) as mocked:
+        with patch("market_data.analytics.geometry.compute_pivots", wraps=compute_pivots) as mocked:
             analyze_geometry("NVDA", "1D", rows)
 
         self.assertEqual(mocked.call_count, 1)

@@ -20,10 +20,12 @@ from .fixture import (
 )
 
 from .models import (
+    ACTIVE_STATUSES,
     CANCELLED_STATUS,
     DEFAULT_STARTING_CASH,
     FILLED_STATUS,
     MAX_ACTIVE_ORDER_SYMBOLS,
+    PARTIALLY_FILLED_STATUS,
     PENDING_STATUS,
     PaperCapacityError,
     PaperIdempotencyConflictError,
@@ -53,6 +55,7 @@ class InMemoryPaperTradingRepository:
         self.positions: dict[tuple[str, int, str], dict[str, Any]] = {}
         self.orders: dict[str, dict[str, Any]] = {}
         self.events: dict[str, list[dict[str, Any]]] = {}
+        self.executions: dict[str, dict[str, Any]] = {}
         self.idempotency: dict[tuple[str, str], tuple[str, str]] = {}
         self.ledger: list[dict[str, Any]] = []
         self.portfolio_history: list[dict[str, Any]] = []
@@ -77,7 +80,10 @@ class InMemoryPaperTradingRepository:
                  if owner == user_id and generation == account["current_generation"]),
                 Decimal("0"),
             )
-            open_orders = self.list_orders(user_id, status=PENDING_STATUS, limit=500)
+            open_orders = [
+                row for row in self.list_orders(user_id, limit=500)
+                if row["status"] in ACTIVE_STATUSES
+            ]
             return {
                 "source": "paper",
                 "execution_mode": "paper",
@@ -253,7 +259,7 @@ class InMemoryPaperTradingRepository:
             row = self.orders.get(order_id)
             if not row or row["user_id"] != user_id:
                 raise PaperOrderNotFoundError("paper order not found")
-            if row["status"] != PENDING_STATUS:
+            if row["status"] not in ACTIVE_STATUSES:
                 return public_order(row)
             _account, run = self._current_run_for_order(row)
             reserved_delta = self._release_reservation(row, run)
@@ -292,6 +298,8 @@ class InMemoryPaperTradingRepository:
         ask_price: Decimal | None,
         quote_timestamp: str | None,
         quote_event_id: str | None,
+        bid_size: Decimal | None = None,
+        ask_size: Decimal | None = None,
         execution_mode: str = "paper",
         simulation_run_id: str | None = None,
         quote_sequence: int | None = None,
@@ -300,13 +308,15 @@ class InMemoryPaperTradingRepository:
         symbol = symbol.upper()
         bid = Decimal(bid_price) if bid_price is not None else None
         ask = Decimal(ask_price) if ask_price is not None else None
+        bid_liquidity = Decimal(bid_size) if bid_size is not None else None
+        ask_liquidity = Decimal(ask_size) if ask_size is not None else None
         matched: list[dict[str, Any]] = []
         with self._lock:
             pending = sorted(
                 (
                     row for row in self.orders.values()
                     if row["symbol"] == symbol
-                    and row["status"] == PENDING_STATUS
+                    and row["status"] in ACTIVE_STATUSES
                     and row.get("execution_mode", "paper") == execution_mode
                     and (execution_mode != "simulation" or row.get("simulation_run_id") == simulation_run_id)
                     and (
@@ -328,9 +338,28 @@ class InMemoryPaperTradingRepository:
                     fill_price = bid
                 if fill_price is None or fill_price <= 0:
                     continue
+                remaining_qty = row["qty"] - row["filled_qty"]
+                available_qty = ask_liquidity if row["side"] == "buy" else bid_liquidity
+                execution_qty = min(remaining_qty, available_qty) if available_qty is not None else remaining_qty
+                if execution_qty <= 0:
+                    continue
+                execution_id = self._record_execution(
+                    row,
+                    quantity=execution_qty,
+                    price=fill_price,
+                    quote_event_id=quote_event_id,
+                    quote_timestamp=quote_timestamp,
+                    executed_at=virtual_timestamp or quote_timestamp,
+                )
+                if execution_id is None:
+                    continue
+                if row["side"] == "buy" and ask_liquidity is not None:
+                    ask_liquidity -= execution_qty
+                if row["side"] == "sell" and bid_liquidity is not None:
+                    bid_liquidity -= execution_qty
                 _account, run = self._current_run_for_order(row)
                 position = self._position(row["user_id"], row["generation"], row["symbol"])
-                qty = row["qty"]
+                qty = execution_qty
                 if row["side"] == "buy":
                     reserved = qty * row["limit_price"]
                     cost = qty * fill_price
@@ -353,28 +382,43 @@ class InMemoryPaperTradingRepository:
                     reserved_delta = Decimal("0")
                 position["updated_at"] = utc_now()
                 now = utc_now()
+                previous_filled_qty = row["filled_qty"]
+                next_filled_qty = previous_filled_qty + qty
+                previous_average = row.get("fill_price") or Decimal("0")
+                next_fill_average = (
+                    (previous_filled_qty * previous_average) + (qty * fill_price)
+                ) / next_filled_qty
+                next_status = FILLED_STATUS if next_filled_qty == row["qty"] else PARTIALLY_FILLED_STATUS
+                event_type = "order.filled" if next_status == FILLED_STATUS else "order.partially_filled"
                 row.update(
-                    status=FILLED_STATUS,
-                    filled_qty=qty,
-                    fill_price=fill_price,
+                    status=next_status,
+                    filled_qty=next_filled_qty,
+                    fill_price=next_fill_average,
                     quote_event_id=quote_event_id,
                     quote_timestamp=quote_timestamp,
                     reason=None,
-                    filled_at=now,
+                    filled_at=now if next_status == FILLED_STATUS else None,
                     updated_at=now,
-                    virtual_filled_at=virtual_timestamp if execution_mode == "simulation" else None,
+                    virtual_filled_at=(
+                        virtual_timestamp
+                        if execution_mode == "simulation" and next_status == FILLED_STATUS
+                        else None
+                    ),
                 )
-                self._append_event(row, "order.filled", FILLED_STATUS, payload={
+                self._append_event(row, event_type, next_status, payload={
+                    "execution_id": execution_id,
+                    "execution_quantity": str(qty),
                     "fill_price": str(fill_price),
                     "quote_event_id": quote_event_id,
                     "quote_timestamp": quote_timestamp,
-                })
+                }, execution_id=execution_id)
                 self._append_ledger(
                     row["user_id"],
                     row["generation"],
                     run,
-                    "order.filled",
+                    event_type,
                     order_id=row["order_id"],
+                    execution_id=execution_id,
                     cash_delta=cash_delta,
                     reserved_cash_delta=reserved_delta,
                 )
@@ -389,7 +433,7 @@ class InMemoryPaperTradingRepository:
                 row for row in self.orders.values()
                 if row.get("execution_mode") == "simulation"
                 and row.get("simulation_run_id") == run_id
-                and row["status"] == PENDING_STATUS
+                and row["status"] in ACTIVE_STATUSES
             ]
             for row in rows:
                 _account, run = self._current_run_for_order(row)
@@ -408,7 +452,7 @@ class InMemoryPaperTradingRepository:
         with self._lock:
             return sorted({
                 row["symbol"] for row in self.orders.values()
-                if row["status"] == PENDING_STATUS and row.get("execution_mode", "paper") == "paper"
+                if row["status"] in ACTIVE_STATUSES and row.get("execution_mode", "paper") == "paper"
             })
 
     def active_position_symbols(self) -> list[str]:
@@ -507,7 +551,21 @@ class InMemoryPaperTradingRepository:
             }
             self.orders[order_id] = row
             self.idempotency[(user_id, row["idempotency_key_hash"])] = (SEED_PROFILE, order_id)
-            self._append_event(row, "order.filled", FILLED_STATUS, payload={"seed_profile": SEED_PROFILE})
+            execution_id = self._record_execution(
+                row,
+                quantity=fill.quantity,
+                price=fill.price,
+                quote_event_id=f"seed:{SEED_PROFILE}:{generation}:{index}",
+                quote_timestamp=fill.filled_at.isoformat(),
+                executed_at=fill.filled_at.isoformat(),
+            )
+            self._append_event(
+                row,
+                "order.filled",
+                FILLED_STATUS,
+                payload={"seed_profile": SEED_PROFILE, "execution_id": execution_id},
+                execution_id=execution_id,
+            )
             cash_delta = fill.quantity * fill.price * (Decimal("-1") if fill.side == "buy" else Decimal("1"))
             seed_cash += cash_delta
             self.ledger.append({
@@ -515,6 +573,7 @@ class InMemoryPaperTradingRepository:
                 "user_id": user_id,
                 "generation": generation,
                 "order_id": order_id,
+                "execution_id": execution_id,
                 "event_type": "order.filled",
                 "cash_delta": cash_delta,
                 "reserved_cash_delta": Decimal("0"),
@@ -586,7 +645,7 @@ class InMemoryPaperTradingRepository:
         old_generation = account["current_generation"]
         reason = "account_reset" if suppress_seed else "account_demo_profile"
         for row in list(self.orders.values()):
-            if row["user_id"] != user_id or row["generation"] != old_generation or row["status"] != PENDING_STATUS:
+            if row["user_id"] != user_id or row["generation"] != old_generation or row["status"] not in ACTIVE_STATUSES:
                 continue
             self._release_reservation(row, run)
             now = utc_now()
@@ -685,12 +744,13 @@ class InMemoryPaperTradingRepository:
         return self.positions[key]
 
     def _release_reservation(self, order: dict[str, Any], run: dict[str, Any]) -> Decimal:
+        remaining_qty = order["qty"] - (order["filled_qty"] or Decimal("0"))
         if order["side"] == "buy":
-            released = order["qty"] * order["limit_price"]
+            released = remaining_qty * order["limit_price"]
             run["reserved_cash"] -= released
             return -released
         position = self._position(order["user_id"], order["generation"], order["symbol"])
-        position["reserved_qty"] -= order["qty"]
+        position["reserved_qty"] -= remaining_qty
         position["updated_at"] = utc_now()
         return Decimal("0")
 
@@ -701,12 +761,14 @@ class InMemoryPaperTradingRepository:
         status: str,
         reason: str | None = None,
         payload: dict[str, Any] | None = None,
+        execution_id: str | None = None,
     ) -> None:
         self.events.setdefault(order["order_id"], []).append({
             "event_id": f"paper_evt_{uuid4().hex}",
             "order_id": order["order_id"],
             "user_id": order["user_id"],
             "generation": order["generation"],
+            "execution_id": execution_id,
             "event_type": event_type,
             "status": status,
             "reason": reason,
@@ -722,6 +784,7 @@ class InMemoryPaperTradingRepository:
         event_type: str,
         *,
         order_id: str | None = None,
+        execution_id: str | None = None,
         cash_delta: Decimal = Decimal("0"),
         reserved_cash_delta: Decimal = Decimal("0"),
     ) -> None:
@@ -730,6 +793,7 @@ class InMemoryPaperTradingRepository:
             "user_id": user_id,
             "generation": generation,
             "order_id": order_id,
+            "execution_id": execution_id,
             "event_type": event_type,
             "cash_delta": cash_delta,
             "reserved_cash_delta": reserved_cash_delta,
@@ -737,3 +801,34 @@ class InMemoryPaperTradingRepository:
             "reserved_cash_after": run["reserved_cash"],
             "created_at": utc_now(),
         })
+
+    def _record_execution(
+        self,
+        order: dict[str, Any],
+        *,
+        quantity: Decimal,
+        price: Decimal,
+        quote_event_id: str | None,
+        quote_timestamp: str | None,
+        executed_at: str | None,
+    ) -> str | None:
+        if quote_event_id is not None and any(
+            item["order_id"] == order["order_id"] and item.get("quote_event_id") == quote_event_id
+            for item in self.executions.values()
+        ):
+            return None
+        sequence = 1 + sum(1 for item in self.executions.values() if item["order_id"] == order["order_id"])
+        execution_key = f"{order['order_id']}:{sequence}"
+        execution_id = f"paper_exec_{uuid5(NAMESPACE_URL, execution_key).hex}"
+        self.executions.setdefault(execution_id, {
+            "execution_id": execution_id,
+            "order_id": order["order_id"],
+            "execution_sequence": sequence,
+            "quantity": quantity,
+            "price": price,
+            "fee": Decimal("0"),
+            "quote_event_id": quote_event_id,
+            "quote_timestamp": quote_timestamp,
+            "executed_at": executed_at or utc_now(),
+        })
+        return execution_id

@@ -11,14 +11,14 @@ ROOT = Path(__file__).resolve().parents[3]
 SHARED = ROOT / "systems" / "market-data" / "shared"
 if str(SHARED) not in sys.path: sys.path.insert(0, str(SHARED))
 
-from alfaka.analytics.analysis_candles import _expected_intraday_keys, analysis_daily_window  # noqa: E402
-from alfaka.analytics.analysis_repair import (  # noqa: E402
+from market_data.analytics.analysis_candles import _expected_intraday_keys, analysis_daily_window  # noqa: E402
+from market_data.analytics.analysis_repair import (  # noqa: E402
     AlpacaClickHouseRepairRunner,
     AnalysisCandleRepairService,
     ProviderConfirmedEmpty,
 )
-from alfaka.backfill.gapfill import TradingCalendar  # noqa: E402
-from alfaka.backfill.runner import BackfillUnavailable  # noqa: E402
+from market_data.backfill.gapfill import TradingCalendar  # noqa: E402
+from market_data.backfill.runner import BackfillUnavailable  # noqa: E402
 
 
 NOW = datetime(2026, 7, 11, tzinfo=timezone.utc)

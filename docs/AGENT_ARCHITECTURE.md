@@ -593,3 +593,7 @@ Backend bridge changes should also run:
 ```sh
 .venv/bin/python -m unittest discover -s systems/api-server/tests -p 'test_agent_routes.py'
 ```
+
+## 사용자·종목 identity envelope
+
+Agent request envelope v2는 내부 상관관계를 위해 `schema_version`, `app_user_id`, `instrument_id`를 전달한다. 외부 API는 기존 사용자·심볼 형식을 유지하고, 호환 기간의 내부 메시지는 `user_sub`와 `symbol`을 함께 보낸다. PostgreSQL `app_users`와 `instruments`가 기준정보 원본이며 ClickHouse의 `instrument_id`는 물리 FK가 아닌 교차 저장소 논리 연결이다.

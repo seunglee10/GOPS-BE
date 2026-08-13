@@ -7,8 +7,8 @@ from pathlib import Path
 
 import redis
 
-from alfaka.common.env import load_dotenv, parse_csv
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
+from market_data.common.env import load_dotenv, parse_csv
+from market_data.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
 
 
 def main():

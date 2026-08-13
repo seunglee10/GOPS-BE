@@ -546,7 +546,8 @@ def test_analyst_repository_reads_the_daily_rebuilt_replay_projection_during_sim
 
     assert result["statement"] == "7월 14일 기준 조합 문장입니다."
     query, parameters = client.calls[0]
-    assert "yahoo_analyst_summaries FINAL" in query
+    assert "yahoo_analyst_summaries_latest" in query
+    assert " FINAL" not in query
     assert "replay_statement AS statement" in query
     assert "collected_at >= now64(3) - INTERVAL 1 DAY" in query
     assert "replay_cutoff <=" in query

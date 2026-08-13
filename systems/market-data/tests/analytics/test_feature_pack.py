@@ -13,12 +13,12 @@ MARKET_SHARED = ROOT / "systems" / "market-data" / "shared"
 if str(MARKET_SHARED) not in sys.path:
     sys.path.insert(0, str(MARKET_SHARED))
 
-from alfaka.analytics import KERNEL_VERSION, compute_feature_pack, normalize_candles  # noqa: E402
-from alfaka.analytics.analysis_candles import aggregate_analysis_candles  # noqa: E402
-from alfaka.analytics.events import _impact, compute_events  # noqa: E402
-from alfaka.analytics.levels import _role_state  # noqa: E402
-from alfaka.analytics.config import QUALITY_CONFIG  # noqa: E402
-from alfaka.analytics.trends import _independent_boundary_touches, compute_trends  # noqa: E402
+from market_data.analytics import KERNEL_VERSION, compute_feature_pack, normalize_candles  # noqa: E402
+from market_data.analytics.analysis_candles import aggregate_analysis_candles  # noqa: E402
+from market_data.analytics.events import _impact, compute_events  # noqa: E402
+from market_data.analytics.levels import _role_state  # noqa: E402
+from market_data.analytics.config import QUALITY_CONFIG  # noqa: E402
+from market_data.analytics.trends import _independent_boundary_touches, compute_trends  # noqa: E402
 
 
 FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "scenarios.json").read_text(encoding="utf-8"))

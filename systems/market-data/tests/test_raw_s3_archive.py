@@ -3,7 +3,7 @@ import types
 import unittest
 from collections import defaultdict
 
-from alfaka.storage.raw_s3_archive_sink import (
+from market_data.storage.raw_s3_archive_sink import (
     flush_raw_buffer,
     raw_realtime_partition_keys,
     raw_s3_archive_runtime_config,

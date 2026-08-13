@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from alfaka.news.relevance import classify_subject_relevance, is_direct_subject, normalize_subject_level, normalize_symbols
-from alfaka.serving.news_hot_cache import company_daily_summary_coverage_valid
-from alfaka.storage.news_daily_summary import attach_price_changes_to_daily_summaries, clickhouse_row_to_daily_summary
+from market_data.news.relevance import classify_subject_relevance, is_direct_subject, normalize_subject_level, normalize_symbols
+from market_data.serving.news_hot_cache import company_daily_summary_coverage_valid
+from market_data.storage.news_daily_summary import attach_price_changes_to_daily_summaries, clickhouse_row_to_daily_summary
 
 from ..contracts import EvidenceItem, utc_now_iso
 from .graph_path_cache import GraphPathCache, build_graph_path_cache_from_env
@@ -450,8 +450,8 @@ class ClickHouseNewsProvider(NewsProvider):
 
     def _fetch_alpaca_fallback(self, request: ProviderRequest) -> list[EvidenceItem]:
         try:
-            from alfaka.alpaca.news import build_news_events, fetch_alpaca_news
-            from alfaka.common.secrets import load_alpaca_credentials
+            from market_data.alpaca.news import build_news_events, fetch_alpaca_news
+            from market_data.common.secrets import load_alpaca_credentials
         except Exception as exc:
             return [EvidenceItem.no_data("news", "Alpaca fallback unavailable", f"Alpaca 뉴스 fallback 모듈을 불러오지 못했습니다: {exc.__class__.__name__}")]
 
@@ -485,7 +485,7 @@ class ClickHouseNewsProvider(NewsProvider):
         if not events:
             return
         try:
-            from alfaka.common.kafka_io import create_json_producer
+            from market_data.common.kafka_io import create_json_producer
 
             topic = os.getenv("KAFKA_NEWS_TOPIC", "market.news.alpaca.v1")
             producer = create_json_producer(os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"), "gops-agent-news-fallback")
@@ -506,13 +506,13 @@ class ClickHouseNewsProvider(NewsProvider):
         return now - observed > self.stale_after_seconds
 
     def _default_provider(self):
-        from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+        from market_data.serving.clickhouse_provider import ClickHouseMarketDataProvider
 
         self.clickhouse_provider = ClickHouseMarketDataProvider()
         return self.clickhouse_provider
 
     def _default_redis_provider(self):
-        from alfaka.serving.redis_provider import RedisMarketDataProvider
+        from market_data.serving.redis_provider import RedisMarketDataProvider
 
         self.redis_provider = RedisMarketDataProvider()
         return self.redis_provider
@@ -879,7 +879,7 @@ class ClickHouseFinancialProvider(FinancialProvider):
         return decoded if isinstance(decoded, dict) else None
 
     def _default_provider(self):
-        from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+        from market_data.serving.clickhouse_provider import ClickHouseMarketDataProvider
 
         self.clickhouse_provider = ClickHouseMarketDataProvider()
         return self.clickhouse_provider

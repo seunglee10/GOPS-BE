@@ -419,7 +419,7 @@ class ClickHouseCoachMarketProvider:
         return [dict(row) for row in rows or [] if isinstance(row, dict)]
 
     def _default_provider(self):
-        from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+        from market_data.serving.clickhouse_provider import ClickHouseMarketDataProvider
 
         self.provider = ClickHouseMarketDataProvider()
         return self.provider

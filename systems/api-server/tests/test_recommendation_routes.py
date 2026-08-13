@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[3]
 MARKET_SHARED = ROOT / "systems" / "market-data" / "shared"
 ORDER_SHARED = ROOT / "systems" / "order" / "shared"
 AGENT_SHARED = ROOT / "systems" / "agent-orchestration" / "shared"
-BACKEND = ROOT / "systems" / "api-server" / "pods" / "api-server" / "gops-backend"
+BACKEND = ROOT / "systems" / "api-server" / "pods" / "api-server"
 for path in (str(MARKET_SHARED), str(ORDER_SHARED), str(AGENT_SHARED), str(BACKEND), str(ROOT)):
     if path not in sys.path:
         sys.path.insert(0, path)
@@ -874,8 +874,8 @@ def test_recommendation_news_falls_back_to_alpaca_api(recommendation_app, monkey
     provider = types.SimpleNamespace(redis_provider=RedisProvider(), clickhouse_provider=ClickHouseProvider())
     recommendation_app.state.recommendation_news_provider = None
     monkeypatch.setattr("app.recommendations.service.get_market_data_provider", lambda: provider)
-    monkeypatch.setattr("alfaka.common.secrets.load_alpaca_credentials", lambda: ("key", "secret"))
-    monkeypatch.setattr("alfaka.alpaca.news.fetch_alpaca_news", fake_fetch_alpaca_news)
+    monkeypatch.setattr("market_data.common.secrets.load_alpaca_credentials", lambda: ("key", "secret"))
+    monkeypatch.setattr("market_data.alpaca.news.fetch_alpaca_news", fake_fetch_alpaca_news)
 
     rows = RecommendationDataSource(recommendation_app).news("MSFT", REGULAR_MARKET_TIME)
 
@@ -912,8 +912,8 @@ def test_recommendation_news_batches_alpaca_fallback_misses(recommendation_app, 
     provider = types.SimpleNamespace(redis_provider=RedisProvider(), clickhouse_provider=object())
     recommendation_app.state.recommendation_news_provider = None
     monkeypatch.setattr("app.recommendations.service.get_market_data_provider", lambda: provider)
-    monkeypatch.setattr("alfaka.common.secrets.load_alpaca_credentials", lambda: ("key", "secret"))
-    monkeypatch.setattr("alfaka.alpaca.news.fetch_alpaca_news", fake_fetch_alpaca_news)
+    monkeypatch.setattr("market_data.common.secrets.load_alpaca_credentials", lambda: ("key", "secret"))
+    monkeypatch.setattr("market_data.alpaca.news.fetch_alpaca_news", fake_fetch_alpaca_news)
 
     rows = RecommendationDataSource(recommendation_app).news_for_symbols(["MSFT", "AVGO"], REGULAR_MARKET_TIME)
 

@@ -11,7 +11,7 @@ SHARED = ROOT / "systems" / "market-data" / "shared"
 if str(SHARED) not in sys.path:
     sys.path.insert(0, str(SHARED))
 
-from alfaka.analytics.analysis_candles import (  # noqa: E402
+from market_data.analytics.analysis_candles import (  # noqa: E402
     CANDLE_CONTRACT_VERSION,
     AnalysisCandleSource,
     aggregate_analysis_candle_bundle,
@@ -23,7 +23,7 @@ from alfaka.analytics.analysis_candles import (  # noqa: E402
     is_analysis_candle_bucket_complete,
     merge_canonical_candles,
 )
-from alfaka.backfill.gapfill import TradingCalendar  # noqa: E402
+from market_data.backfill.gapfill import TradingCalendar  # noqa: E402
 
 
 class AnalysisCandleContractTest(unittest.TestCase):

@@ -252,7 +252,7 @@ def default_redis_client():
 def default_clickhouse_provider():
     if not os.getenv("CLICKHOUSE_HTTP_URL"):
         return None
-    from alfaka.serving.clickhouse_provider import ClickHouseMarketDataProvider
+    from market_data.serving.clickhouse_provider import ClickHouseMarketDataProvider
 
     return ClickHouseMarketDataProvider()
 
@@ -260,7 +260,7 @@ def default_clickhouse_provider():
 def default_clickhouse_client():
     if not os.getenv("CLICKHOUSE_HTTP_URL"):
         return None
-    from alfaka.storage.clickhouse_loader import ClickHouseHttpClient
+    from market_data.storage.clickhouse_loader import ClickHouseHttpClient
 
     return ClickHouseHttpClient(
         os.getenv("CLICKHOUSE_HTTP_URL", "http://localhost:8123"),

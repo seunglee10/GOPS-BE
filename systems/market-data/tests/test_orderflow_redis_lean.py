@@ -5,10 +5,10 @@ import unittest
 from collections import Counter
 from unittest import mock
 
-from alfaka.common.market_messages import build_raw_envelope
-from alfaka.common.redis_keys import RedisKeyBuilder
-from alfaka.orderflow import OrderFlowBinBuilder
-from alfaka.streaming.processor import (
+from market_data.common.market_messages import build_raw_envelope
+from market_data.common.redis_keys import RedisKeyBuilder
+from market_data.orderflow import OrderFlowBinBuilder
+from market_data.streaming.processor import (
     ProcessorState,
     configure_order_flow_state,
     process_raw_envelope,
@@ -16,7 +16,7 @@ from alfaka.streaming.processor import (
     write_processor_health,
     write_trade_to_redis,
 )
-from alfaka.streaming.transforms import normalize_quote
+from market_data.streaming.transforms import normalize_quote
 
 
 class RedisLeanHotPathTest(unittest.TestCase):
@@ -33,7 +33,7 @@ class RedisLeanHotPathTest(unittest.TestCase):
             "QUOTE_EVENT_PUBLISH_MIN_INTERVAL_MS": "250",
             "HEALTH_WRITE_MIN_INTERVAL_MS": "1000",
         }):
-            with mock.patch("alfaka.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
+            with mock.patch("market_data.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
                 for index in range(5):
                     result = process_raw_envelope(
                         _quote_envelope(index, symbol="AAPL"),
@@ -66,7 +66,7 @@ class RedisLeanHotPathTest(unittest.TestCase):
         clock = [200.0]
 
         with mock.patch.dict(os.environ, {"TRADE_REDIS_WRITE_MIN_INTERVAL_MS": "250"}):
-            with mock.patch("alfaka.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
+            with mock.patch("market_data.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
                 for index in range(5):
                     write_trade_to_redis(redis, keys, _trade(trade_id=index), state=state)
 
@@ -95,7 +95,7 @@ class RedisLeanHotPathTest(unittest.TestCase):
             "ORDER_FLOW_LIVE_MINUTE_TTL_SECONDS": "300",
             "ORDER_FLOW_LIVE_TTL_SECONDS": "86400",
         }):
-            with mock.patch("alfaka.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
+            with mock.patch("market_data.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
                 first = builder.update(_trade(timestamp="2026-07-09T13:30:05.000Z", trade_id=1), "ask")
                 write_order_flow_bin_to_redis(redis, keys, first, state=state)
                 for index in range(2, 6):
@@ -130,7 +130,7 @@ class RedisLeanHotPathTest(unittest.TestCase):
         clock = [400.0]
 
         with mock.patch.dict(os.environ, {"HEALTH_WRITE_MIN_INTERVAL_MS": "1000"}):
-            with mock.patch("alfaka.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
+            with mock.patch("market_data.streaming.processor.time.monotonic", side_effect=lambda: clock[0]):
                 for _index in range(5):
                     write_processor_health(redis, keys, envelope, result="quotes", state=state)
 

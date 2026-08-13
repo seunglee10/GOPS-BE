@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Callable, Protocol
 
-from alfaka.serving.intervals import CHART_INTERVALS, normalize_chart_interval
+from market_data.serving.intervals import CHART_INTERVALS, normalize_chart_interval
 
 from .schemas import chart_command_schema
 

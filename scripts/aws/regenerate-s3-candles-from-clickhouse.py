@@ -17,13 +17,13 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from alfaka.common.s3_client import create_s3_client
-from alfaka.storage.clickhouse_loader import (
+from market_data.common.s3_client import create_s3_client
+from market_data.storage.clickhouse_loader import (
     ClickHouseHttpClient,
     clickhouse_string_literal,
 )
-from alfaka.storage.processed_s3_sink import flush_buffer
-from alfaka.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX
+from market_data.storage.processed_s3_sink import flush_buffer
+from market_data.storage.s3_manifest import DEFAULT_MANIFEST_PREFIX
 
 
 def main() -> None:

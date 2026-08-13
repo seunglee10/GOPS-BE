@@ -5,13 +5,13 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app/systems/agent-orchestration/shared:/app/systems/market-data/shared:/app/systems/order/shared:/app/systems/api-server/pods/api-server/gops-backend \
+    PYTHONPATH=/app/systems/agent-orchestration/shared:/app/systems/market-data/shared:/app/systems/order/shared:/app/systems/api-server/pods/api-server \
     ALFAKA_PACKAGES_PATH=/app/systems/market-data/shared
 
 WORKDIR /app
 
 COPY requirements.txt /tmp/alfaka-requirements.txt
-COPY systems/api-server/pods/api-server/gops-backend/requirements.txt /tmp/gops-backend-requirements.txt
+COPY systems/api-server/pods/api-server/requirements.txt /tmp/gops-backend-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/alfaka-requirements.txt -r /tmp/gops-backend-requirements.txt
 
 COPY systems/market-data/config ./systems/market-data/config
@@ -19,8 +19,8 @@ COPY systems/market-data/shared ./systems/market-data/shared
 COPY systems/order/shared ./systems/order/shared
 COPY systems/agent-orchestration/config ./systems/agent-orchestration/config
 COPY systems/agent-orchestration/shared ./systems/agent-orchestration/shared
-COPY systems/api-server/pods/api-server/gops-backend ./systems/api-server/pods/api-server/gops-backend
+COPY systems/api-server/pods/api-server ./systems/api-server/pods/api-server
 
-WORKDIR /app/systems/api-server/pods/api-server/gops-backend
+WORKDIR /app/systems/api-server/pods/api-server
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

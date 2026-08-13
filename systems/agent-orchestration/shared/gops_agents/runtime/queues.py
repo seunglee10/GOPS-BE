@@ -104,7 +104,7 @@ def build_analysis_request_queue(
         return InProcessAnalysisRequestQueue()
     if backend in {"kafka", "auto"} and os.getenv("KAFKA_BOOTSTRAP_SERVERS"):
         try:
-            from alfaka.common.kafka_io import create_json_producer
+            from market_data.common.kafka_io import create_json_producer
 
             return KafkaAnalysisRequestQueue(
                 producer=create_json_producer(

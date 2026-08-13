@@ -11,8 +11,10 @@ from kis_trader.domain.commands import OrderRequest
 DEFAULT_STARTING_CASH = Decimal("100000.00")
 MAX_ACTIVE_ORDER_SYMBOLS = 100
 PENDING_STATUS = "pending"
+PARTIALLY_FILLED_STATUS = "partially_filled"
 FILLED_STATUS = "filled"
 CANCELLED_STATUS = "cancelled"
+ACTIVE_STATUSES = frozenset({PENDING_STATUS, PARTIALLY_FILLED_STATUS})
 TERMINAL_STATUSES = frozenset({FILLED_STATUS, CANCELLED_STATUS, "rejected"})
 
 
@@ -22,6 +24,8 @@ def utc_now() -> datetime:
 
 def public_order(row: dict[str, Any]) -> dict[str, Any]:
     payload = dict(row)
+    payload.pop("app_user_id", None)
+    payload.pop("instrument_id", None)
     payload["price"] = payload.get("limit_price", payload.get("price"))
     payload["execution_mode"] = payload.get("execution_mode") or "paper"
     if payload["execution_mode"] == "simulation":
@@ -100,6 +104,8 @@ class PaperTradingRepository(Protocol):
         ask_price: Decimal | None,
         quote_timestamp: str | None,
         quote_event_id: str | None,
+        bid_size: Decimal | None = None,
+        ask_size: Decimal | None = None,
         execution_mode: str = "paper",
         simulation_run_id: str | None = None,
         quote_sequence: int | None = None,

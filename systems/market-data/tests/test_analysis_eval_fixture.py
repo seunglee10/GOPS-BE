@@ -13,7 +13,7 @@ FIXTURES = ROOT / "systems/market-data/tests/fixtures/chart_assets_v2"
 if str(SHARED) not in sys.path:
     sys.path.insert(0, str(SHARED))
 
-from alfaka.analytics.geometry import analyze_geometry  # noqa: E402
+from market_data.analytics.geometry import analyze_geometry  # noqa: E402
 
 
 class AnalysisEvalFixtureTest(unittest.TestCase):

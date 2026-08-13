@@ -42,17 +42,17 @@ spec:
                 optional: true
           startupProbe:
             exec:
-              command: ["python", "-m", "alfaka.common.heartbeat", "--max-age-seconds", "300"]
+              command: ["python", "-m", "market_data.common.heartbeat", "--max-age-seconds", "300"]
             periodSeconds: 5
             failureThreshold: 60
           readinessProbe:
             exec:
-              command: ["python", "-m", "alfaka.common.heartbeat", "--max-age-seconds", "60"]
+              command: ["python", "-m", "market_data.common.heartbeat", "--max-age-seconds", "60"]
             periodSeconds: 10
             failureThreshold: 3
           livenessProbe:
             exec:
-              command: ["python", "-m", "alfaka.common.heartbeat", "--max-age-seconds", "120"]
+              command: ["python", "-m", "market_data.common.heartbeat", "--max-age-seconds", "120"]
             periodSeconds: 30
             failureThreshold: 3
           resources:

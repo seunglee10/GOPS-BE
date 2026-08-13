@@ -45,6 +45,7 @@ flowchart TD
 | `LOCAL_EKS_DEPLOY.md` | One-command local deploy runbook for origin/dev to shared dev EKS. |
 | `EKS_DATA_PRESERVING_REBUILD_PLAN.md` | Data-preserving EKS clean rebuild runbook for dedicated NodePools and restored PVCs. |
 | `AGENT_ORCHESTRATION_IMPLEMENTATION.md` | Summary of the role-based multi-agent implementation and Docker validation. |
+| `SEUNGLEE_IMPLEMENTATION_RETROSPECTIVE.md` | 작성자 브랜치 전반의 멀티 에이전트, 데이터, 알림·리스크, 적응형 UI 구현 의도와 구조, 효율 개선 회고. |
 | `STOCK_RECOMMENDATION_PANEL.md` | 장중 매수 추천 패널의 현재 구현, 확인된 품질 위험, API/DB/worker/프런트 계약, 개선 목표. |
 | `PROFESSIONAL_PERSONALIZED_RECOMMENDATION_LOGIC.md` | v1/V2와 결정론적 evidence V3, 한국어 설명·신뢰도 계약을 구분한 상세 문서. |
 | `AWS_RECOMMENDATION_DATA_PREPARATION.md` | timestamped AWS 상태, SPY/V3 activation gate, 추천 데이터 복구·검증 순서를 정리한 runbook. |
@@ -53,6 +54,8 @@ flowchart TD
 | `AGENT_BACKEND_INTEGRATION.md` | Backend API, idempotency, Kafka async path, Redis report store, polling/SSE/WebSocket 계약. |
 | `AGENT_FRONTEND_INTEGRATION.md` | 프런트 request shape, `analysisId`, polling/SSE, report rendering, layout/chart proposal 처리. |
 | `AGENT_AWS_BUILD.md` | `gops-agent-orchestrator` image, ECR/EKS, Kafka, Redis/Valkey, ClickHouse, GraphDB, S3, secrets, smoke checks. |
+| `ERDCLOUD_IMPORT.sql` | PostgreSQL 물리 FK와 ClickHouse 논리·교차 저장소 관계를 함께 보는 전체 ERDCloud Import SQL. |
+| `erd/README.md` | 도메인별 ERD Import SQL, 테이블 역할표, 단계적 전환 runbook의 진입점. |
 | `../systems/fundamentals/README.md` | SEC companyfacts, Yahoo estimates, and 10-K profile batch/storage contracts used by Company Compare. |
 | `ai-coach/CODEX_TASK_PROMPT.md` | 이 작업에 사용한 AI 투자 코치 1페이지 구현·검증 원문 프롬프트. |
 | `ai-coach/HANDOFF.md` | AI 투자 코치 4페이지 계약, 결정론적 계산, snapshot, AWS 흐름 및 외부 데이터 의존성. |

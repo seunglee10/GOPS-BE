@@ -101,7 +101,7 @@ GET  /api/control/order-flow?symbol=...
 GET  /api/control/execution-events?runId=...&afterSequence=...&limit=...
 ```
 
-Simulator는 계좌·주문·조건 control API를 제공하지 않는다. `simulation-paper-matcher`가
+Simulator는 계좌·주문·조건 control API를 제공하지 않는다. `paper-replay-matcher`가
 execution event를 순서대로 페이지 조회하고 공통 Postgres 원장을 갱신한다. Matcher는 현재
 run의 미체결 주문·활성 가격조건 종목만 처리한다. 활성 종목이 없으면 quote를 순회하지 않고
 simulator의 처리 완료 sequence까지 checkpoint를 전진시킨다. 활성 종목이 있으면 최대

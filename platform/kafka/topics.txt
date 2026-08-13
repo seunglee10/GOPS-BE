@@ -26,6 +26,7 @@ market.layer.quotes.v1
 market.layer.events.v1
 market.news.alpaca.v1
 market.news.daily-summary-dirty.v1
+reference.instruments.v1
 orders.commands.v1
 broker.submit-results.v1
 broker.order-events.v1

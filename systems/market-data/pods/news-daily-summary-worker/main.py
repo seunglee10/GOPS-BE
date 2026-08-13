@@ -8,12 +8,12 @@ from datetime import datetime, timezone
 
 import redis
 
-from alfaka.common.env import load_dotenv
-from alfaka.common.kafka_io import create_json_consumer
-from alfaka.news.relevance import classify_subject_relevance, normalize_subject_level
-from alfaka.serving.news_hot_cache import write_company_daily_summary_to_redis
-from alfaka.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
-from alfaka.storage.news_daily_summary import (
+from market_data.common.env import load_dotenv
+from market_data.common.kafka_io import create_json_consumer
+from market_data.news.relevance import classify_subject_relevance, normalize_subject_level
+from market_data.serving.news_hot_cache import write_company_daily_summary_to_redis
+from market_data.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
+from market_data.storage.news_daily_summary import (
     SUMMARY_VERSION,
     article_ids_hash,
     build_daily_summary_record,

@@ -3,12 +3,12 @@ import time
 
 import redis
 
-from alfaka.common.env import load_dotenv
-from alfaka.common.redis_keys import RedisKeyBuilder
-from alfaka.orderflow import pinned_symbols_from_env
-from alfaka.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
-from alfaka.common.runtime_config import validate_required_values
-from alfaka.common.runtime_health import write_component_health
+from market_data.common.env import load_dotenv
+from market_data.common.redis_keys import RedisKeyBuilder
+from market_data.orderflow import pinned_symbols_from_env
+from market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
+from market_data.common.runtime_config import validate_required_values
+from market_data.common.runtime_health import write_component_health
 
 
 def main():

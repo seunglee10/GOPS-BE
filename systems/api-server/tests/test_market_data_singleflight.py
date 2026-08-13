@@ -2,7 +2,7 @@ import unittest
 
 from app.market_data.derived.service import DerivedCalculationService
 from app.market_data.fill.service import DistributedFillSingleflight, parse_singleflight_value
-from alfaka.serving.chart_derived_data import build_volume_profile_request
+from market_data.serving.chart_derived_data import build_volume_profile_request
 
 
 class RedisSingleflightOwnershipTest(unittest.TestCase):

@@ -3,7 +3,7 @@
 # 설정: ALPACA_FEED, ALPACA_CHANNELS, Alpaca API 키가 필요합니다.
 # 기본 수집은 ALPACA_UNIVERSE/ALPACA_COLLECTION_SYMBOL_SOURCE를 따르고,
 # ALPACA_SYMBOLS는 legacy/local smoke seed입니다. 사용자 Watch List는 API/Redis control-plane으로 동기화합니다.
-from alfaka.alpaca.websocket_collector import run
+from market_data.alpaca.websocket_collector import run
 
 
 if __name__ == "__main__":

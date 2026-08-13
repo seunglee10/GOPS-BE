@@ -2,20 +2,20 @@ import json
 import unittest
 from unittest import mock
 
-from alfaka.backfill.runner import BackfillDeadlineExceeded, BackfillRunner
-from alfaka.storage.s3_manifest import (
+from market_data.backfill.runner import BackfillDeadlineExceeded, BackfillRunner
+from market_data.storage.s3_manifest import (
     analysis_repair_processed_candle_keys,
     bounded_v2_processed_candle_keys,
     bounded_v2_raw_keys,
     entry_matches_range,
     select_preferred_manifest_entries,
 )
-from alfaka.storage.s3_materializer import (
+from market_data.storage.s3_materializer import (
     commit_prepared_s3_processed_objects,
     materialize_s3_processed_objects,
     prepare_s3_processed_objects,
 )
-from alfaka.storage.s3_realtime_layout import symbol_shard
+from market_data.storage.s3_realtime_layout import symbol_shard
 
 
 class S3V2DualReaderTest(unittest.TestCase):

@@ -184,6 +184,25 @@ services:
     networks:
       - data_net
 
+  clickhouse-migrations:
+    image: gops-market-storage
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-storage
+    container_name: alfaka-clickhouse-migrations
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+    command: ["python", "-u", "systems/market-data/jobs/clickhouse-migrations/main.py"]
+    restart: "no"
+    networks:
+      - data_net
+
   gops-simulator:
     profiles: ["simulator"]
     image: gops-simulator
@@ -194,6 +213,8 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     environment:
@@ -439,6 +460,8 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     environment:
@@ -744,6 +767,8 @@ services:
         condition: service_completed_successfully
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       KAFKA_CLICKHOUSE_GROUP_ID: "alfaka-clickhouse-loader"
@@ -777,6 +802,8 @@ services:
         condition: service_completed_successfully
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     environment:
@@ -825,6 +852,8 @@ services:
         condition: service_completed_successfully
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     environment:
@@ -863,6 +892,8 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
     environment:
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
       CLICKHOUSE_DATABASE: "market_data"
@@ -886,6 +917,8 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     environment:
@@ -921,6 +954,8 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     environment:
@@ -984,6 +1019,8 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
     environment:
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
       CLICKHOUSE_DATABASE: "market_data"
@@ -1096,6 +1133,8 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       REDIS_URL: "redis://redis:6379/0"
@@ -1165,6 +1204,8 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       chart-asset-migrations:
@@ -1232,6 +1273,8 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
       REDIS_URL: "redis://redis:6379/0"
@@ -1367,6 +1410,8 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
     environment:
       REDIS_URL: "redis://redis:6379/0"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
@@ -1394,6 +1439,8 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
     environment:
       REDIS_URL: "redis://redis:6379/0"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
@@ -1418,6 +1465,8 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
     environment:
       REDIS_URL: "redis://redis:6379/0"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
@@ -1444,6 +1493,8 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
     environment:
       REDIS_URL: "redis://redis:6379/0"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
@@ -1471,6 +1522,8 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
     environment:
       REDIS_URL: "redis://redis:6379/0"
       CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
@@ -1556,6 +1609,8 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       order-migrations:
@@ -1734,6 +1789,8 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
     environment:
       REDIS_URL: "redis://redis:6379/0"
       REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
@@ -1842,7 +1899,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
-    command: ["python", "-u", "systems/order/jobs/migrations/main.py"]
+    command: ["python", "-u", "systems/order/jobs/postgres-migrations/main.py"]
     restart: "no"
     networks:
       - data_net
@@ -1871,12 +1928,12 @@ services:
       - data_net
       - streaming_net
 
-  simulation-paper-matcher:
+  paper-replay-matcher:
     image: gops-order-worker
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.gops-order-worker
-    container_name: alfaka-simulation-paper-matcher
+    container_name: alfaka-paper-replay-matcher
     depends_on:
       postgres:
         condition: service_healthy
@@ -1888,7 +1945,7 @@ services:
       PAPER_ACCOUNT_SEED_PROFILE: "${PAPER_ACCOUNT_SEED_PROFILE:-diversified-us-v3}"
       SIMULATION_MATCHER_IDLE_SECONDS: "${SIMULATION_MATCHER_IDLE_SECONDS:-0.25}"
       SIMULATION_MATCHER_BATCH_SIZE: "${SIMULATION_MATCHER_BATCH_SIZE:-50000}"
-    command: ["python", "-u", "systems/order/pods/simulation-paper-matcher/main.py"]
+    command: ["python", "-u", "systems/order/pods/paper-replay-matcher/main.py"]
     restart: unless-stopped
     networks:
       - app_net
