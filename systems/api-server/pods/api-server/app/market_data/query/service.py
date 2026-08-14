@@ -52,6 +52,21 @@ HOT_NEWS_RANKING_KINDS = (
     ("dollar-volume", "거래대금"),
 )
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
+DEFAULT_NEWS_LOOKBACK_DAYS = 30
+
+
+def news_lookback_days_from_env() -> int:
+    """실시간 뉴스 조회가 거슬러 올라갈 일수.
+
+    일반 모드는 벽시계 기준 윈도우라, 과거 시점 데이터를 적재한 로컬 환경에서는
+    윈도우가 데이터를 지나쳐 버린다. NEWS_LOOKBACK_DAYS로 늘려서 쓴다.
+    시뮬레이션 모드는 가상시간에 고정돼 있어 이 값을 쓰지 않는다.
+    """
+    try:
+        value = int(str(os.getenv("NEWS_LOOKBACK_DAYS", "")).strip())
+    except (TypeError, ValueError):
+        return DEFAULT_NEWS_LOOKBACK_DAYS
+    return value if value > 0 else DEFAULT_NEWS_LOOKBACK_DAYS
 
 
 class MarketDataQueryService:
@@ -880,7 +895,7 @@ class MarketDataQueryService:
                 return []
             try:
                 if use_days:
-                    rows = method(symbol, limit=limit, days=30, locale=locale)
+                    rows = method(symbol, limit=limit, days=news_lookback_days_from_env(), locale=locale)
                 else:
                     rows = method(symbol, limit=limit, locale=locale)
             except TypeError:
@@ -890,7 +905,7 @@ class MarketDataQueryService:
         else:
             try:
                 if use_days:
-                    rows = method([symbol], limit=limit, days=30, locale=locale)
+                    rows = method([symbol], limit=limit, days=news_lookback_days_from_env(), locale=locale)
                 else:
                     rows = method([symbol], limit=limit, locale=locale)
             except TypeError:
@@ -938,7 +953,7 @@ class MarketDataQueryService:
         if callable(method):
             try:
                 if use_days:
-                    rows = method(symbols, limit=limit, days=30, locale=locale)
+                    rows = method(symbols, limit=limit, days=news_lookback_days_from_env(), locale=locale)
                 else:
                     rows = method(symbols, limit=limit, locale=locale)
             except TypeError:
@@ -982,7 +997,7 @@ class MarketDataQueryService:
     def _daily_news_rows(self, symbol: str, limit: int, locale: str) -> list[dict[str, Any]]:
         redis_provider = getattr(self.provider, "redis_provider", None)
         clickhouse_provider = getattr(self.provider, "clickhouse_provider", None)
-        days = 30
+        days = news_lookback_days_from_env()
         redis_rows = self._daily_news_rows_from_provider(redis_provider, symbol, limit, locale, use_days=False)
         if self._daily_news_redis_coverage_valid(redis_provider, symbol, days, limit, locale, redis_rows):
             return redis_rows[:limit]
@@ -1061,7 +1076,7 @@ class MarketDataQueryService:
             return []
         try:
             if use_days:
-                rows = method(symbol, limit=limit, days=30, locale=locale)
+                rows = method(symbol, limit=limit, days=news_lookback_days_from_env(), locale=locale)
             else:
                 rows = method(symbol, limit=limit, locale=locale)
         except TypeError:

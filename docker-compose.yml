@@ -1664,6 +1664,8 @@ services:
       CHART_VOLUME_PROFILE_CACHE_TTL_SECONDS: "${CHART_VOLUME_PROFILE_CACHE_TTL_SECONDS:-30}"
       CHART_DERIVED_INLINE_LOCK_TTL_SECONDS: "${CHART_DERIVED_INLINE_LOCK_TTL_SECONDS:-30}"
       CHART_DERIVED_INLINE_WAIT_MS: "${CHART_DERIVED_INLINE_WAIT_MS:-500}"
+      # 로컬 백업 뉴스는 2026-07 시점이라 기본 30일 윈도우로는 조회되지 않는다.
+      NEWS_LOOKBACK_DAYS: "${NEWS_LOOKBACK_DAYS:-400}"
       ALERT_EVALUATOR_INPUT_TOPIC: "market.layer.trades.v1"
       ALERT_EVALUATOR_INPUT_TOPICS: "market.layer.trades.v1,market.layer.candles.1m.closed.v1,market.layer.candles.5m.closed.v1,market.layer.candles.10m.closed.v1,market.layer.candles.1h.closed.v1,market.layer.candles.4h.closed.v1,market.layer.candles.1d.closed.v1"
       ALERT_TRIGGERED_TOPIC: "alerts.triggered.v1"
