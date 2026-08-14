@@ -1517,7 +1517,7 @@ class ClickHouseMarketDataProvider:
     def company_daily_news_summaries(self, symbol, limit=5, days=30, locale="ko-KR"):
         query = f"""
         SELECT
-          toString(date) AS date,
+          toString(summaries.date) AS date,
           symbol,
           locale,
           summary,
@@ -1535,11 +1535,11 @@ class ClickHouseMarketDataProvider:
           formatDateTime(generated_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS generatedAt,
           version,
           raw
-        FROM {self.table('news_company_daily_summaries')}
+        FROM {self.table('news_company_daily_summaries')} AS summaries
         WHERE symbol = {{symbol:String}}
           AND locale = {{locale:String}}
-          AND date >= toDate(now('UTC') - INTERVAL {{days:UInt32}} DAY)
-        ORDER BY date DESC, generated_at DESC
+          AND summaries.date >= toDate(now('UTC') - INTERVAL {{days:UInt32}} DAY)
+        ORDER BY summaries.date DESC, generated_at DESC
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """
