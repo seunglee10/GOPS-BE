@@ -11,7 +11,11 @@ import redis
 from market_data.common.env import load_dotenv
 from market_data.common.kafka_io import create_json_consumer
 from market_data.news.relevance import classify_subject_relevance, normalize_subject_level
-from market_data.serving.news_hot_cache import write_company_daily_summary_to_redis
+from market_data.serving.news_hot_cache import (
+    DEFAULT_DAILY_MAX_ITEMS,
+    DEFAULT_DAILY_TTL_SECONDS,
+    write_company_daily_summary_to_redis,
+)
 from market_data.storage.clickhouse_loader import ClickHouseHttpClient, should_ensure_schema_on_start
 from market_data.storage.news_daily_summary import (
     SUMMARY_VERSION,
@@ -91,8 +95,8 @@ def process_dirty_event(
     if not article_ids:
         return None
 
-    redis_ttl_seconds = int(ttl_seconds if ttl_seconds is not None else os.getenv("NEWS_DAILY_REDIS_TTL_SECONDS", "2592000"))
-    redis_max_items = int(max_items if max_items is not None else os.getenv("NEWS_DAILY_REDIS_MAX_ITEMS", "30"))
+    redis_ttl_seconds = int(ttl_seconds if ttl_seconds is not None else os.getenv("NEWS_DAILY_REDIS_TTL_SECONDS", str(DEFAULT_DAILY_TTL_SECONDS)))
+    redis_max_items = int(max_items if max_items is not None else os.getenv("NEWS_DAILY_REDIS_MAX_ITEMS", str(DEFAULT_DAILY_MAX_ITEMS)))
     digest = article_ids_hash(article_ids)
     existing = read_existing_daily_summary(clickhouse_client, symbol=symbol, date=date, locale=locale)
     if (

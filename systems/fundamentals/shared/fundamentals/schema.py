@@ -172,7 +172,6 @@ CREATE TABLE IF NOT EXISTS market_data.yahoo_analyst_summaries
 )
 ENGINE = ReplacingMergeTree(collected_at)
 ORDER BY symbol
-TTL toDateTime(collected_at) + INTERVAL 1 DAY DELETE
 """,
 }
 

@@ -7963,6 +7963,37 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual([row["articleId"] for row in cached], ["recent-news"])
         self.assertEqual(redis_client.expirations[RedisKeyBuilder().news_latest_v2("ko-KR", "AAPL")], 2592000)
 
+    def test_localized_news_redis_cache_keeps_everything_by_default(self):
+        # 뉴스는 영구 보존이 기본값이다. TTL·retention·max_items 세 삭제 경로가 모두 꺼져 있어야 한다.
+        redis_client = MemoryRedis()
+        now = datetime.now(timezone.utc)
+        ancient_published_at = (now - timedelta(days=400)).isoformat().replace("+00:00", "Z")
+        recent_published_at = (now - timedelta(days=1)).isoformat().replace("+00:00", "Z")
+
+        for article_id, published_at in (
+            ("ancient-news", ancient_published_at),
+            ("recent-news", recent_published_at),
+        ):
+            write_localized_news_to_redis(
+                redis_client,
+                {
+                    "articleId": article_id,
+                    "symbol": "AAPL",
+                    "targetSymbol": "AAPL",
+                    "symbols": ["AAPL"],
+                    "localizedHeadline": f"{article_id} 헤드라인",
+                    "localizedSummary": f"{article_id} 요약입니다.",
+                    "publishedAt": published_at,
+                },
+                locale="ko-KR",
+            )
+
+        key = RedisKeyBuilder().news_latest_v2("ko-KR", "AAPL")
+        cached = read_localized_news_from_redis(redis_client, "AAPL", limit=10, locale="ko-KR")
+
+        self.assertEqual({row["articleId"] for row in cached}, {"ancient-news", "recent-news"})
+        self.assertNotIn(key, redis_client.expirations)
+
     def test_news_intelligence_worker_publishes_daily_summary_dirty_event(self):
         worker = load_news_intelligence_worker_module()
         client = RecordingClickHouseClient()
@@ -8612,11 +8643,11 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertEqual(client.inserts[0][0], "news_article_localizations")
         self.assertEqual(client.inserts[0][1][0]["localized_headline"], "NVIDIA shares rise")
 
-    def test_clickhouse_news_articles_table_has_30_day_ttl(self):
+    def test_clickhouse_news_tables_have_no_retention_ttl(self):
         schema = (REPO_ROOT / "infra" / "clickhouse" / "initdb" / "01-market-data.sql").read_text(encoding="utf-8")
 
         self.assertIn("CREATE TABLE IF NOT EXISTS market_data.news_articles", schema)
-        self.assertIn("TTL toDateTime(published_at) + INTERVAL 30 DAY DELETE", schema)
+        self.assertNotIn("TTL toDateTime(published_at)", schema)
         self.assertIn("CREATE TABLE IF NOT EXISTS market_data.news_article_localizations", schema)
         self.assertIn("key_points Array(String)", schema)
         self.assertIn("positive_points Array(String)", schema)
@@ -8628,7 +8659,9 @@ class MarketDataHardeningContractTest(unittest.TestCase):
         self.assertIn("ORDER BY (symbol, locale, published_at, article_id)", schema)
         self.assertIn("CREATE TABLE IF NOT EXISTS market_data.news_company_daily_summaries", schema)
         self.assertIn("article_ids_hash String", schema)
-        self.assertIn("TTL toDate(date) + INTERVAL 366 DAY DELETE", schema)
+        self.assertNotIn("TTL toDate(date)", schema)
+        # 틱 데이터는 보존 정책을 유지한다 — 뉴스만 영구 보존 대상이다.
+        self.assertIn("TTL toDateTime(event_time) + INTERVAL 21 DAY DELETE", schema)
 
     def test_storage_boundaries_skip_invalid_weekend_stock_candles(self):
         client = RecordingClickHouseClient()

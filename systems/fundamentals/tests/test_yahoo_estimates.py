@@ -49,11 +49,11 @@ class FakeFrame:
 
 
 class YahooEstimatesTests(unittest.TestCase):
-    def test_analyst_summary_schema_has_one_day_ttl_and_no_raw_payload(self):
+    def test_analyst_summary_schema_has_no_ttl_and_no_raw_payload(self):
         ddl = CLICKHOUSE_TABLES["yahoo_analyst_summaries"]
 
         self.assertIn("ORDER BY symbol", ddl)
-        self.assertIn("TTL toDateTime(collected_at) + INTERVAL 1 DAY DELETE", ddl)
+        self.assertNotIn("TTL", ddl)
         self.assertIn("replay_statement String DEFAULT ''", ddl)
         self.assertIn("replay_cutoff Nullable(DateTime64(3, 'UTC'))", ddl)
         self.assertNotIn("raw String", ddl)

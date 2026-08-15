@@ -231,8 +231,7 @@ CREATE TABLE IF NOT EXISTS market_data.news_articles
 )
 ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(published_at)
-ORDER BY (symbol, published_at, article_id)
-TTL toDateTime(published_at) + INTERVAL 30 DAY DELETE;
+ORDER BY (symbol, published_at, article_id);
 
 CREATE TABLE IF NOT EXISTS market_data.news_article_localizations
 (
@@ -266,8 +265,7 @@ CREATE TABLE IF NOT EXISTS market_data.news_article_localizations
 )
 ENGINE = ReplacingMergeTree(localized_at)
 PARTITION BY toYYYYMM(published_at)
-ORDER BY (symbol, locale, published_at, article_id)
-TTL toDateTime(published_at) + INTERVAL 30 DAY DELETE;
+ORDER BY (symbol, locale, published_at, article_id);
 
 CREATE TABLE IF NOT EXISTS market_data.news_company_daily_summaries
 (
@@ -293,8 +291,7 @@ CREATE TABLE IF NOT EXISTS market_data.news_company_daily_summaries
 )
 ENGINE = ReplacingMergeTree(generated_at)
 PARTITION BY toYYYYMM(date)
-ORDER BY (symbol, locale, date, version)
-TTL toDate(date) + INTERVAL 366 DAY DELETE;
+ORDER BY (symbol, locale, date, version);
 
 CREATE TABLE IF NOT EXISTS market_data.load_audit
 (

@@ -6,11 +6,14 @@ from market_data.common.redis_keys import RedisKeyBuilder
 from market_data.news.relevance import classify_subject_relevance, is_direct_subject, normalize_subject_level
 from market_data.storage.news_daily_summary import daily_summary_cache_item
 
-DEFAULT_NEWS_TTL_SECONDS = 2592000
-DEFAULT_NEWS_MAX_ITEMS = 1000
-DEFAULT_NEWS_RETENTION_DAYS = 30
-DEFAULT_DAILY_TTL_SECONDS = 2592000
-DEFAULT_DAILY_COVERAGE_TTL_SECONDS = 2592000
+# 뉴스 캐시는 영구 보존한다. 세 값 모두 0 = 무제한이며, 하나라도 양수면 그 경로로 데이터가 사라진다.
+# TTL은 키 만료, RETENTION_DAYS는 오래된 member 삭제, MAX_ITEMS는 개수 상한 초과분 삭제.
+DEFAULT_NEWS_TTL_SECONDS = 0
+DEFAULT_NEWS_MAX_ITEMS = 0
+DEFAULT_NEWS_RETENTION_DAYS = 0
+DEFAULT_DAILY_TTL_SECONDS = 0
+DEFAULT_DAILY_COVERAGE_TTL_SECONDS = 0
+DEFAULT_DAILY_MAX_ITEMS = 0
 
 
 def write_localized_news_to_redis(
@@ -88,7 +91,7 @@ def read_localized_topic_news_from_redis(redis_client, topic, *, limit=10, local
     return rows
 
 
-def write_company_daily_summary_to_redis(redis_client, record, *, ttl_seconds=DEFAULT_DAILY_TTL_SECONDS, max_items=30, locale="ko-KR"):
+def write_company_daily_summary_to_redis(redis_client, record, *, ttl_seconds=DEFAULT_DAILY_TTL_SECONDS, max_items=DEFAULT_DAILY_MAX_ITEMS, locale="ko-KR"):
     if redis_client is None or not record:
         return
     item = daily_summary_cache_item(record)
@@ -112,15 +115,19 @@ def write_company_daily_summaries_to_redis(
     limit=30,
     ttl_seconds=None,
     coverage_ttl_seconds=None,
+    max_items=None,
     locale="ko-KR",
 ):
     if redis_client is None:
         return []
     ttl = int(ttl_seconds if ttl_seconds is not None else os.getenv("NEWS_DAILY_REDIS_TTL_SECONDS", str(DEFAULT_DAILY_TTL_SECONDS)))
-    max_items = max(1, int(limit))
+    # limit은 "이번에 몇 건을 warm할지"이고 coverage 판정에도 쓰인다. cap은 zset에 남길 상한(0 = 무제한)으로,
+    # 둘을 묶어두면 limit=30 때문에 오래된 일별 요약이 잘려나가므로 분리한다.
+    cap = int(max_items if max_items is not None else os.getenv("NEWS_DAILY_REDIS_MAX_ITEMS", str(DEFAULT_DAILY_MAX_ITEMS)))
+    warm_count = max(1, int(limit))
     normalized_rows = dedupe_daily_summary_rows([row for row in rows or [] if isinstance(row, dict)])
-    for row in normalized_rows[:max_items]:
-        write_company_daily_summary_to_redis(redis_client, row, ttl_seconds=ttl, max_items=max_items, locale=locale)
+    for row in normalized_rows[:warm_count]:
+        write_company_daily_summary_to_redis(redis_client, row, ttl_seconds=ttl, max_items=cap, locale=locale)
     write_company_daily_summary_coverage_to_redis(
         redis_client,
         symbol=symbol,
@@ -130,7 +137,7 @@ def write_company_daily_summaries_to_redis(
         ttl_seconds=coverage_ttl_seconds,
         locale=locale,
     )
-    return normalized_rows[:max_items]
+    return normalized_rows[:warm_count]
 
 
 def read_company_daily_summaries_from_redis(redis_client, symbol, *, limit=5, locale="ko-KR"):
@@ -267,10 +274,11 @@ def write_news_cache_member(redis_client, key, encoded, score, ttl_seconds, max_
     if retention_days is not None and int(retention_days) > 0:
         cutoff = datetime.now(timezone.utc).timestamp() - int(retention_days) * 86400
         redis_zremrangebyscore(redis_client, key, float("-inf"), cutoff)
-    limit = max(1, int(max_items))
-    members = redis_client.zrange(key, 0, -1)
-    if len(members) > limit:
-        redis_client.zremrangebyrank(key, 0, len(members) - limit - 1)
+    limit = int(max_items)
+    if limit > 0:
+        members = redis_client.zrange(key, 0, -1)
+        if len(members) > limit:
+            redis_client.zremrangebyrank(key, 0, len(members) - limit - 1)
     if ttl_seconds > 0:
         redis_client.expire(key, int(ttl_seconds))
 

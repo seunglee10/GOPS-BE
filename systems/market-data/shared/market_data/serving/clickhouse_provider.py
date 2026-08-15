@@ -1198,7 +1198,6 @@ class ClickHouseMarketDataProvider:
             ENGINE = ReplacingMergeTree(generated_at)
             PARTITION BY toYYYYMM(date)
             ORDER BY (symbol, locale, date, version)
-            TTL toDate(date) + INTERVAL 366 DAY DELETE
             """
         )
         self.execute(
