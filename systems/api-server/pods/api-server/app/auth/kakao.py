@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
 from app.auth.config import AuthConfig
 from app.auth.models import AuthenticatedUser
+from app.auth.tokens import ProviderTokens
 
 
 KAKAO_AUTHORIZATION_ENDPOINT = "https://kauth.kakao.com/oauth/authorize"
@@ -13,16 +15,25 @@ KAKAO_TOKEN_ENDPOINT = "https://kauth.kakao.com/oauth/token"
 KAKAO_USERINFO_ENDPOINT = "https://kapi.kakao.com/v2/user/me"
 
 
+@dataclass(frozen=True)
+class KakaoOAuthResult:
+    user: AuthenticatedUser
+    tokens: ProviderTokens
+
+
 class KakaoOAuthClient:
     def __init__(self, config: AuthConfig) -> None:
         self.config = config
 
-    def exchange_code(self, *, code: str, redirect_uri: str) -> AuthenticatedUser:
+    def exchange_code(self, *, code: str, redirect_uri: str) -> KakaoOAuthResult:
         self.config.require_kakao_settings()
         token_payload = self._request_token(code, redirect_uri)
         access_token = _required_string(token_payload, "access_token")
         profile = self._request_userinfo(access_token)
-        return AuthenticatedUser.from_kakao_profile(profile)
+        return KakaoOAuthResult(
+            user=AuthenticatedUser.from_kakao_profile(profile),
+            tokens=ProviderTokens.from_token_response(token_payload),
+        )
 
     def _request_token(self, code: str, redirect_uri: str) -> dict[str, Any]:
         data = {

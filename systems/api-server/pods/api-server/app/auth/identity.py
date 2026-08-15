@@ -61,13 +61,13 @@ def identity_resolver_from_app(app: Any) -> IdentityResolver:
     existing = getattr(app.state, "user_identity_resolver", None)
     if existing is not None:
         return existing
-    conninfo = _database_conninfo()
+    conninfo = database_conninfo()
     resolver: IdentityResolver = PostgresIdentityResolver(conninfo) if conninfo else DeterministicIdentityResolver()
     app.state.user_identity_resolver = resolver
     return resolver
 
 
-def _database_conninfo() -> str | None:
+def database_conninfo() -> str | None:
     if value := os.getenv("DATABASE_URL"):
         return value
     required = ("DATABASE_HOST", "DATABASE_NAME", "DATABASE_USER", "DATABASE_PASSWORD")

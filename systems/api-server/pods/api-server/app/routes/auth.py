@@ -13,6 +13,7 @@ from app.auth.google import GOOGLE_AUTHORIZATION_ENDPOINT, GoogleOAuthClient, Go
 from app.auth.kakao import KAKAO_AUTHORIZATION_ENDPOINT, KakaoOAuthClient, KakaoOAuthError
 from app.auth.models import AuthUserError
 from app.auth.session_store import SessionStoreError, session_store_from_app
+from app.auth.tokens import TokenStoreError, token_store_from_app
 
 
 router = APIRouter(tags=["auth"])
@@ -166,15 +167,21 @@ def kakao_oauth_callback(
         state_record = store.pop_oauth_state(state)
         if not state_record:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kakao OAuth state expired")
-        user = kakao_oauth_client_from_app(request.app, config).exchange_code(
+        result = kakao_oauth_client_from_app(request.app, config).exchange_code(
             code=code,
             redirect_uri=config.callback_url(request, "kakao"),
         )
-        user = identity_resolver_from_app(request.app).resolve(user, provider="kakao")
+        user = identity_resolver_from_app(request.app).resolve(result.user, provider="kakao")
+        # identity 행이 만들어진 뒤에 저장한다. 토큰 테이블이 그 행을 참조한다.
+        token_store_from_app(request.app).save(
+            provider="kakao",
+            provider_subject=user.sub,
+            tokens=result.tokens,
+        )
         session_id = store.create_session(user)
     except HTTPException:
         raise
-    except (AuthConfigError, IdentityStoreError, SessionStoreError) as exc:
+    except (AuthConfigError, IdentityStoreError, SessionStoreError, TokenStoreError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except (AuthUserError, KakaoOAuthError) as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc

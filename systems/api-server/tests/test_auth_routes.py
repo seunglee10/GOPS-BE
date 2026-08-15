@@ -28,7 +28,9 @@ sys.modules.setdefault(
 from app.auth.config import AuthConfig, _load_auth_secret_values
 from app.auth.dependencies import optional_current_user
 from app.auth.identity import DeterministicIdentityResolver, deterministic_app_user_id
+from app.auth.kakao import KakaoOAuthResult
 from app.auth.models import AuthenticatedUser, AuthUserError
+from app.auth.tokens import ProviderTokens
 from app.auth.session_store import MemorySessionStore
 from kis_trader.persistence.user_context import bind_app_user_id, current_app_user_id
 
@@ -59,16 +61,33 @@ class FakeGoogleOAuthClient:
 
 
 class FakeKakaoOAuthClient:
-    def exchange_code(self, *, code: str, redirect_uri: str) -> AuthenticatedUser:
+    def exchange_code(self, *, code: str, redirect_uri: str) -> KakaoOAuthResult:
         if code != "ok-code":
             raise RuntimeError("unexpected code")
-        return AuthenticatedUser(
-            sub="1234567890",
-            email=None,
-            email_verified=False,
-            name="테스트유저",
-            provider="kakao",
+        return KakaoOAuthResult(
+            user=AuthenticatedUser(
+                sub="1234567890",
+                email=None,
+                email_verified=False,
+                name="테스트유저",
+                provider="kakao",
+            ),
+            tokens=ProviderTokens(
+                access_token="kakao-access-token",
+                refresh_token="kakao-refresh-token",
+                access_expires_in=21599,
+                refresh_expires_in=5183999,
+                scope="profile_image profile_nickname",
+            ),
         )
+
+
+class RecordingTokenStore:
+    def __init__(self) -> None:
+        self.saved: list[tuple[str, str, ProviderTokens]] = []
+
+    def save(self, *, provider: str, provider_subject: str, tokens: ProviderTokens) -> None:
+        self.saved.append((provider, provider_subject, tokens))
 
 
 class AuthConfigSecretManagerTest(unittest.TestCase):
@@ -217,6 +236,8 @@ class AuthRoutesTest(unittest.TestCase):
         self.app.state.user_identity_resolver = DeterministicIdentityResolver()
         self.app.state.google_oauth_client = FakeGoogleOAuthClient()
         self.app.state.kakao_oauth_client = FakeKakaoOAuthClient()
+        self.token_store = RecordingTokenStore()
+        self.app.state.provider_token_store = self.token_store
         self.app.state.order_repository = InMemoryOrderRepository()
         self.client = TestClient(self.app)
 
@@ -270,6 +291,37 @@ class AuthRoutesTest(unittest.TestCase):
         self.assertIsNone(me.json()["user"]["email"])
         self.assertEqual(me.json()["user"]["name"], "테스트유저")
         self.assertEqual(me.json()["user"]["provider"], "kakao")
+
+    def test_kakao_login_stores_provider_tokens(self):
+        login = self.client.get("/api/auth/kakao/login", follow_redirects=False)
+        state = parse_qs(urlparse(login.headers["location"]).query)["state"][0]
+
+        self.client.get(f"/api/auth/kakao/callback?code=ok-code&state={state}", follow_redirects=False)
+
+        self.assertEqual(len(self.token_store.saved), 1)
+        provider, subject, tokens = self.token_store.saved[0]
+        self.assertEqual(provider, "kakao")
+        self.assertEqual(subject, "1234567890")
+        self.assertEqual(tokens.refresh_token, "kakao-refresh-token")
+        self.assertEqual(tokens.refresh_expires_in, 5183999)
+
+    def test_provider_tokens_never_appear_in_the_session_payload(self):
+        login = self.client.get("/api/auth/kakao/login", follow_redirects=False)
+        state = parse_qs(urlparse(login.headers["location"]).query)["state"][0]
+        self.client.get(f"/api/auth/kakao/callback?code=ok-code&state={state}", follow_redirects=False)
+
+        me = self.client.get("/api/auth/me")
+
+        self.assertNotIn("kakao-refresh-token", me.text)
+        self.assertNotIn("kakao-access-token", me.text)
+
+    def test_provider_tokens_are_masked_in_repr(self):
+        tokens = ProviderTokens(access_token="secret-access", refresh_token="secret-refresh")
+
+        rendered = repr(tokens)
+
+        self.assertNotIn("secret-access", rendered)
+        self.assertNotIn("secret-refresh", rendered)
 
     def test_kakao_callback_rejects_state_from_another_browser(self):
         self.client.get("/api/auth/kakao/login", follow_redirects=False)
