@@ -49,7 +49,9 @@ def simulator_operator_allowed(user: AuthenticatedUser | None) -> bool:
         for email in os.getenv("SIMULATOR_OPERATOR_EMAILS", "").split(",")
         if email.strip()
     }
-    return user.email.strip().casefold() in allowed_emails
+    # 카카오처럼 이메일을 주지 않는 제공자가 있어 email 은 None 일 수 있다.
+    email = (user.email or "").strip().casefold()
+    return bool(email) and email in allowed_emails
 
 
 def _local_simulator_control_enabled() -> bool:

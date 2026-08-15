@@ -99,7 +99,8 @@ async def create_order(
     if auth_is_enabled():
         payload = {
             **payload,
-            "actor_id": current_user.email,
+            # 이메일이 없는 제공자(카카오)도 있으므로 감사 기록이 비지 않게 sub 로 떨어진다.
+            "actor_id": current_user.email or current_user.sub,
             "role": payload.get("role") or "trader",
         }
     simulator_mode = simulator_mode_active(request.app)
