@@ -6,7 +6,7 @@ presets locally on the client.
 """
 
 import os
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -39,7 +39,6 @@ class LayoutPresetBody(BaseModel):
     id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=120)
     layout: dict[str, Any] = Field(default_factory=dict)
-    role: Literal["incident-response"] | None = None
 
 
 class LayoutPresetsRequestBody(BaseModel):
@@ -76,10 +75,7 @@ def _repository_from_app(app: Any):
 
 
 def _serialize(preset: LayoutPresetBody) -> dict[str, Any]:
-    serialized = {"id": preset.id, "name": preset.name, "layout": preset.layout}
-    if preset.role is not None:
-        serialized["role"] = preset.role
-    return serialized
+    return {"id": preset.id, "name": preset.name, "layout": preset.layout}
 
 
 @router.get("/api/charts/presets")
