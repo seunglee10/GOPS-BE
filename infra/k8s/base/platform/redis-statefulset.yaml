@@ -44,8 +44,11 @@ spec:
             - ""
             - --dir
             - /data
+            # 뉴스 키는 TTL 없이 영구 보존하므로 계속 자란다. volatile-lru는 만료가 걸린 키(차트·세션·
+            # 히트맵 등 캐시)만 축출하므로 뉴스는 보호되고, 메모리 압박은 휘발성 캐시가 먼저 흡수한다.
+            # 정책을 noeviction으로 바꾸면 한계 도달 시 모든 쓰기가 OOM으로 실패하니 바꾸지 않는다.
             - --maxmemory
-            - 3gb
+            - 6gb
             - --maxmemory-policy
             - volatile-lru
           ports:
@@ -84,10 +87,10 @@ spec:
           resources:
             requests:
               cpu: 300m
-              memory: 3Gi
+              memory: 6Gi
             limits:
               cpu: "1"
-              memory: 4Gi
+              memory: 8Gi
   volumeClaimTemplates:
     - metadata:
         name: redis-data
