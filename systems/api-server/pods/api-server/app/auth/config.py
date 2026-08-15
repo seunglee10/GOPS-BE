@@ -37,6 +37,8 @@ class AuthConfig:
     redis_key_prefix: str
     cookie_samesite: str
     cookie_secure_override: bool | None
+    kakao_client_id: str | None = None
+    kakao_client_secret: str | None = None
     secret_error: str | None = None
 
     @classmethod
@@ -45,6 +47,9 @@ class AuthConfig:
         secure_env = os.getenv("AUTH_COOKIE_SECURE")
         google_client_id = _clean_optional(os.getenv("GOOGLE_OAUTH_CLIENT_ID"))
         google_client_secret = _clean_optional(os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"))
+        kakao_client_id = _clean_optional(os.getenv("KAKAO_OAUTH_CLIENT_ID"))
+        kakao_client_secret = _clean_optional(os.getenv("KAKAO_OAUTH_CLIENT_SECRET"))
+
         session_secret = _clean_optional(os.getenv("AUTH_SESSION_SECRET"))
         secret_error = None
 
@@ -88,7 +93,10 @@ class AuthConfig:
             redis_key_prefix=os.getenv("AUTH_REDIS_KEY_PREFIX", "gops:auth").strip().strip(":") or "gops:auth",
             cookie_samesite=os.getenv("AUTH_COOKIE_SAMESITE", "lax").strip().lower() or "lax",
             cookie_secure_override=None if secure_env is None else read_bool("AUTH_COOKIE_SECURE", False),
+            kakao_client_id=kakao_client_id,
+            kakao_client_secret=kakao_client_secret,
             secret_error=secret_error,
+
         )
 
     def require_oauth_settings(self) -> None:
@@ -112,10 +120,11 @@ class AuthConfig:
                 raise AuthConfigError(f"{self.secret_error}; missing auth settings: AUTH_SESSION_SECRET")
             raise AuthConfigError("Missing auth settings: AUTH_SESSION_SECRET")
 
-    def callback_url(self, request: Any) -> str:
+    def callback_url(self, request: Any, provider: str = "google") -> str:
         if self.public_base_url:
-            return f"{self.public_base_url.rstrip('/')}/api/auth/google/callback"
-        return str(request.url_for("google_oauth_callback"))
+            return f"{self.public_base_url.rstrip('/')}/api/auth/{provider}/callback"
+        return str(request.url_for(f"{provider}_oauth_callback"))
+
 
     def cookie_secure(self, request: Any | None = None) -> bool:
         if self.cookie_secure_override is not None:
@@ -123,6 +132,18 @@ class AuthConfig:
         if self.public_base_url:
             return self.public_base_url.startswith("https://")
         return bool(request and getattr(request.url, "scheme", "") == "https")
+
+    def require_kakao_settings(self) -> None:
+        missing = [
+            name
+            for name, value in (
+                ("KAKAO_OAUTH_CLIENT_ID", self.kakao_client_id),
+                ("AUTH_SESSION_SECRET", self.session_secret),
+            )
+            if not value
+        ]
+        if missing:
+            raise AuthConfigError(f"Missing auth settings: {', '.join(missing)}")
 
 
 class AuthConfigError(RuntimeError):

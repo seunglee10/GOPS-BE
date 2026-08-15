@@ -58,6 +58,19 @@ class FakeGoogleOAuthClient:
         )
 
 
+class FakeKakaoOAuthClient:
+    def exchange_code(self, *, code: str, redirect_uri: str) -> AuthenticatedUser:
+        if code != "ok-code":
+            raise RuntimeError("unexpected code")
+        return AuthenticatedUser(
+            sub="1234567890",
+            email=None,
+            email_verified=False,
+            name="테스트유저",
+            provider="kakao",
+        )
+
+
 class AuthConfigSecretManagerTest(unittest.TestCase):
     ENV_KEYS = (
         "AUTH_ENABLED",
@@ -191,6 +204,8 @@ class AuthRoutesTest(unittest.TestCase):
         os.environ["AUTH_SESSION_SECRET"] = "test-session-secret"
         os.environ["GOOGLE_OAUTH_CLIENT_ID"] = "google-client-id"
         os.environ["GOOGLE_OAUTH_CLIENT_SECRET"] = "google-client-secret"
+        os.environ["KAKAO_OAUTH_CLIENT_ID"] = "kakao-client-id"
+        os.environ["KAKAO_OAUTH_CLIENT_SECRET"] = "kakao-client-secret"
         os.environ["KIS_ENV"] = "demo"
         os.environ["KAFKA_ACCOUNT_ALIAS"] = "demo-account"
         os.environ["IDEMPOTENCY_HASH_SECRET"] = "test-secret"
@@ -201,6 +216,7 @@ class AuthRoutesTest(unittest.TestCase):
         self.app.state.auth_session_store = self.store
         self.app.state.user_identity_resolver = DeterministicIdentityResolver()
         self.app.state.google_oauth_client = FakeGoogleOAuthClient()
+        self.app.state.kakao_oauth_client = FakeKakaoOAuthClient()
         self.app.state.order_repository = InMemoryOrderRepository()
         self.client = TestClient(self.app)
 
@@ -228,6 +244,39 @@ class AuthRoutesTest(unittest.TestCase):
         me = self.client.get("/api/auth/me")
         self.assertEqual(me.status_code, 200)
         self.assertEqual(me.json()["user"]["email"], "user@example.com")
+
+    def test_kakao_login_callback_creates_session_for_user_without_email(self):
+        login = self.client.get("/api/auth/kakao/login?returnTo=/workspace", follow_redirects=False)
+        self.assertEqual(login.status_code, 307)
+
+        location = urlparse(login.headers["location"])
+        self.assertEqual(location.netloc, "kauth.kakao.com")
+        self.assertEqual(location.path, "/oauth/authorize")
+
+        query = parse_qs(location.query)
+        self.assertEqual(query["client_id"][0], "kakao-client-id")
+        self.assertEqual(query["redirect_uri"][0], "http://testserver/api/auth/kakao/callback")
+        self.assertNotIn("account_email", query["scope"][0])
+        state = query["state"][0]
+        self.assertEqual(login.cookies.get(self.config.oauth_state_cookie_name), state)
+
+        callback = self.client.get(f"/api/auth/kakao/callback?code=ok-code&state={state}", follow_redirects=False)
+        self.assertEqual(callback.status_code, 307)
+        self.assertEqual(callback.headers["location"], "/workspace")
+        self.assertTrue(callback.cookies.get(self.config.session_cookie_name))
+
+        me = self.client.get("/api/auth/me")
+        self.assertEqual(me.status_code, 200)
+        self.assertIsNone(me.json()["user"]["email"])
+        self.assertEqual(me.json()["user"]["name"], "테스트유저")
+        self.assertEqual(me.json()["user"]["provider"], "kakao")
+
+    def test_kakao_callback_rejects_state_from_another_browser(self):
+        self.client.get("/api/auth/kakao/login", follow_redirects=False)
+
+        callback = self.client.get("/api/auth/kakao/callback?code=ok-code&state=forged", follow_redirects=False)
+
+        self.assertEqual(callback.status_code, 400)
 
     def test_protected_order_route_requires_session(self):
         response = self.client.post("/api/orders", json=sample_order_request(), headers={"Idempotency-Key": "idem-1"})
