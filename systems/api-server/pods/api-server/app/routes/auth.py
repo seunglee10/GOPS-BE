@@ -105,6 +105,7 @@ def google_oauth_callback(
     response.delete_cookie(config.oauth_state_cookie_name, path="/")
     return response
 
+
 # 카카오 로그인 버튼 눌렀을 때 카카오 로그인 화면으로 보내는 api
 @router.get("/api/auth/kakao/login")
 def kakao_oauth_login(request: Request, return_to: str = Query(default="/", alias="returnTo")) -> Response:
@@ -118,17 +119,17 @@ def kakao_oauth_login(request: Request, return_to: str = Query(default="/", alia
         store = session_store_from_app(request.app, config)
         state = store.create_oauth_state(safe_return_to)
     except (AuthConfigError, SessionStoreError) as exc:
-        raise HTTPException(status_code = status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
     params = urlencode(
-            {
-                "client_id": config.kakao_client_id,
-                "redirect_uri": config.callback_url(request, "kakao"),
-                "response_type": "code",
-                "state": state,
-                "scope": "profile_nickname,profile_image",
-            }
-        )
+        {
+            "client_id": config.kakao_client_id,
+            "redirect_uri": config.callback_url(request, "kakao"),
+            "response_type": "code",
+            "state": state,
+            "scope": "profile_nickname,profile_image",
+        }
+    )
     response = RedirectResponse(f"{KAKAO_AUTHORIZATION_ENDPOINT}?{params}")
     response.set_cookie(
         config.oauth_state_cookie_name,
@@ -140,6 +141,7 @@ def kakao_oauth_login(request: Request, return_to: str = Query(default="/", alia
         path="/",
     )
     return response
+
 
 # 카카오 로그인 후 내 서비스로 돌아왔을 때 실행되는 callback api
 @router.get("/api/auth/kakao/callback", name="kakao_oauth_callback")
@@ -189,7 +191,6 @@ def kakao_oauth_callback(
     )
     response.delete_cookie(config.oauth_state_cookie_name, path="/")
     return response
-
 
 
 @router.get("/api/auth/me")
