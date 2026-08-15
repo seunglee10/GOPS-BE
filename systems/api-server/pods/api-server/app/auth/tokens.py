@@ -52,6 +52,8 @@ class TokenStoreError(RuntimeError):
 
 class TokenStore(Protocol):
     def save(self, *, provider: str, provider_subject: str, tokens: ProviderTokens) -> None: ...
+    def load_access_token(self, *, provider: str, provider_subject: str) -> str | None: ...
+    def delete(self, *, provider: str, provider_subject: str) -> None: ...
 
 
 class NullTokenStore:
@@ -59,6 +61,13 @@ class NullTokenStore:
 
     def save(self, *, provider: str, provider_subject: str, tokens: ProviderTokens) -> None:
         del provider, provider_subject, tokens
+
+    def load_access_token(self, *, provider: str, provider_subject: str) -> str | None:
+        del provider, provider_subject
+        return None
+
+    def delete(self, *, provider: str, provider_subject: str) -> None:
+        del provider, provider_subject
 
 
 class PostgresTokenStore:
@@ -102,6 +111,31 @@ class PostgresTokenStore:
                         tokens.refresh_expires_in,
                         tokens.scope,
                     ),
+                )
+        except psycopg.Error as exc:
+            raise TokenStoreError("provider token storage is unavailable") from exc
+
+    def load_access_token(self, *, provider: str, provider_subject: str) -> str | None:
+        try:
+            with psycopg.connect(self.conninfo) as conn:
+                row = conn.execute(
+                    """
+                    SELECT access_token
+                    FROM user_identity_tokens
+                    WHERE provider = %s AND provider_subject = %s
+                    """,
+                    (provider, provider_subject),
+                ).fetchone()
+        except psycopg.Error as exc:
+            raise TokenStoreError("provider token storage is unavailable") from exc
+        return row[0] if row and row[0] else None
+
+    def delete(self, *, provider: str, provider_subject: str) -> None:
+        try:
+            with psycopg.connect(self.conninfo) as conn:
+                conn.execute(
+                    "DELETE FROM user_identity_tokens WHERE provider = %s AND provider_subject = %s",
+                    (provider, provider_subject),
                 )
         except psycopg.Error as exc:
             raise TokenStoreError("provider token storage is unavailable") from exc

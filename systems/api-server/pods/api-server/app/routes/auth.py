@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 
 from app.auth.config import AuthConfig, AuthConfigError
-from app.auth.dependencies import optional_current_user
+from app.auth.dependencies import optional_current_user, require_current_user
 from app.auth.identity import IdentityStoreError, identity_resolver_from_app
 from app.auth.google import GOOGLE_AUTHORIZATION_ENDPOINT, GoogleOAuthClient, GoogleOAuthError
 from app.auth.kakao import KAKAO_AUTHORIZATION_ENDPOINT, KakaoOAuthClient, KakaoOAuthError
@@ -219,6 +219,43 @@ def auth_logout(request: Request) -> Response:
             session_store_from_app(request.app, config).delete_session(session_id)
         except SessionStoreError as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    response.delete_cookie(config.session_cookie_name, path="/")
+    return response
+
+@router.post("/api/auth/kakao/unlink")
+async def kakao_oauth_unlink(request: Request) -> Response:
+    config = AuthConfig.from_env()
+    user = await require_current_user(request)
+    if user.provider != "kakao":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="현재 세션이 카카오 로그인이 아닙니다",
+        )
+
+    try:
+        token_store = token_store_from_app(request.app)
+        access_token = token_store.load_access_token(provider="kakao", provider_subject=user.sub)
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="저장된 카카오 액세스 토큰이 없습니다",
+            )
+
+        # 카카오 호출이 먼저다. 실패하면 우리 데이터를 남겨 재시도할 수 있게 한다.
+        kakao_oauth_client_from_app(request.app, config).unlink(access_token)
+        token_store.delete(provider="kakao", provider_subject=user.sub)
+
+        session_id = request.cookies.get(config.session_cookie_name)
+        if session_id:
+            session_store_from_app(request.app, config).delete_session(session_id)
+    except HTTPException:
+        raise
+    except (AuthConfigError, SessionStoreError, TokenStoreError) as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except KakaoOAuthError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     response.delete_cookie(config.session_cookie_name, path="/")
     return response

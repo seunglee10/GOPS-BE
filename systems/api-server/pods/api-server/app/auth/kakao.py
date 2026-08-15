@@ -13,6 +13,8 @@ from app.auth.tokens import ProviderTokens
 KAKAO_AUTHORIZATION_ENDPOINT = "https://kauth.kakao.com/oauth/authorize"
 KAKAO_TOKEN_ENDPOINT = "https://kauth.kakao.com/oauth/token"
 KAKAO_USERINFO_ENDPOINT = "https://kapi.kakao.com/v2/user/me"
+KAKAO_UNLINK_ENDPOINT = "https://kapi.kakao.com/v1/user/unlink"
+
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,19 @@ class KakaoOAuthClient:
         if not isinstance(payload, dict):
             raise KakaoOAuthError("Kakao user lookup returned an invalid payload")
         return payload
+
+    def unlink(self, access_token: str) -> str:
+        with httpx.Client(timeout=10) as client:
+            response = client.post(
+                KAKAO_UNLINK_ENDPOINT,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        if response.status_code >= 400:
+            raise KakaoOAuthError(f"Kakao unlink failed: HTTP {response.status_code}")
+        payload = response.json()
+        if not isinstance(payload, dict) or payload.get("id") is None:
+            raise KakaoOAuthError("Kakao unlink returned an invalid payload")
+        return str(payload["id"])
 
 
 class KakaoOAuthError(RuntimeError):
