@@ -28,7 +28,7 @@ sys.modules.setdefault(
 from app.auth.config import AuthConfig, _load_auth_secret_values
 from app.auth.dependencies import optional_current_user
 from app.auth.identity import DeterministicIdentityResolver, deterministic_app_user_id
-from app.auth.models import AuthenticatedUser
+from app.auth.models import AuthenticatedUser, AuthUserError
 from app.auth.session_store import MemorySessionStore
 from kis_trader.persistence.user_context import bind_app_user_id, current_app_user_id
 
@@ -300,6 +300,87 @@ class AuthRoutesTest(unittest.TestCase):
 
         self.assertEqual(message["type"], "error")
         self.assertEqual(message["detail"], "authentication required")
+
+
+KAKAO_ME_WITHOUT_EMAIL = {
+    "id": 1234567890,
+    "connected_at": "2026-08-15T04:12:33Z",
+    "properties": {"nickname": "레거시닉네임"},
+    "kakao_account": {
+        "profile_nickname_needs_agreement": False,
+        "profile_image_needs_agreement": False,
+        "profile": {
+            "nickname": "테스트유저",
+            "thumbnail_image_url": "https://example.test/thumb.jpg",
+            "profile_image_url": "https://example.test/profile.jpg",
+            "is_default_image": False,
+        },
+    },
+}
+
+
+class KakaoProfileParsingTest(unittest.TestCase):
+    def test_numeric_id_becomes_a_string_subject(self):
+        user = AuthenticatedUser.from_kakao_profile(KAKAO_ME_WITHOUT_EMAIL)
+
+        self.assertEqual(user.sub, "1234567890")
+        self.assertIsInstance(user.sub, str)
+        self.assertEqual(user.provider, "kakao")
+
+    def test_missing_email_is_accepted_and_never_counts_as_verified(self):
+        user = AuthenticatedUser.from_kakao_profile(KAKAO_ME_WITHOUT_EMAIL)
+
+        self.assertIsNone(user.email)
+        self.assertFalse(user.email_verified)
+        self.assertEqual(user.name, "테스트유저")
+        self.assertEqual(user.picture, "https://example.test/profile.jpg")
+
+    def test_email_counts_as_verified_only_when_kakao_confirms_both_flags(self):
+        payload = json.loads(json.dumps(KAKAO_ME_WITHOUT_EMAIL))
+        payload["kakao_account"].update({
+            "email": "user@kakao.test",
+            "is_email_valid": True,
+            "is_email_verified": True,
+        })
+
+        user = AuthenticatedUser.from_kakao_profile(payload)
+
+        self.assertEqual(user.email, "user@kakao.test")
+        self.assertTrue(user.email_verified)
+
+    def test_unverified_email_is_kept_but_not_trusted(self):
+        payload = json.loads(json.dumps(KAKAO_ME_WITHOUT_EMAIL))
+        payload["kakao_account"].update({
+            "email": "user@kakao.test",
+            "is_email_valid": True,
+            "is_email_verified": False,
+        })
+
+        user = AuthenticatedUser.from_kakao_profile(payload)
+
+        self.assertEqual(user.email, "user@kakao.test")
+        self.assertFalse(user.email_verified)
+
+    def test_missing_id_is_rejected(self):
+        with self.assertRaises(AuthUserError):
+            AuthenticatedUser.from_kakao_profile({"kakao_account": {}})
+
+    def test_provider_survives_a_session_round_trip(self):
+        user = AuthenticatedUser.from_kakao_profile(KAKAO_ME_WITHOUT_EMAIL)
+
+        restored = AuthenticatedUser.from_session(user.to_session())
+
+        self.assertEqual(restored.provider, "kakao")
+        self.assertIsNone(restored.email)
+
+    def test_legacy_session_without_provider_defaults_to_google(self):
+        restored = AuthenticatedUser.from_session({
+            "sub": "google-sub-1",
+            "email": "user@example.com",
+            "email_verified": True,
+        })
+
+        self.assertEqual(restored.provider, "google")
 
 
 if __name__ == "__main__":
