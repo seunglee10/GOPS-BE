@@ -735,7 +735,6 @@ class ClickHouseHttpClient:
             ENGINE = ReplacingMergeTree(inserted_at)
             PARTITION BY toYYYYMM(published_at)
             ORDER BY (symbol, published_at, article_id)
-            TTL toDateTime(published_at) + INTERVAL 30 DAY DELETE
             """
         )
         self.execute(
@@ -773,7 +772,6 @@ class ClickHouseHttpClient:
             ENGINE = ReplacingMergeTree(localized_at)
             PARTITION BY toYYYYMM(published_at)
             ORDER BY (symbol, locale, published_at, article_id)
-            TTL toDateTime(published_at) + INTERVAL 30 DAY DELETE
             """
         )
         self.execute(
@@ -803,7 +801,6 @@ class ClickHouseHttpClient:
             ENGINE = ReplacingMergeTree(generated_at)
             PARTITION BY toYYYYMM(date)
             ORDER BY (symbol, locale, date, version)
-            TTL toDate(date) + INTERVAL 366 DAY DELETE
             """
         )
         self.execute(

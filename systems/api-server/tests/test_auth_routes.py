@@ -28,7 +28,9 @@ sys.modules.setdefault(
 from app.auth.config import AuthConfig, _load_auth_secret_values
 from app.auth.dependencies import optional_current_user
 from app.auth.identity import DeterministicIdentityResolver, deterministic_app_user_id
-from app.auth.models import AuthenticatedUser
+from app.auth.kakao import KakaoOAuthError, KakaoOAuthResult
+from app.auth.models import AuthenticatedUser, AuthUserError
+from app.auth.tokens import ProviderTokens
 from app.auth.session_store import MemorySessionStore
 from kis_trader.persistence.user_context import bind_app_user_id, current_app_user_id
 
@@ -56,6 +58,57 @@ class FakeGoogleOAuthClient:
             email_verified=True,
             name="Example User",
         )
+
+
+class FakeKakaoOAuthClient:
+    def __init__(self) -> None:
+        self.unlinked: list[str] = []
+        self.unlink_error: Exception | None = None
+
+    def unlink(self, access_token: str) -> str:
+        if self.unlink_error is not None:
+            raise self.unlink_error
+        self.unlinked.append(access_token)
+        return "1234567890"
+
+    def exchange_code(self, *, code: str, redirect_uri: str) -> KakaoOAuthResult:
+        if code != "ok-code":
+            raise RuntimeError("unexpected code")
+        return KakaoOAuthResult(
+            user=AuthenticatedUser(
+                sub="1234567890",
+                email=None,
+                email_verified=False,
+                name="테스트유저",
+                provider="kakao",
+            ),
+            tokens=ProviderTokens(
+                access_token="kakao-access-token",
+                refresh_token="kakao-refresh-token",
+                access_expires_in=21599,
+                refresh_expires_in=5183999,
+                scope="profile_image profile_nickname",
+            ),
+        )
+
+
+class RecordingTokenStore:
+    """실제 DB 대신 메모리 dict 를 쓰는 토큰 저장소."""
+
+    def __init__(self) -> None:
+        self.saved: list[tuple[str, str, ProviderTokens]] = []
+        self.rows: dict[tuple[str, str], ProviderTokens] = {}
+
+    def save(self, *, provider: str, provider_subject: str, tokens: ProviderTokens) -> None:
+        self.saved.append((provider, provider_subject, tokens))
+        self.rows[(provider, provider_subject)] = tokens
+
+    def load_access_token(self, *, provider: str, provider_subject: str) -> str | None:
+        stored = self.rows.get((provider, provider_subject))
+        return stored.access_token if stored else None
+
+    def delete(self, *, provider: str, provider_subject: str) -> None:
+        self.rows.pop((provider, provider_subject), None)
 
 
 class AuthConfigSecretManagerTest(unittest.TestCase):
@@ -191,6 +244,8 @@ class AuthRoutesTest(unittest.TestCase):
         os.environ["AUTH_SESSION_SECRET"] = "test-session-secret"
         os.environ["GOOGLE_OAUTH_CLIENT_ID"] = "google-client-id"
         os.environ["GOOGLE_OAUTH_CLIENT_SECRET"] = "google-client-secret"
+        os.environ["KAKAO_OAUTH_CLIENT_ID"] = "kakao-client-id"
+        os.environ["KAKAO_OAUTH_CLIENT_SECRET"] = "kakao-client-secret"
         os.environ["KIS_ENV"] = "demo"
         os.environ["KAFKA_ACCOUNT_ALIAS"] = "demo-account"
         os.environ["IDEMPOTENCY_HASH_SECRET"] = "test-secret"
@@ -201,6 +256,10 @@ class AuthRoutesTest(unittest.TestCase):
         self.app.state.auth_session_store = self.store
         self.app.state.user_identity_resolver = DeterministicIdentityResolver()
         self.app.state.google_oauth_client = FakeGoogleOAuthClient()
+        self.kakao_client = FakeKakaoOAuthClient()
+        self.app.state.kakao_oauth_client = self.kakao_client
+        self.token_store = RecordingTokenStore()
+        self.app.state.provider_token_store = self.token_store
         self.app.state.order_repository = InMemoryOrderRepository()
         self.client = TestClient(self.app)
 
@@ -228,6 +287,142 @@ class AuthRoutesTest(unittest.TestCase):
         me = self.client.get("/api/auth/me")
         self.assertEqual(me.status_code, 200)
         self.assertEqual(me.json()["user"]["email"], "user@example.com")
+
+    def test_kakao_login_callback_creates_session_for_user_without_email(self):
+        login = self.client.get("/api/auth/kakao/login?returnTo=/workspace", follow_redirects=False)
+        self.assertEqual(login.status_code, 307)
+
+        location = urlparse(login.headers["location"])
+        self.assertEqual(location.netloc, "kauth.kakao.com")
+        self.assertEqual(location.path, "/oauth/authorize")
+
+        query = parse_qs(location.query)
+        self.assertEqual(query["client_id"][0], "kakao-client-id")
+        self.assertEqual(query["redirect_uri"][0], "http://testserver/api/auth/kakao/callback")
+        self.assertNotIn("account_email", query["scope"][0])
+        state = query["state"][0]
+        self.assertEqual(login.cookies.get(self.config.oauth_state_cookie_name), state)
+
+        callback = self.client.get(f"/api/auth/kakao/callback?code=ok-code&state={state}", follow_redirects=False)
+        self.assertEqual(callback.status_code, 307)
+        self.assertEqual(callback.headers["location"], "/workspace")
+        self.assertTrue(callback.cookies.get(self.config.session_cookie_name))
+
+        me = self.client.get("/api/auth/me")
+        self.assertEqual(me.status_code, 200)
+        self.assertIsNone(me.json()["user"]["email"])
+        self.assertEqual(me.json()["user"]["name"], "테스트유저")
+        self.assertEqual(me.json()["user"]["provider"], "kakao")
+
+    def test_kakao_login_stores_provider_tokens(self):
+        login = self.client.get("/api/auth/kakao/login", follow_redirects=False)
+        state = parse_qs(urlparse(login.headers["location"]).query)["state"][0]
+
+        self.client.get(f"/api/auth/kakao/callback?code=ok-code&state={state}", follow_redirects=False)
+
+        self.assertEqual(len(self.token_store.saved), 1)
+        provider, subject, tokens = self.token_store.saved[0]
+        self.assertEqual(provider, "kakao")
+        self.assertEqual(subject, "1234567890")
+        self.assertEqual(tokens.refresh_token, "kakao-refresh-token")
+        self.assertEqual(tokens.refresh_expires_in, 5183999)
+
+    def test_provider_tokens_never_appear_in_the_session_payload(self):
+        login = self.client.get("/api/auth/kakao/login", follow_redirects=False)
+        state = parse_qs(urlparse(login.headers["location"]).query)["state"][0]
+        self.client.get(f"/api/auth/kakao/callback?code=ok-code&state={state}", follow_redirects=False)
+
+        me = self.client.get("/api/auth/me")
+
+        self.assertNotIn("kakao-refresh-token", me.text)
+        self.assertNotIn("kakao-access-token", me.text)
+
+    def test_provider_tokens_are_masked_in_repr(self):
+        tokens = ProviderTokens(access_token="secret-access", refresh_token="secret-refresh")
+
+        rendered = repr(tokens)
+
+        self.assertNotIn("secret-access", rendered)
+        self.assertNotIn("secret-refresh", rendered)
+
+    def _login_with_kakao(self) -> None:
+        login = self.client.get("/api/auth/kakao/login", follow_redirects=False)
+        state = parse_qs(urlparse(login.headers["location"]).query)["state"][0]
+        self.client.get(f"/api/auth/kakao/callback?code=ok-code&state={state}", follow_redirects=False)
+
+    def test_kakao_unlink_requires_a_session(self):
+        response = self.client.post("/api/auth/kakao/unlink")
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_kakao_unlink_rejects_a_google_session(self):
+        self.client.cookies.set(
+            self.config.session_cookie_name,
+            self.store.create_session(AuthenticatedUser("google-sub-1", "user@example.com", True)),
+        )
+
+        response = self.client.post("/api/auth/kakao/unlink")
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_kakao_unlink_calls_kakao_then_clears_tokens_and_session(self):
+        self._login_with_kakao()
+
+        response = self.client.post("/api/auth/kakao/unlink")
+
+        self.assertEqual(response.status_code, 204)
+        # 저장해 둔 액세스 토큰으로 카카오를 호출했는가
+        self.assertEqual(self.kakao_client.unlinked, ["kakao-access-token"])
+        # 우리 쪽 흔적이 지워졌는가
+        self.assertIsNone(self.token_store.load_access_token(provider="kakao", provider_subject="1234567890"))
+        self.assertIsNone(self.client.get("/api/auth/me").json()["user"])
+
+    def test_kakao_unlink_keeps_local_state_when_kakao_call_fails(self):
+        self._login_with_kakao()
+        self.kakao_client.unlink_error = KakaoOAuthError("Kakao unlink failed: HTTP 500")
+
+        response = self.client.post("/api/auth/kakao/unlink")
+
+        self.assertEqual(response.status_code, 502)
+        # 카카오에는 연결이 남아 있으므로 토큰과 세션을 버리면 재시도할 수 없다.
+        self.assertEqual(
+            self.token_store.load_access_token(provider="kakao", provider_subject="1234567890"),
+            "kakao-access-token",
+        )
+        self.assertIsNotNone(self.client.get("/api/auth/me").json()["user"])
+
+    def test_kakao_unlink_reports_conflict_when_no_token_was_stored(self):
+        self.client.cookies.set(
+            self.config.session_cookie_name,
+            self.store.create_session(
+                AuthenticatedUser("1234567890", None, False, "테스트유저", None, None, "kakao")
+            ),
+        )
+
+        response = self.client.post("/api/auth/kakao/unlink")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.kakao_client.unlinked, [])
+
+    def test_email_less_session_does_not_break_email_allowlists(self):
+        os.environ["SIMULATOR_OPERATOR_EMAILS"] = "operator@example.com"
+        os.environ["MARKET_DATA_MONITOR_ADMIN_EMAILS"] = "operator@example.com"
+        self.addCleanup(os.environ.pop, "SIMULATOR_OPERATOR_EMAILS", None)
+        self.addCleanup(os.environ.pop, "MARKET_DATA_MONITOR_ADMIN_EMAILS", None)
+        self._login_with_kakao()
+
+        response = self.client.get("/api/simulator/status")
+
+        # 이메일이 없으면 허용 목록을 통과하지 못할 뿐, 500 으로 죽으면 안 된다.
+        self.assertNotEqual(response.status_code, 500)
+        self.assertLess(response.status_code, 500)
+
+    def test_kakao_callback_rejects_state_from_another_browser(self):
+        self.client.get("/api/auth/kakao/login", follow_redirects=False)
+
+        callback = self.client.get("/api/auth/kakao/callback?code=ok-code&state=forged", follow_redirects=False)
+
+        self.assertEqual(callback.status_code, 400)
 
     def test_protected_order_route_requires_session(self):
         response = self.client.post("/api/orders", json=sample_order_request(), headers={"Idempotency-Key": "idem-1"})
@@ -300,6 +495,87 @@ class AuthRoutesTest(unittest.TestCase):
 
         self.assertEqual(message["type"], "error")
         self.assertEqual(message["detail"], "authentication required")
+
+
+KAKAO_ME_WITHOUT_EMAIL = {
+    "id": 1234567890,
+    "connected_at": "2026-08-15T04:12:33Z",
+    "properties": {"nickname": "레거시닉네임"},
+    "kakao_account": {
+        "profile_nickname_needs_agreement": False,
+        "profile_image_needs_agreement": False,
+        "profile": {
+            "nickname": "테스트유저",
+            "thumbnail_image_url": "https://example.test/thumb.jpg",
+            "profile_image_url": "https://example.test/profile.jpg",
+            "is_default_image": False,
+        },
+    },
+}
+
+
+class KakaoProfileParsingTest(unittest.TestCase):
+    def test_numeric_id_becomes_a_string_subject(self):
+        user = AuthenticatedUser.from_kakao_profile(KAKAO_ME_WITHOUT_EMAIL)
+
+        self.assertEqual(user.sub, "1234567890")
+        self.assertIsInstance(user.sub, str)
+        self.assertEqual(user.provider, "kakao")
+
+    def test_missing_email_is_accepted_and_never_counts_as_verified(self):
+        user = AuthenticatedUser.from_kakao_profile(KAKAO_ME_WITHOUT_EMAIL)
+
+        self.assertIsNone(user.email)
+        self.assertFalse(user.email_verified)
+        self.assertEqual(user.name, "테스트유저")
+        self.assertEqual(user.picture, "https://example.test/profile.jpg")
+
+    def test_email_counts_as_verified_only_when_kakao_confirms_both_flags(self):
+        payload = json.loads(json.dumps(KAKAO_ME_WITHOUT_EMAIL))
+        payload["kakao_account"].update({
+            "email": "user@kakao.test",
+            "is_email_valid": True,
+            "is_email_verified": True,
+        })
+
+        user = AuthenticatedUser.from_kakao_profile(payload)
+
+        self.assertEqual(user.email, "user@kakao.test")
+        self.assertTrue(user.email_verified)
+
+    def test_unverified_email_is_kept_but_not_trusted(self):
+        payload = json.loads(json.dumps(KAKAO_ME_WITHOUT_EMAIL))
+        payload["kakao_account"].update({
+            "email": "user@kakao.test",
+            "is_email_valid": True,
+            "is_email_verified": False,
+        })
+
+        user = AuthenticatedUser.from_kakao_profile(payload)
+
+        self.assertEqual(user.email, "user@kakao.test")
+        self.assertFalse(user.email_verified)
+
+    def test_missing_id_is_rejected(self):
+        with self.assertRaises(AuthUserError):
+            AuthenticatedUser.from_kakao_profile({"kakao_account": {}})
+
+    def test_provider_survives_a_session_round_trip(self):
+        user = AuthenticatedUser.from_kakao_profile(KAKAO_ME_WITHOUT_EMAIL)
+
+        restored = AuthenticatedUser.from_session(user.to_session())
+
+        self.assertEqual(restored.provider, "kakao")
+        self.assertIsNone(restored.email)
+
+    def test_legacy_session_without_provider_defaults_to_google(self):
+        restored = AuthenticatedUser.from_session({
+            "sub": "google-sub-1",
+            "email": "user@example.com",
+            "email_verified": True,
+        })
+
+        self.assertEqual(restored.provider, "google")
 
 
 if __name__ == "__main__":

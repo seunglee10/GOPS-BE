@@ -7,11 +7,13 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 
 from app.auth.config import AuthConfig, AuthConfigError
-from app.auth.dependencies import optional_current_user
+from app.auth.dependencies import optional_current_user, require_current_user
 from app.auth.identity import IdentityStoreError, identity_resolver_from_app
 from app.auth.google import GOOGLE_AUTHORIZATION_ENDPOINT, GoogleOAuthClient, GoogleOAuthError
+from app.auth.kakao import KAKAO_AUTHORIZATION_ENDPOINT, KakaoOAuthClient, KakaoOAuthError
 from app.auth.models import AuthUserError
 from app.auth.session_store import SessionStoreError, session_store_from_app
+from app.auth.tokens import TokenStoreError, token_store_from_app
 
 
 router = APIRouter(tags=["auth"])
@@ -105,6 +107,99 @@ def google_oauth_callback(
     return response
 
 
+# 카카오 로그인 버튼 눌렀을 때 카카오 로그인 화면으로 보내는 api
+@router.get("/api/auth/kakao/login")
+def kakao_oauth_login(request: Request, return_to: str = Query(default="/", alias="returnTo")) -> Response:
+    config = AuthConfig.from_env()
+    safe_return_to = _safe_return_to(return_to)
+    if not config.enabled:
+        return RedirectResponse(safe_return_to)
+
+    try:
+        config.require_kakao_settings()
+        store = session_store_from_app(request.app, config)
+        state = store.create_oauth_state(safe_return_to)
+    except (AuthConfigError, SessionStoreError) as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    params = urlencode(
+        {
+            "client_id": config.kakao_client_id,
+            "redirect_uri": config.callback_url(request, "kakao"),
+            "response_type": "code",
+            "state": state,
+            "scope": "profile_nickname,profile_image",
+        }
+    )
+    response = RedirectResponse(f"{KAKAO_AUTHORIZATION_ENDPOINT}?{params}")
+    response.set_cookie(
+        config.oauth_state_cookie_name,
+        state,
+        max_age=config.oauth_state_ttl_seconds,
+        httponly=True,
+        secure=config.cookie_secure(request),
+        samesite=config.cookie_samesite,
+        path="/",
+    )
+    return response
+
+
+# 카카오 로그인 후 내 서비스로 돌아왔을 때 실행되는 callback api
+@router.get("/api/auth/kakao/callback", name="kakao_oauth_callback")
+def kakao_oauth_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+) -> Response:
+    config = AuthConfig.from_env()
+    if not config.enabled:
+        return RedirectResponse("/")
+    if error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Kakao OAuth error: {error}")
+    if not code or not state:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kakao OAuth callback is missing code or state")
+    if request.cookies.get(config.oauth_state_cookie_name) != state:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kakao OAuth state did not match this browser")
+
+    try:
+        store = session_store_from_app(request.app, config)
+        state_record = store.pop_oauth_state(state)
+        if not state_record:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kakao OAuth state expired")
+        result = kakao_oauth_client_from_app(request.app, config).exchange_code(
+            code=code,
+            redirect_uri=config.callback_url(request, "kakao"),
+        )
+        user = identity_resolver_from_app(request.app).resolve(result.user, provider="kakao")
+        # identity 행이 만들어진 뒤에 저장한다. 토큰 테이블이 그 행을 참조한다.
+        token_store_from_app(request.app).save(
+            provider="kakao",
+            provider_subject=user.sub,
+            tokens=result.tokens,
+        )
+        session_id = store.create_session(user)
+    except HTTPException:
+        raise
+    except (AuthConfigError, IdentityStoreError, SessionStoreError, TokenStoreError) as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except (AuthUserError, KakaoOAuthError) as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+
+    response = RedirectResponse(_safe_return_to(str(state_record.get("returnTo") or "/")))
+    response.set_cookie(
+        config.session_cookie_name,
+        session_id,
+        max_age=config.session_ttl_seconds,
+        httponly=True,
+        secure=config.cookie_secure(request),
+        samesite=config.cookie_samesite,
+        path="/",
+    )
+    response.delete_cookie(config.oauth_state_cookie_name, path="/")
+    return response
+
+
 @router.get("/api/auth/me")
 async def auth_me(request: Request) -> dict[str, Any]:
     config = AuthConfig.from_env()
@@ -128,6 +223,43 @@ def auth_logout(request: Request) -> Response:
     response.delete_cookie(config.session_cookie_name, path="/")
     return response
 
+@router.post("/api/auth/kakao/unlink")
+async def kakao_oauth_unlink(request: Request) -> Response:
+    config = AuthConfig.from_env()
+    user = await require_current_user(request)
+    if user.provider != "kakao":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="현재 세션이 카카오 로그인이 아닙니다",
+        )
+
+    try:
+        token_store = token_store_from_app(request.app)
+        access_token = token_store.load_access_token(provider="kakao", provider_subject=user.sub)
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="저장된 카카오 액세스 토큰이 없습니다",
+            )
+
+        # 카카오 호출이 먼저다. 실패하면 우리 데이터를 남겨 재시도할 수 있게 한다.
+        kakao_oauth_client_from_app(request.app, config).unlink(access_token)
+        token_store.delete(provider="kakao", provider_subject=user.sub)
+
+        session_id = request.cookies.get(config.session_cookie_name)
+        if session_id:
+            session_store_from_app(request.app, config).delete_session(session_id)
+    except HTTPException:
+        raise
+    except (AuthConfigError, SessionStoreError, TokenStoreError) as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except KakaoOAuthError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    response.delete_cookie(config.session_cookie_name, path="/")
+    return response
+
 
 def google_oauth_client_from_app(app: Any, config: AuthConfig) -> GoogleOAuthClient:
     existing = getattr(app.state, "google_oauth_client", None)
@@ -135,6 +267,15 @@ def google_oauth_client_from_app(app: Any, config: AuthConfig) -> GoogleOAuthCli
         return existing
     client = GoogleOAuthClient(config)
     app.state.google_oauth_client = client
+    return client
+
+
+def kakao_oauth_client_from_app(app: Any, config: AuthConfig) -> KakaoOAuthClient:
+    existing = getattr(app.state, "kakao_oauth_client", None)
+    if existing is not None:
+        return existing
+    client = KakaoOAuthClient(config)
+    app.state.kakao_oauth_client = client
     return client
 
 

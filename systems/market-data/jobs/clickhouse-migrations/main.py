@@ -58,7 +58,9 @@ def run_migrations(client: ClickHouseHttpClient) -> list[str]:
             "filename": path.name,
             "checksum": checksum,
             "transaction_mode": "nontransactional",
-            "applied_at": datetime.now(timezone.utc).isoformat(),
+            # schema_migrations.applied_at 은 DateTime64(3, 'UTC') 이고 JSONEachRow 파서가
+            # isoformat() 의 '+00:00' 오프셋을 받지 못한다. 저장소 공통 포맷을 따른다.
+            "applied_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
         }])
         applied.append(path.name)
     return applied
