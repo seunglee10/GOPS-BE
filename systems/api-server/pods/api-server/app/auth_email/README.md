@@ -1,7 +1,7 @@
 # 이메일 가입·인증·로그인 (D35~D39)
 
-`MOCK_API_CONTRACT.md` 의 "D35~D39 이메일 인증" 표가 계약이다. 응답 실패 본문은
-`{ "code": ..., ... }` 를 최상위에 둔다.
+`MOCK_API_CONTRACT.md` 의 "D35~D39 이메일 인증" 표가 계약이다. 실패 응답은 저장소 규칙(3절)대로
+`{ "detail": { "code": ..., ... } }` 다. 아래 `422 weak_password` 같은 표기는 `detail.code` 를 뜻한다.
 
 ```text
 POST /api/auth/email/signup     { email, password, consents:{tos,privacy,age,mkt} } -> 201

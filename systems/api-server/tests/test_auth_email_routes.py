@@ -163,7 +163,7 @@ class EmailAuthRoutesTest(unittest.TestCase):
 
         # 인증 전에는 로그인할 수 없다.
         self.assertEqual(self.login().status_code, 403)
-        self.assertEqual(self.login().json()["code"], "unverified")
+        self.assertEqual(self.login().json()["detail"]["code"], "unverified")
 
         verified = self.verify()
         self.assertEqual(verified.status_code, 200)
@@ -188,7 +188,7 @@ class EmailAuthRoutesTest(unittest.TestCase):
         self.signup_and_verify()
         duplicate = self.signup()
         self.assertEqual(duplicate.status_code, 409)
-        self.assertEqual(duplicate.json(), {"code": "email_taken"})
+        self.assertEqual(duplicate.json()["detail"], {"code": "email_taken"})
 
     def test_unverified_signup_can_be_retried_with_new_code(self):
         self.assertEqual(self.signup().status_code, 201)
@@ -204,35 +204,35 @@ class EmailAuthRoutesTest(unittest.TestCase):
     def test_weak_password_and_missing_consent_are_422(self):
         weak = self.signup(password="abcdefgh")
         self.assertEqual(weak.status_code, 422)
-        self.assertEqual(weak.json(), {"code": "weak_password"})
-        self.assertEqual(self.signup(password="1234567").json(), {"code": "weak_password"})
+        self.assertEqual(weak.json()["detail"], {"code": "weak_password"})
+        self.assertEqual(self.signup(password="1234567").json()["detail"], {"code": "weak_password"})
 
         no_consent = self.signup(consents={"tos": True, "privacy": True, "age": False})
         self.assertEqual(no_consent.status_code, 422)
-        self.assertEqual(no_consent.json(), {"code": "consent_required"})
+        self.assertEqual(no_consent.json()["detail"], {"code": "consent_required"})
         without_consents = self.client.post(
             "/api/auth/email/signup", json={"email": self.EMAIL, "password": self.PASSWORD}
         )
         self.assertEqual(without_consents.status_code, 422)
-        self.assertEqual(without_consents.json(), {"code": "consent_required"})
+        self.assertEqual(without_consents.json()["detail"], {"code": "consent_required"})
 
         bad_email = self.signup(email="not-an-email")
         self.assertEqual(bad_email.status_code, 422)
-        self.assertEqual(bad_email.json(), {"code": "invalid_email"})
+        self.assertEqual(bad_email.json()["detail"], {"code": "invalid_email"})
         self.assertEqual(self.mailer.codes, [])
 
     def test_wrong_code_counts_down_remaining_attempts(self):
         self.signup()
         first = self.verify(code="000000")
         self.assertEqual(first.status_code, 400)
-        self.assertEqual(first.json(), {"code": "invalid_code", "remainingAttempts": 4})
-        self.assertEqual(self.verify(code="000000").json()["remainingAttempts"], 3)
+        self.assertEqual(first.json()["detail"], {"code": "invalid_code", "remainingAttempts": 4})
+        self.assertEqual(self.verify(code="000000").json()["detail"]["remainingAttempts"], 3)
         for _ in range(3):
             self.verify(code="000000")
         # 다섯 번 틀리면 올바른 코드도 더는 받지 않는다.
         exhausted = self.verify()
         self.assertEqual(exhausted.status_code, 410)
-        self.assertEqual(exhausted.json(), {"code": "expired"})
+        self.assertEqual(exhausted.json()["detail"], {"code": "expired"})
 
     def test_expired_code_is_410(self):
         self.signup()
@@ -240,14 +240,14 @@ class EmailAuthRoutesTest(unittest.TestCase):
         self.rewrite_verification(record, expires_at=record.created_at - timedelta(seconds=1))
         expired = self.verify()
         self.assertEqual(expired.status_code, 410)
-        self.assertEqual(expired.json(), {"code": "expired"})
+        self.assertEqual(expired.json()["detail"], {"code": "expired"})
 
     def test_resend_is_throttled_for_30_seconds(self):
         self.signup()
         too_soon = self.client.post("/api/auth/email/resend", json={"email": self.EMAIL})
         self.assertEqual(too_soon.status_code, 429)
-        self.assertEqual(too_soon.json()["code"], "too_soon")
-        self.assertTrue(0 < too_soon.json()["retryAfterSeconds"] <= 30)
+        self.assertEqual(too_soon.json()["detail"]["code"], "too_soon")
+        self.assertTrue(0 < too_soon.json()["detail"]["retryAfterSeconds"] <= 30)
 
         record = self.latest_verification()
         self.rewrite_verification(record, created_at=record.created_at - timedelta(seconds=31))
@@ -270,12 +270,12 @@ class EmailAuthRoutesTest(unittest.TestCase):
         for expected_remaining in (4, 3, 2, 1):
             failed = self.login(password="wrongpass1")
             self.assertEqual(failed.status_code, 401)
-            self.assertEqual(failed.json(), {"code": "invalid_credentials", "remainingAttempts": expected_remaining})
+            self.assertEqual(failed.json()["detail"], {"code": "invalid_credentials", "remainingAttempts": expected_remaining})
 
         locked = self.login(password="wrongpass1")
         self.assertEqual(locked.status_code, 423)
-        self.assertEqual(locked.json()["code"], "locked")
-        self.assertRegex(locked.json()["lockedUntil"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+        self.assertEqual(locked.json()["detail"]["code"], "locked")
+        self.assertRegex(locked.json()["detail"]["lockedUntil"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
         # 잠긴 동안은 올바른 비밀번호도 423.
         self.assertEqual(self.login().status_code, 423)
@@ -283,14 +283,14 @@ class EmailAuthRoutesTest(unittest.TestCase):
         # 잠금이 풀리면 처음부터 다시 센다.
         attempt = self.repository.get_login_attempt(self.EMAIL)
         self.repository.save_login_attempt(self.EMAIL, attempt.failed_count, attempt.locked_until - timedelta(minutes=11))
-        self.assertEqual(self.login(password="wrongpass1").json()["remainingAttempts"], 4)
+        self.assertEqual(self.login(password="wrongpass1").json()["detail"]["remainingAttempts"], 4)
         self.assertEqual(self.login().status_code, 200)
         self.assertIsNone(self.repository.get_login_attempt(self.EMAIL))
 
     def test_unknown_email_login_is_401_without_leaking_existence(self):
         response = self.login(email="nobody@example.com")
         self.assertEqual(response.status_code, 401)
-        self.assertEqual(response.json(), {"code": "invalid_credentials", "remainingAttempts": 4})
+        self.assertEqual(response.json()["detail"], {"code": "invalid_credentials", "remainingAttempts": 4})
 
     def test_remember_extends_session_to_30_days(self):
         self.signup_and_verify()
@@ -336,7 +336,7 @@ class EmailAuthRoutesTest(unittest.TestCase):
             "/api/auth/password/reset", json={"token": self.mailer.last_token(self.EMAIL), "password": "another99"}
         )
         self.assertEqual(reused.status_code, 400)
-        self.assertEqual(reused.json(), {"code": "invalid_token"})
+        self.assertEqual(reused.json()["detail"], {"code": "invalid_token"})
         self.assertEqual(self.login().status_code, 401)
         self.assertEqual(self.login(password="newpass99").status_code, 200)
 
@@ -353,17 +353,17 @@ class EmailAuthRoutesTest(unittest.TestCase):
 
         bad = self.client.post("/api/auth/password/reset", json={"token": "nope", "password": "newpass99"})
         self.assertEqual(bad.status_code, 400)
-        self.assertEqual(bad.json(), {"code": "invalid_token"})
+        self.assertEqual(bad.json()["detail"], {"code": "invalid_token"})
 
         weak = self.client.post("/api/auth/password/reset", json={"token": token, "password": "short"})
         self.assertEqual(weak.status_code, 422)
-        self.assertEqual(weak.json(), {"code": "weak_password"})
+        self.assertEqual(weak.json()["detail"], {"code": "weak_password"})
 
         record = self.latest_verification(PURPOSE_RESET)
         self.rewrite_verification(record, expires_at=record.created_at - timedelta(seconds=1))
         expired = self.client.post("/api/auth/password/reset", json={"token": token, "password": "newpass99"})
         self.assertEqual(expired.status_code, 410)
-        self.assertEqual(expired.json(), {"code": "expired"})
+        self.assertEqual(expired.json()["detail"], {"code": "expired"})
 
         # 비밀번호는 그대로이고 세션도 살아 있다.
         self.assertEqual(self.client.get("/api/auth/me").json()["user"]["email"], self.EMAIL)
@@ -384,7 +384,7 @@ class EmailAuthRoutesTest(unittest.TestCase):
 
         missing = self.client.post("/api/auth/consent", json={"tos": True, "privacy": True})
         self.assertEqual(missing.status_code, 422)
-        self.assertEqual(missing.json(), {"code": "consent_required"})
+        self.assertEqual(missing.json()["detail"], {"code": "consent_required"})
         self.assertTrue(self.client.get("/api/auth/me").json()["user"]["needsConsent"])
 
         consent = self.client.post("/api/auth/consent", json={"tos": True, "privacy": True, "age": True, "mkt": True})

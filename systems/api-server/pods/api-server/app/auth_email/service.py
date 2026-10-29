@@ -1,7 +1,7 @@
 """이메일 가입·인증·로그인·비밀번호 재설정·약관 동의 규칙.
 
 HTTP 는 모른다. 실패는 EmailAuthError(status, code, extra) 로 올리고 routes.py 가
-MOCK_API_CONTRACT 의 응답 모양 `{ code, ... }` 으로 바꾼다.
+`{ "detail": { code, ... } }` 응답으로 바꾼다.
 """
 
 from __future__ import annotations

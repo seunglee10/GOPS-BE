@@ -1,6 +1,6 @@
 """이메일 가입·인증·로그인·비밀번호 재설정·약관 동의 API (MOCK_API_CONTRACT D35~D39).
 
-실패 응답은 `{ "code": ..., ... }` 를 본문 최상위에 둔다(계약서 모양). 세션은 소셜
+실패 응답은 저장소 규칙대로 `{ "detail": { "code": ..., ... } }` 다. 세션은 소셜
 로그인과 같은 저장소·쿠키를 쓴다.
 """
 
@@ -62,7 +62,7 @@ def email_signup(request: Request, body: SignupBody) -> Response:
     try:
         result = email_auth_service_from_app(request.app, config).signup(body.email, body.password, body.consents)
     except EmailAuthError as exc:
-        return _error(exc)
+        raise _error(exc) from exc
     except (EmailAuthRepositoryError, MailerError, AuthConfigError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return JSONResponse(
@@ -78,7 +78,7 @@ def email_verify(request: Request, body: VerifyBody) -> Response:
         user = email_auth_service_from_app(request.app, config).verify(body.email, body.code)
         return _session_response(request, config, user, ttl_seconds=None)
     except EmailAuthError as exc:
-        return _error(exc)
+        raise _error(exc) from exc
     except (EmailAuthRepositoryError, SessionStoreError, AuthConfigError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
@@ -89,7 +89,7 @@ def email_resend(request: Request, body: EmailOnlyBody) -> Response:
     try:
         resend_after = email_auth_service_from_app(request.app, config).resend(body.email)
     except EmailAuthError as exc:
-        return _error(exc)
+        raise _error(exc) from exc
     except (EmailAuthRepositoryError, MailerError, AuthConfigError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return JSONResponse({"resendAfterSeconds": resend_after})
@@ -102,7 +102,7 @@ def email_login(request: Request, body: LoginBody) -> Response:
         result = email_auth_service_from_app(request.app, config).login(body.email, body.password, body.remember)
         return _session_response(request, config, result.user, ttl_seconds=result.session_ttl_seconds)
     except EmailAuthError as exc:
-        return _error(exc)
+        raise _error(exc) from exc
     except (EmailAuthRepositoryError, SessionStoreError, AuthConfigError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
@@ -113,7 +113,7 @@ def password_forgot(request: Request, body: EmailOnlyBody) -> Response:
     try:
         email_auth_service_from_app(request.app, config).forgot(body.email)
     except EmailAuthError as exc:
-        return _error(exc)
+        raise _error(exc) from exc
     except (EmailAuthRepositoryError, MailerError, AuthConfigError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return JSONResponse({"sent": True})
@@ -127,7 +127,7 @@ def password_reset(request: Request, body: ResetBody) -> Response:
         # 그 사용자의 세션을 전부 지운다. 쿠키로 들어온 세션도 포함된다.
         session_store_from_app(request.app, config).delete_sessions_for_user(result.app_user_id)
     except EmailAuthError as exc:
-        return _error(exc)
+        raise _error(exc) from exc
     except (EmailAuthRepositoryError, SessionStoreError, AuthConfigError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return JSONResponse({"reset": True})
@@ -143,7 +143,7 @@ def auth_consent(
     try:
         email_auth_service_from_app(request.app, config).save_consent(user, body.model_dump())
     except EmailAuthError as exc:
-        return _error(exc)
+        raise _error(exc) from exc
     except (EmailAuthRepositoryError, AuthConfigError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return JSONResponse({"needsConsent": False})
@@ -195,5 +195,6 @@ def _enabled_config() -> AuthConfig:
     return config
 
 
-def _error(exc: EmailAuthError) -> JSONResponse:
-    return JSONResponse(status_code=exc.status_code, content=exc.payload())
+def _error(exc: EmailAuthError) -> HTTPException:
+    # 저장소 규칙(MOCK_API_CONTRACT 3절): 오류는 {"detail": {"code": ..., ...}}.
+    return HTTPException(status_code=exc.status_code, detail=exc.payload())
