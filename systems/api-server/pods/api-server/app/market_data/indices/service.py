@@ -17,6 +17,12 @@ DEFAULT_STALE_REFRESH_SECONDS = 300
 DEFAULT_UPSTREAM_TIMEOUT_SECONDS = 5
 DEFAULT_PERIOD = "5d"
 DEFAULT_INTERVAL = "5m"
+# 스파크라인은 최근 종가 30개(오래된 것부터)라서 일봉을 따로 받는다. 3개월이면 거래일이 60일쯤 되어 30개가 넉넉히 찬다.
+DEFAULT_SPARKLINE_PERIOD = "3mo"
+DEFAULT_SPARKLINE_INTERVAL = "1d"
+SPARKLINE_POINTS = 30
+DEFAULT_SPARKLINE_CACHE_SECONDS = 3_600
+DEFAULT_SPARKLINE_STALE_CACHE_SECONDS = 86_400
 PERFORMANCE_HISTORY_RANGES: dict[str, tuple[str, timedelta | None]] = {
     "1W": ("1mo", timedelta(days=7)),
     "1M": ("1mo", timedelta(days=31)),
@@ -32,6 +38,7 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "^GSPC",
         "name": "S&P 500",
+        "nameKo": "S&P 500",
         "assetClass": "equity_index",
         "group": "US",
         "currency": "USD",
@@ -40,6 +47,7 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "^IXIC",
         "name": "NASDAQ Composite",
+        "nameKo": "나스닥 종합",
         "assetClass": "equity_index",
         "group": "US",
         "currency": "USD",
@@ -48,6 +56,7 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "^DJI",
         "name": "Dow Jones Industrial Average",
+        "nameKo": "다우존스",
         "assetClass": "equity_index",
         "group": "US",
         "currency": "USD",
@@ -56,6 +65,7 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "^RUT",
         "name": "Russell 2000",
+        "nameKo": "러셀 2000",
         "assetClass": "equity_index",
         "group": "US",
         "currency": "USD",
@@ -64,6 +74,7 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "^VIX",
         "name": "CBOE Volatility Index",
+        "nameKo": "VIX",
         "assetClass": "volatility_index",
         "group": "US",
         "currency": "USD",
@@ -72,6 +83,7 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "^SOX",
         "name": "Philadelphia Semiconductor Index",
+        "nameKo": "필라델피아 반도체",
         "assetClass": "equity_index",
         "group": "US",
         "currency": "USD",
@@ -80,6 +92,7 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "^KS11",
         "name": "KOSPI",
+        "nameKo": "코스피",
         "assetClass": "equity_index",
         "group": "Korea",
         "currency": "KRW",
@@ -88,6 +101,7 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "^KQ11",
         "name": "KOSDAQ",
+        "nameKo": "코스닥",
         "assetClass": "equity_index",
         "group": "Korea",
         "currency": "KRW",
@@ -96,6 +110,7 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "^N225",
         "name": "Nikkei 225",
+        "nameKo": "닛케이 225",
         "assetClass": "equity_index",
         "group": "Asia",
         "currency": "JPY",
@@ -104,6 +119,7 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "^HSI",
         "name": "Hang Seng Index",
+        "nameKo": "항셍",
         "assetClass": "equity_index",
         "group": "Asia",
         "currency": "HKD",
@@ -112,6 +128,7 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "GC=F",
         "name": "Gold Futures",
+        "nameKo": "금 선물",
         "assetClass": "commodity",
         "group": "Commodities",
         "currency": "USD",
@@ -120,6 +137,7 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "CL=F",
         "name": "WTI Crude Oil Futures",
+        "nameKo": "WTI 원유 선물",
         "assetClass": "commodity",
         "group": "Commodities",
         "currency": "USD",
@@ -128,6 +146,7 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "BTC-USD",
         "name": "Bitcoin",
+        "nameKo": "비트코인",
         "assetClass": "crypto",
         "group": "Crypto",
         "currency": "USD",
@@ -136,6 +155,7 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "DX-Y.NYB",
         "name": "U.S. Dollar Index",
+        "nameKo": "달러 인덱스",
         "assetClass": "currency_index",
         "group": "FX",
         "currency": "USD",
@@ -144,10 +164,20 @@ INDEX_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "symbol": "KRW=X",
         "name": "USD/KRW",
+        "nameKo": "원/달러",
         "assetClass": "fx",
         "group": "FX",
         "currency": "KRW",
         "unit": "KRW per USD",
+    },
+    {
+        "symbol": "^TNX",
+        "name": "US 10-Year Treasury Yield",
+        "nameKo": "미 10년물",
+        "assetClass": "bond_yield",
+        "group": "Rates",
+        "currency": "USD",
+        "unit": "percent",
     },
 )
 
@@ -293,7 +323,15 @@ class MarketIndicesService:
         timeout = read_positive_int("MARKET_INDICES_UPSTREAM_TIMEOUT_SECONDS", DEFAULT_UPSTREAM_TIMEOUT_SECONDS)
         raw = self.fetcher(symbols=symbols, period=period, interval=interval, timeout=timeout)
         rows_by_symbol = normalize_index_rows(raw, symbols)
-        items = [build_index_item(definition, rows_by_symbol.get(definition["symbol"], [])) for definition in definitions]
+        sparklines = self._sparkline_closes(symbols, timeout)
+        items = [
+            build_index_item(
+                definition,
+                rows_by_symbol.get(definition["symbol"], []),
+                sparkline=sparklines.get(definition["symbol"]),
+            )
+            for definition in definitions
+        ]
         priced_count = sum(1 for item in items if item.get("price") is not None)
         return {
             "source": "yahoo-finance",
@@ -314,6 +352,29 @@ class MarketIndicesService:
             },
             "items": items,
         }
+
+    def _sparkline_closes(self, symbols: Sequence[str], timeout: int) -> dict[str, list[float]]:
+        """심볼별 일봉 종가(최근 30개, 오래된 것부터). 일봉은 하루에 한 번 바뀌니 스냅샷보다 오래 캐시한다."""
+        fresh_key = indices_sparkline_cache_key()
+        stale_key = indices_sparkline_stale_cache_key()
+        cached = self._cache_get(fresh_key)
+        if cached is not None and all(symbol in cached for symbol in symbols):
+            return {symbol: list(cached[symbol]) for symbol in symbols}
+        period = os.getenv("MARKET_INDICES_SPARKLINE_PERIOD", DEFAULT_SPARKLINE_PERIOD)
+        interval = os.getenv("MARKET_INDICES_SPARKLINE_INTERVAL", DEFAULT_SPARKLINE_INTERVAL)
+        try:
+            raw = self.fetcher(symbols=symbols, period=period, interval=interval, timeout=timeout)
+            rows_by_symbol = normalize_index_rows(raw, symbols)
+        except Exception as exc:
+            print(f"Market indices sparkline fetch failed: {exc.__class__.__name__}", flush=True)
+            stale = self._cache_get(stale_key)
+            if stale is None:
+                return {}
+            return {symbol: list(stale.get(symbol) or []) for symbol in symbols}
+        closes = {symbol: sparkline_closes(rows_by_symbol.get(symbol, [])) for symbol in symbols}
+        self._cache_set(fresh_key, closes, sparkline_cache_seconds())
+        self._cache_set(stale_key, closes, sparkline_stale_cache_seconds())
+        return closes
 
     def _redis(self) -> Any | None:
         redis_provider = getattr(self.provider, "redis_provider", None)
@@ -495,38 +556,53 @@ def normalize_row_sequence(rows: Any) -> list[dict[str, Any]]:
     return normalized
 
 
-def build_index_item(definition: Mapping[str, str], rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    valid_rows = [
-        row
-        for row in rows
-        if isinstance(row.get("timestamp"), datetime) and finite_float(row.get("close")) is not None
-    ]
-    valid_rows.sort(key=lambda row: row["timestamp"])
+def build_index_item(
+    definition: Mapping[str, str],
+    rows: Sequence[Mapping[str, Any]],
+    sparkline: Sequence[float] | None = None,
+) -> dict[str, Any]:
+    valid_rows = sorted_valid_rows(rows)
     latest = valid_rows[-1] if valid_rows else None
     previous_close = previous_session_close(valid_rows) if latest is not None else None
     price = finite_float(latest.get("close")) if latest is not None else None
     change = price - previous_close if price is not None and previous_close not in (None, 0) else None
     change_percent = (change / previous_close * 100) if change is not None and previous_close else None
-    sparkline = [finite_float(row.get("close")) for row in valid_rows[-28:]]
-    sparkline = [value for value in sparkline if value is not None]
     return {
         "symbol": definition["symbol"],
         "name": definition["name"],
+        "nameKo": definition.get("nameKo") or definition["name"],
         "assetClass": definition["assetClass"],
         "group": definition["group"],
         "currency": definition["currency"],
         "unit": definition["unit"],
         "price": round_float(price),
+        "value": round_float(price),
         "open": round_float(finite_float(latest.get("open")) if latest is not None else None),
         "high": round_float(finite_float(latest.get("high")) if latest is not None else None),
         "low": round_float(finite_float(latest.get("low")) if latest is not None else None),
         "previousClose": round_float(previous_close),
         "change": round_float(change),
         "changePercent": round_float(change_percent),
-        "sparkline": [round_float(value) for value in sparkline],
+        "sparkline": [round_float(value) for value in (sparkline or []) if finite_float(value) is not None],
         "updatedAt": isoformat_z(latest["timestamp"]) if latest is not None else None,
         "status": "ok" if price is not None else "no-data",
     }
+
+
+def sorted_valid_rows(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    valid_rows = [
+        row
+        for row in rows
+        if isinstance(row.get("timestamp"), datetime) and finite_float(row.get("close")) is not None
+    ]
+    valid_rows.sort(key=lambda row: row["timestamp"])
+    return valid_rows
+
+
+def sparkline_closes(rows: Sequence[Mapping[str, Any]], points: int = SPARKLINE_POINTS) -> list[float]:
+    """최근 종가 `points`개를 오래된 것부터 돌려준다. 자료가 없으면 빈 배열."""
+    closes = [finite_float(row.get("close")) for row in sorted_valid_rows(rows)]
+    return [round_float(value) for value in closes if value is not None][-points:]
 
 
 def previous_session_close(rows: Sequence[Mapping[str, Any]]) -> float | None:
@@ -572,6 +648,22 @@ def indices_stale_cache_key() -> str:
 
 def indices_lock_key() -> str:
     return redis_key("indices:refresh-lock")
+
+
+def indices_sparkline_cache_key() -> str:
+    return redis_key("indices:sparkline:1d")
+
+
+def indices_sparkline_stale_cache_key() -> str:
+    return redis_key("indices:sparkline:1d:last")
+
+
+def sparkline_cache_seconds() -> int:
+    return read_positive_int("MARKET_INDICES_SPARKLINE_CACHE_SECONDS", DEFAULT_SPARKLINE_CACHE_SECONDS)
+
+
+def sparkline_stale_cache_seconds() -> int:
+    return read_positive_int("MARKET_INDICES_SPARKLINE_STALE_CACHE_SECONDS", DEFAULT_SPARKLINE_STALE_CACHE_SECONDS)
 
 
 def cache_ttl_seconds() -> int:

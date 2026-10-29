@@ -3624,10 +3624,14 @@ class MarketDataQueryServiceTest(unittest.TestCase):
             payload = service.snapshot()
             cached_payload = service.snapshot()
 
-        self.assertEqual(len(calls), 1)
+        # 시세용 5분봉 한 번 + 스파크라인용 일봉 한 번. 두 번째 snapshot 은 캐시를 쓴다.
+        self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0]["period"], "5d")
         self.assertEqual(calls[0]["interval"], "5m")
         self.assertIn("^GSPC", calls[0]["symbols"])
+        self.assertEqual(calls[1]["period"], "3mo")
+        self.assertEqual(calls[1]["interval"], "1d")
+        self.assertEqual(calls[1]["symbols"], calls[0]["symbols"])
         self.assertEqual(payload["cacheStatus"], "fresh")
         self.assertEqual(payload["updatedAt"], "2026-07-03T20:01:00Z")
         self.assertEqual(payload["coverage"]["total"], len(indices_service.INDEX_DEFINITIONS))
@@ -3675,7 +3679,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         def fetcher(**kwargs):
             calls.append(kwargs)
-            latest_close = 100 + len(calls)
+            latest_close = 100 + sum(1 for call in calls if call["interval"] != "1d")
             return {
                 "^GSPC": [
                     {"timestamp": "2026-07-02T20:00:00Z", "Close": 100},
@@ -3700,7 +3704,8 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         task(*args, **kwargs)
         refreshed_payload = service.snapshot()
 
-        self.assertEqual(len(calls), 2)
+        # 첫 호출 2번(5분봉+일봉), 백그라운드 갱신은 일봉 캐시를 재사용해 1번만 더 부른다.
+        self.assertEqual(len(calls), 3)
         self.assertEqual(first_payload["items"][0]["price"], 101)
         self.assertEqual(stale_payload["cacheStatus"], "stale")
         self.assertIn("Refreshing in background", stale_payload["warning"])
@@ -3747,7 +3752,7 @@ class MarketDataQueryServiceTest(unittest.TestCase):
 
         def fetcher(**kwargs):
             calls.append(kwargs)
-            latest_close = 100 + len(calls)
+            latest_close = 100 + sum(1 for call in calls if call["interval"] != "1d")
             return {
                 "^GSPC": [
                     {"timestamp": "2026-07-02T20:00:00Z", "Close": 100},
@@ -3760,11 +3765,86 @@ class MarketDataQueryServiceTest(unittest.TestCase):
         warmed_payload = service.refresh()
         cached_payload = service.snapshot()
 
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 3)
         self.assertEqual(first_payload["items"][0]["price"], 101)
         self.assertEqual(warmed_payload["items"][0]["price"], 102)
         self.assertEqual(cached_payload["items"][0]["price"], 102)
         self.assertEqual(provider.redis_provider.redis.expirations[indices_service.indices_cache_key()], indices_service.DEFAULT_CACHE_TTL_SECONDS)
+
+    def test_market_indices_items_carry_korean_names_and_30_daily_closes(self):
+        provider = FakeHeatmapProvider()
+        home_symbols = ["^GSPC", "^IXIC", "^DJI", "^VIX", "KRW=X", "^TNX"]
+
+        def fetcher(**kwargs):
+            if kwargs["interval"] == "1d":
+                return {
+                    symbol: [
+                        {"timestamp": f"2026-{5 + day // 28:02d}-{1 + day % 28:02d}T20:00:00Z", "Close": 1000 + day}
+                        for day in range(45)
+                    ]
+                    for symbol in home_symbols
+                    if symbol != "^TNX"
+                }
+            return {
+                symbol: [
+                    {"timestamp": "2026-07-02T20:00:00Z", "Close": 100},
+                    {"timestamp": "2026-07-03T20:00:00Z", "Close": 101},
+                ]
+                for symbol in home_symbols
+            }
+
+        service = indices_service.MarketIndicesService(provider=provider, fetcher=fetcher)
+        payload = service.snapshot()
+        items = {item["symbol"]: item for item in payload["items"]}
+
+        self.assertTrue(set(home_symbols).issubset(items))
+        self.assertEqual(
+            {symbol: items[symbol]["nameKo"] for symbol in home_symbols},
+            {
+                "^GSPC": "S&P 500",
+                "^IXIC": "나스닥 종합",
+                "^DJI": "다우존스",
+                "^VIX": "VIX",
+                "KRW=X": "원/달러",
+                "^TNX": "미 10년물",
+            },
+        )
+        for item in payload["items"]:
+            self.assertTrue(item["nameKo"])
+            self.assertEqual(item["value"], item["price"])
+        self.assertEqual(len(items["^GSPC"]["sparkline"]), 30)
+        self.assertEqual(items["^GSPC"]["sparkline"][0], 1015)
+        self.assertEqual(items["^GSPC"]["sparkline"][-1], 1044)
+        self.assertEqual(items["^TNX"]["price"], 101)
+        self.assertEqual(items["^TNX"]["sparkline"], [])
+
+    def test_market_indices_sparkline_fetch_failure_keeps_snapshot_and_reuses_last_closes(self):
+        provider = FakeHeatmapProvider()
+        state = {"daily_fails": False}
+
+        def fetcher(**kwargs):
+            if kwargs["interval"] == "1d":
+                if state["daily_fails"]:
+                    raise TimeoutError("daily timeout")
+                return {"^GSPC": [{"timestamp": "2026-07-01T20:00:00Z", "Close": 99}]}
+            return {"^GSPC": [{"timestamp": "2026-07-03T20:00:00Z", "Close": 101}]}
+
+        service = indices_service.MarketIndicesService(provider=provider, fetcher=fetcher)
+        redis_state = provider.redis_provider.redis
+        first = service.refresh()
+        self.assertEqual(first["items"][0]["sparkline"], [99])
+        self.assertEqual(redis_state.expirations[indices_service.indices_sparkline_cache_key()], indices_service.DEFAULT_SPARKLINE_CACHE_SECONDS)
+
+        state["daily_fails"] = True
+        redis_state.values.pop(indices_service.indices_sparkline_cache_key(), None)
+        with_stale = service.refresh()
+        self.assertEqual(with_stale["items"][0]["price"], 101)
+        self.assertEqual(with_stale["items"][0]["sparkline"], [99])
+
+        redis_state.values.pop(indices_service.indices_sparkline_stale_cache_key(), None)
+        without_cache = service.refresh()
+        self.assertEqual(without_cache["items"][0]["price"], 101)
+        self.assertEqual(without_cache["items"][0]["sparkline"], [])
 
     def test_market_heatmap_keeps_layout_cap_stable_within_layout_bucket(self):
         seed_items = [{
