@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
 from app.market_data.calendar.service import next_market_open_payload
+from app.market_data.fx.service import FxUnavailable, get_fx_service
 from app.market_data.indices.related import build_related_indices_payload
 from app.market_data.query.service import get_query_service
 from app.routes import charts as chart_routes
@@ -124,6 +125,20 @@ def market_related_indices(
         if simulation_active or last_status.get("mode") == "simulation":
             raise HTTPException(status_code=503, detail=str(exc)) from exc
     return get_query_service().related_indices(symbol, background_tasks=background_tasks)
+
+
+@router.get("/api/market/fx")
+def market_fx(
+    request: Request,
+    pair: str = Query(default="USDKRW", max_length=16),
+) -> dict[str, Any]:
+    service = getattr(request.app.state, "fx_service", None) or get_fx_service()
+    try:
+        return service.rate(pair)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"code": "unsupported_pair", "message": str(exc)}) from exc
+    except FxUnavailable as exc:
+        raise HTTPException(status_code=503, detail={"code": "fx_unavailable", "message": str(exc)}) from exc
 
 
 @router.get("/api/market/next-open")

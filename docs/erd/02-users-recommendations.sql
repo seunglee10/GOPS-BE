@@ -46,6 +46,10 @@ CREATE TABLE instrument_aliases (
   valid_from DATETIME(3) NOT NULL, valid_to DATETIME(3),
   CONSTRAINT fk_alias_instrument FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
 );
+CREATE TABLE instrument_names_ko (
+  symbol VARCHAR(64) PRIMARY KEY, name_ko VARCHAR(255) NOT NULL,
+  exchange_ko VARCHAR(32), updated_at DATETIME(3) NOT NULL
+);
 CREATE TABLE stock_recommendation_model_registry (
   model_version VARCHAR(128) PRIMARY KEY, status VARCHAR(32) NOT NULL,
   training_cutoff DATETIME(3) NOT NULL, weights JSON NOT NULL

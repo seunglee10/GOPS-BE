@@ -54,6 +54,7 @@ flowchart TD
 | `AGENT_BACKEND_INTEGRATION.md` | Backend API, idempotency, Kafka async path, Redis report store, polling/SSE/WebSocket 계약. |
 | `AGENT_FRONTEND_INTEGRATION.md` | 프런트 request shape, `analysisId`, polling/SSE, report rendering, layout/chart proposal 처리. |
 | `AGENT_AWS_BUILD.md` | `gops-agent-orchestrator` image, ECR/EKS, Kafka, Redis/Valkey, ClickHouse, GraphDB, S3, secrets, smoke checks. |
+| `MOCK_API_CONTRACT.md` | 목업(gops-web-mock-learn-split) 데이터 덩어리 D1~D40과 API 대응표, 신규 엔드포인트 응답 계약. 프론트 `src/api/types.ts`의 기준. |
 | `ERDCLOUD_IMPORT.sql` | PostgreSQL 물리 FK와 ClickHouse 논리·교차 저장소 관계를 함께 보는 전체 ERDCloud Import SQL. |
 | `erd/README.md` | 도메인별 ERD Import SQL, 테이블 역할표, 단계적 전환 runbook의 진입점. |
 | `../systems/fundamentals/README.md` | SEC companyfacts, Yahoo estimates, and 10-K profile batch/storage contracts used by Company Compare. |
