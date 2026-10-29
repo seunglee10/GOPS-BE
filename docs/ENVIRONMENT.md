@@ -416,9 +416,20 @@ AUTH_REDIS_KEY_PREFIX=gops:auth
 AUTH_SESSION_TTL_SECONDS=28800
 AUTH_OAUTH_STATE_TTL_SECONDS=300
 SIMULATOR_OPERATOR_EMAILS=
+MAIL_PROVIDER=console
+MAIL_FROM=
 ```
 
 When `AUTH_REDIS_URL` is empty, the API server uses `REDIS_URL`.
+이메일 가입 세션도 같은 Redis 를 쓴다. `remember` 로그인은 세션 수명이 30일이고,
+비밀번호 재설정은 `gops:auth:user_sessions:<app_user_id>` 집합으로 그 사용자의 세션을
+한 번에 지운다.
+
+`MAIL_PROVIDER` 는 이메일 가입 인증 코드와 비밀번호 재설정 링크를 보내는 경로다.
+`console`(기본)은 로그에 코드·링크를 찍고, `ses` 는 boto3 로 Amazon SES 를 호출하며
+SES 에서 검증된 발신 주소를 `MAIL_FROM` 에 넣어야 한다. 재설정 링크는
+`AUTH_PUBLIC_BASE_URL` + `/forgot?step=reset&token=...` 이다.
+자세한 흐름은 `systems/api-server/pods/api-server/app/auth_email/README.md` 에 있다.
 `SIMULATOR_OPERATOR_EMAILS`는 쉼표로 구분한 Google 로그인 이메일 허용 목록이다.
 AWS에서는 External Secrets Operator가 평문 SecretString `sim/operator`를
 `alfaka-simulator-operator-secret`의 같은 환경변수로 동기화한다. 목록이 비어 있거나
@@ -1013,6 +1024,8 @@ AUTH_SESSION_SECRET
 GOOGLE_OAUTH_SECRET_NAME
 AUTH_PUBLIC_BASE_URL
 AUTH_COOKIE_SECURE
+MAIL_PROVIDER
+MAIL_FROM
 ```
 
 When `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, or

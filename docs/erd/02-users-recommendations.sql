@@ -10,6 +10,26 @@ CREATE TABLE user_identities (
   UNIQUE KEY uq_identity_provider_subject (provider, provider_subject),
   CONSTRAINT fk_identity_user FOREIGN KEY (app_user_id) REFERENCES app_users(app_user_id)
 );
+CREATE TABLE email_credentials (
+  app_user_id CHAR(36) PRIMARY KEY, email VARCHAR(320) NOT NULL, password_hash TEXT NOT NULL,
+  email_verified_at DATETIME(3), created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL,
+  UNIQUE KEY uq_email_credentials_email (email),
+  CONSTRAINT fk_email_credentials_user FOREIGN KEY (app_user_id) REFERENCES app_users(app_user_id)
+);
+CREATE TABLE email_verifications (
+  id BIGINT PRIMARY KEY, email VARCHAR(320) NOT NULL, code_hash VARCHAR(128) NOT NULL,
+  purpose VARCHAR(16) NOT NULL, expires_at DATETIME(3) NOT NULL, attempts INT NOT NULL,
+  consumed_at DATETIME(3), created_at DATETIME(3) NOT NULL
+);
+CREATE TABLE login_attempts (
+  email VARCHAR(320) PRIMARY KEY, failed_count INT NOT NULL, locked_until DATETIME(3),
+  updated_at DATETIME(3) NOT NULL
+);
+CREATE TABLE user_consents (
+  app_user_id CHAR(36) PRIMARY KEY, tos BOOLEAN NOT NULL, privacy BOOLEAN NOT NULL,
+  age BOOLEAN NOT NULL, mkt BOOLEAN NOT NULL, consented_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_user_consents_user FOREIGN KEY (app_user_id) REFERENCES app_users(app_user_id)
+);
 CREATE TABLE instruments (
   instrument_id CHAR(36) PRIMARY KEY, canonical_symbol VARCHAR(64) NOT NULL,
   market VARCHAR(64), exchange VARCHAR(64), status VARCHAR(32) NOT NULL

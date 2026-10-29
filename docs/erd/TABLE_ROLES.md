@@ -8,6 +8,10 @@
 |---|---|---|---|
 | `app_users` | PostgreSQL | 내부 사용자 기준정보와 활성 상태 | 모든 사용자 소유 테이블의 `app_user_id` |
 | `user_identities` | PostgreSQL | Google 등 외부 인증 주체를 내부 사용자로 매핑 | `app_users` |
+| `email_credentials` | PostgreSQL | 이메일 가입 사용자의 비밀번호 해시와 인증 완료 시각 | `app_users` |
+| `email_verifications` | PostgreSQL | 이메일로 보낸 인증 코드·비밀번호 재설정 토큰의 해시, 만료, 시도 횟수 | `email` (FK 없음, 가입 전에도 쌓임) |
+| `login_attempts` | PostgreSQL | 이메일별 로그인 실패 횟수와 잠금 해제 시각 | `email` (FK 없음, 없는 계정도 셈) |
+| `user_consents` | PostgreSQL | 약관·개인정보·연령 필수 동의와 마케팅 선택 동의 | `app_users` |
 | `orders` | PostgreSQL | 실주문 요청 원본과 현재 상태 | 사용자, 종목, 주문 이벤트 |
 | `order_events` | PostgreSQL | 주문 상태 변경 이력 | `orders` |
 | `idempotency_requests` | PostgreSQL | 같은 주문 API 요청의 중복 생성 차단 | `orders` |

@@ -51,13 +51,22 @@ class RedisSessionStore:
             raise SessionStoreError("OAuth state payload is invalid") from exc
         return payload if isinstance(payload, dict) else None
 
-    def create_session(self, user: AuthenticatedUser) -> str:
+    def create_session(self, user: AuthenticatedUser, ttl_seconds: int | None = None) -> str:
         session_id = secrets.token_urlsafe(48)
+        ttl = ttl_seconds if ttl_seconds and ttl_seconds > 0 else self.config.session_ttl_seconds
         payload = {
             "user": user.to_session(),
             "createdAt": int(time.time()),
         }
-        self._set_json(self._session_key(session_id), payload, self.config.session_ttl_seconds)
+        key = self._session_key(session_id)
+        self._set_json(key, payload, ttl)
+        if user.app_user_id:
+            # 사용자별 세션 목록. 비밀번호 재설정 때 그 사용자의 세션을 전부 지우는 데 쓴다.
+            index_key = self._user_sessions_key(user.app_user_id)
+            self.redis.sadd(index_key, key)
+            current_ttl = self.redis.ttl(index_key)
+            if not isinstance(current_ttl, int) or current_ttl < ttl:
+                self.redis.expire(index_key, ttl)
         return session_id
 
     def get_session(self, session_id: str | None) -> AuthenticatedUser | None:
@@ -103,6 +112,9 @@ class RedisSessionStore:
     def _session_key(self, session_id: str) -> str:
         return f"{self.config.redis_key_prefix}:session:{self._digest(session_id)}"
 
+    def _user_sessions_key(self, app_user_id: str) -> str:
+        return f"{self.config.redis_key_prefix}:user_sessions:{app_user_id}"
+
     def _digest(self, value: str) -> str:
         secret = self.config.session_secret or ""
         return hmac.new(secret.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -114,6 +126,7 @@ class MemorySessionStore:
     def __init__(self, config: AuthConfig) -> None:
         self.config = config
         self.values: dict[str, tuple[float, str]] = {}
+        self.user_sessions: dict[str, set[str]] = {}
 
     def create_oauth_state(self, return_to: str) -> str:
         state = secrets.token_urlsafe(32)
@@ -126,9 +139,13 @@ class MemorySessionStore:
         self.values.pop(key, None)
         return json.loads(raw) if raw else None
 
-    def create_session(self, user: AuthenticatedUser) -> str:
+    def create_session(self, user: AuthenticatedUser, ttl_seconds: int | None = None) -> str:
         session_id = secrets.token_urlsafe(48)
-        self._set_json(self._session_key(session_id), {"user": user.to_session()}, self.config.session_ttl_seconds)
+        ttl = ttl_seconds if ttl_seconds and ttl_seconds > 0 else self.config.session_ttl_seconds
+        key = self._session_key(session_id)
+        self._set_json(key, {"user": user.to_session()}, ttl)
+        if user.app_user_id:
+            self.user_sessions.setdefault(user.app_user_id, set()).add(key)
         return session_id
 
     def get_session(self, session_id: str | None) -> AuthenticatedUser | None:
@@ -153,6 +170,11 @@ class MemorySessionStore:
     def delete_session(self, session_id: str | None) -> None:
         if session_id:
             self.values.pop(self._session_key(session_id), None)
+
+    def session_ttl(self, session_id: str) -> float | None:
+        """테스트용: 남은 수명(초)."""
+        stored = self.values.get(self._session_key(session_id))
+        return (stored[0] - time.time()) if stored else None
 
     def _set_json(self, key: str, payload: dict[str, Any], ttl_seconds: int) -> None:
         self.values[key] = (time.time() + ttl_seconds, json.dumps(payload, ensure_ascii=False))
