@@ -10,6 +10,12 @@ CREATE TABLE user_identities (
   UNIQUE KEY uq_identity_provider_subject (provider, provider_subject),
   CONSTRAINT fk_identity_user FOREIGN KEY (app_user_id) REFERENCES app_users(app_user_id)
 );
+CREATE TABLE user_identity_tokens (
+  provider VARCHAR(64) NOT NULL, provider_subject VARCHAR(255) NOT NULL,
+  access_token TEXT, refresh_token TEXT, access_expires_at DATETIME(3), refresh_expires_at DATETIME(3), scope TEXT,
+  PRIMARY KEY (provider, provider_subject),
+  CONSTRAINT fk_identity_tokens_identity FOREIGN KEY (provider, provider_subject) REFERENCES user_identities(provider, provider_subject)
+);
 CREATE TABLE instruments (
   instrument_id CHAR(36) PRIMARY KEY, canonical_symbol VARCHAR(64) NOT NULL,
   market VARCHAR(64), exchange VARCHAR(64), status VARCHAR(32) NOT NULL
