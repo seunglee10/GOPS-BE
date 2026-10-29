@@ -48,6 +48,7 @@
 |---|---|---|---|
 | `instruments` | PostgreSQL | 종목의 canonical 식별자·시장·통화 기준정보 | 모든 종목 소유 데이터 |
 | `instrument_aliases` | PostgreSQL | 공급자별 심볼을 canonical 종목으로 매핑 | `instruments` |
+| `instrument_names_ko` | PostgreSQL | 종목 한글 이름·거래소 한글 표기 시드(원본은 `market_data/reference/instrument_names_ko.json`) | `symbol`은 `instruments.canonical_symbol`과 같은 표기, FK 없음 |
 | `paper_accounts` | PostgreSQL | 사용자별 현재 모의 현금 계좌 | `app_users` |
 | `paper_account_runs` | PostgreSQL | 시뮬레이션 실행별 계좌 상태 | 사용자 |
 | `paper_positions` | PostgreSQL | 사용자별 종목 현재 보유 집계 | 사용자, 종목 |

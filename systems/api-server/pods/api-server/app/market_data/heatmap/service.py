@@ -10,6 +10,7 @@ from typing import Any
 from app.core.sectors import sector_payload_fields
 from app.market_data.fundamentals.service import FundamentalsAdapter, FundamentalsRecord, build_fundamentals_adapter
 from app.services.alfaka_market_data import normalize_market_symbol
+from app.services.instrument_names import with_korean_names
 
 
 DEFAULT_HEATMAP_UNIVERSE = "sp500"
@@ -426,7 +427,7 @@ def compact_heatmap_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if key in payload
     }
     response["items"] = [
-        {
+        with_korean_names({
             key: item.get(key)
             for key in (
                 "symbol",
@@ -443,7 +444,7 @@ def compact_heatmap_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "changePercent",
             )
             if key in item
-        }
+        })
         for item in payload.get("items", [])
         if isinstance(item, dict)
     ]

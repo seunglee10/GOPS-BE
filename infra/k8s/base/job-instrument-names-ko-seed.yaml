@@ -1,0 +1,35 @@
+# 역할: 종목 한글 이름 시드(instrument_names_ko.json)를 PostgreSQL instrument_names_ko 테이블에 upsert합니다.
+# 사용: 0024 마이그레이션 적용 뒤, 시드 JSON이 바뀔 때마다 재실행합니다. API는 JSON을 직접 읽으므로 실패해도 응답은 유지됩니다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: alfaka-instrument-names-ko-seed
+  namespace: alfaka-market-data
+spec:
+  ttlSecondsAfterFinished: 86400
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: alfaka-instrument-names-ko-seed
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        karpenter.sh/nodepool: batch
+      tolerations:
+        - key: gops.io/dedicated
+          operator: Equal
+          value: batch
+          effect: NoSchedule
+      serviceAccountName: alfaka-market-data-sa
+      containers:
+        - name: instrument-names-ko-seed
+          image: YOUR_ECR_REPOSITORY/gops-market-processor:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "systems/market-data/jobs/instrument-names-ko-seed/main.py"]
+          envFrom:
+            - configMapRef:
+                name: alfaka-market-data-config
+            - secretRef:
+                name: alfaka-order-db-secret
+                optional: true

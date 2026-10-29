@@ -10,6 +10,7 @@ resources:
   - job-company-journal-benchmark-bootstrap.yaml
   - job-order-reconciler.yaml
   - job-symbol-registry-sync.yaml
+  - job-instrument-names-ko-seed.yaml
   - job-coverage-repair.yaml
   - job-news-backfill.yaml
   - job-sec-fundamentals-backfill.yaml

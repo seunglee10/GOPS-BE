@@ -1,0 +1,3035 @@
+{
+  "description": "S&P 500 종목의 한글 이름과 거래소 한글 표기. API 응답 nameKo·exchangeKo 의 원본이며 Postgres instrument_names_ko 테이블에 그대로 적재한다.",
+  "source": "systems/market-data/config/sp500-universe.json + sp500-heatmap-seed.json 심볼 기준, 이름은 국내 증권사·언론 통용 표기",
+  "exchangeKoLabels": {
+    "NASDAQ": "나스닥",
+    "NYSE": "NYSE",
+    "CBOE": "CBOE"
+  },
+  "items": [
+    {
+      "symbol": "A",
+      "nameKo": "애질런트 테크놀로지스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AAPL",
+      "nameKo": "애플",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ABBV",
+      "nameKo": "애브비",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ABNB",
+      "nameKo": "에어비앤비",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ABT",
+      "nameKo": "애보트 래버러토리스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ACGL",
+      "nameKo": "아치 캐피털",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ACN",
+      "nameKo": "액센츄어",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ADBE",
+      "nameKo": "어도비",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ADI",
+      "nameKo": "아날로그 디바이시스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ADM",
+      "nameKo": "아처 대니얼스 미들랜드",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ADP",
+      "nameKo": "ADP",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ADSK",
+      "nameKo": "오토데스크",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "AEE",
+      "nameKo": "아메렌",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AEP",
+      "nameKo": "아메리칸 일렉트릭 파워",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "AES",
+      "nameKo": "AES",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AFL",
+      "nameKo": "애플락",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AIG",
+      "nameKo": "AIG",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AIZ",
+      "nameKo": "어슈어런트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AJG",
+      "nameKo": "아서 J. 갤러거",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AKAM",
+      "nameKo": "아카마이",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ALB",
+      "nameKo": "앨버말",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ALGN",
+      "nameKo": "얼라인 테크놀로지",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ALL",
+      "nameKo": "올스테이트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ALLE",
+      "nameKo": "알레지온",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AMAT",
+      "nameKo": "어플라이드 머티어리얼즈",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "AMCR",
+      "nameKo": "암코",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AMD",
+      "nameKo": "AMD",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "AME",
+      "nameKo": "아메텍",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AMGN",
+      "nameKo": "암젠",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "AMP",
+      "nameKo": "아메리프라이즈 파이낸셜",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AMT",
+      "nameKo": "아메리칸 타워",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AMZN",
+      "nameKo": "아마존",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ANET",
+      "nameKo": "아리스타 네트웍스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AON",
+      "nameKo": "에이온",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AOS",
+      "nameKo": "A. O. 스미스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "APA",
+      "nameKo": "APA",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "APD",
+      "nameKo": "에어 프로덕츠",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "APH",
+      "nameKo": "암페놀",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "APO",
+      "nameKo": "아폴로 글로벌 매니지먼트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "APP",
+      "nameKo": "앱러빈",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "APTV",
+      "nameKo": "앱티브",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ARE",
+      "nameKo": "알렉산드리아 리얼 에스테이트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ARES",
+      "nameKo": "아레스 매니지먼트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ATO",
+      "nameKo": "애트모스 에너지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AVB",
+      "nameKo": "아발론베이 커뮤니티스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AVGO",
+      "nameKo": "브로드컴",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "AVY",
+      "nameKo": "에이버리 데니슨",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AWK",
+      "nameKo": "아메리칸 워터 웍스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AXON",
+      "nameKo": "액슨 엔터프라이즈",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "AXP",
+      "nameKo": "아메리칸 익스프레스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "AZO",
+      "nameKo": "오토존",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BA",
+      "nameKo": "보잉",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BAC",
+      "nameKo": "뱅크 오브 아메리카",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BALL",
+      "nameKo": "볼 코퍼레이션",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BAX",
+      "nameKo": "백스터 인터내셔널",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BBY",
+      "nameKo": "베스트바이",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BDX",
+      "nameKo": "벡톤 디킨슨",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BEN",
+      "nameKo": "프랭클린 리소시스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BF.B",
+      "nameKo": "브라운포맨",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BG",
+      "nameKo": "벙기",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BIIB",
+      "nameKo": "바이오젠",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "BKNG",
+      "nameKo": "부킹 홀딩스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "BKR",
+      "nameKo": "베이커 휴즈",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "BLDR",
+      "nameKo": "빌더스 퍼스트소스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BLK",
+      "nameKo": "블랙록",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BMY",
+      "nameKo": "브리스톨 마이어스 스큅",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BNY",
+      "nameKo": "BNY 멜론",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BR",
+      "nameKo": "브로드리지 파이낸셜",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BRK.B",
+      "nameKo": "버크셔 해서웨이",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BRO",
+      "nameKo": "브라운 앤 브라운",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BSX",
+      "nameKo": "보스턴 사이언티픽",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BX",
+      "nameKo": "블랙스톤",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "BXP",
+      "nameKo": "BXP",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "C",
+      "nameKo": "씨티그룹",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CAG",
+      "nameKo": "콘아그라 브랜즈",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CAH",
+      "nameKo": "카디널 헬스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CARR",
+      "nameKo": "캐리어 글로벌",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CASY",
+      "nameKo": "케이시스 제너럴 스토어",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CAT",
+      "nameKo": "캐터필러",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CB",
+      "nameKo": "처브",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CBOE",
+      "nameKo": "Cboe 글로벌 마켓",
+      "exchange": "CBOE",
+      "exchangeKo": "CBOE"
+    },
+    {
+      "symbol": "CBRE",
+      "nameKo": "CBRE 그룹",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CCI",
+      "nameKo": "크라운 캐슬",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CCL",
+      "nameKo": "카니발",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CDNS",
+      "nameKo": "케이던스 디자인 시스템즈",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CDW",
+      "nameKo": "CDW",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CEG",
+      "nameKo": "컨스텔레이션 에너지",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CF",
+      "nameKo": "CF 인더스트리스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CFG",
+      "nameKo": "시티즌스 파이낸셜",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CHD",
+      "nameKo": "처치 앤 드와이트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CHRW",
+      "nameKo": "C.H. 로빈슨",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CHTR",
+      "nameKo": "차터 커뮤니케이션스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CI",
+      "nameKo": "시그나",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CIEN",
+      "nameKo": "시에나",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CINF",
+      "nameKo": "신시내티 파이낸셜",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CL",
+      "nameKo": "콜게이트파몰리브",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CLX",
+      "nameKo": "클로록스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CMCSA",
+      "nameKo": "컴캐스트",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CME",
+      "nameKo": "CME 그룹",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CMG",
+      "nameKo": "치폴레 멕시칸 그릴",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CMI",
+      "nameKo": "커민스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CMS",
+      "nameKo": "CMS 에너지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CNC",
+      "nameKo": "센틴",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CNP",
+      "nameKo": "센터포인트 에너지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "COF",
+      "nameKo": "캐피털 원",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "COHR",
+      "nameKo": "코히런트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "COIN",
+      "nameKo": "코인베이스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "COO",
+      "nameKo": "쿠퍼 컴퍼니스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "COP",
+      "nameKo": "코노코필립스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "COR",
+      "nameKo": "센코라",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "COST",
+      "nameKo": "코스트코",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CPAY",
+      "nameKo": "코페이",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CPRT",
+      "nameKo": "코파트",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CPT",
+      "nameKo": "캠든 프로퍼티 트러스트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CRH",
+      "nameKo": "CRH",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CRL",
+      "nameKo": "찰스 리버 래버러토리스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CRM",
+      "nameKo": "세일즈포스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CRWD",
+      "nameKo": "크라우드스트라이크",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CSCO",
+      "nameKo": "시스코",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CSGP",
+      "nameKo": "코스타 그룹",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CSX",
+      "nameKo": "CSX",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CTAS",
+      "nameKo": "신타스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CTSH",
+      "nameKo": "코그니전트",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "CTVA",
+      "nameKo": "코르테바",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CVNA",
+      "nameKo": "카바나",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CVS",
+      "nameKo": "CVS 헬스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "CVX",
+      "nameKo": "셰브론",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "D",
+      "nameKo": "도미니언 에너지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DAL",
+      "nameKo": "델타항공",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DASH",
+      "nameKo": "도어대시",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "DD",
+      "nameKo": "듀폰",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DDOG",
+      "nameKo": "데이터독",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "DE",
+      "nameKo": "디어",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DECK",
+      "nameKo": "데커스 브랜즈",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DELL",
+      "nameKo": "델 테크놀로지스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DG",
+      "nameKo": "달러 제너럴",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DGX",
+      "nameKo": "퀘스트 다이아그노스틱스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DHI",
+      "nameKo": "D.R. 호튼",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DHR",
+      "nameKo": "다나허",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DIS",
+      "nameKo": "월트 디즈니",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DLR",
+      "nameKo": "디지털 리얼티",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DLTR",
+      "nameKo": "달러 트리",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "DOC",
+      "nameKo": "헬스피크 프로퍼티스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DOV",
+      "nameKo": "도버",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DOW",
+      "nameKo": "다우",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DPZ",
+      "nameKo": "도미노피자",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "DRI",
+      "nameKo": "다든 레스토랑",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DTE",
+      "nameKo": "DTE 에너지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DUK",
+      "nameKo": "듀크 에너지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DVA",
+      "nameKo": "다비타",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DVN",
+      "nameKo": "데본 에너지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "DXCM",
+      "nameKo": "덱스컴",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "EA",
+      "nameKo": "일렉트로닉 아츠",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "EBAY",
+      "nameKo": "이베이",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ECHO",
+      "nameKo": "에코스타",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ECL",
+      "nameKo": "에코랩",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ED",
+      "nameKo": "콘솔리데이티드 에디슨",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "EFX",
+      "nameKo": "에퀴팩스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "EG",
+      "nameKo": "에버레스트 그룹",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "EIX",
+      "nameKo": "에디슨 인터내셔널",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "EL",
+      "nameKo": "에스티 로더",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ELV",
+      "nameKo": "엘리번스 헬스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "EME",
+      "nameKo": "엠코",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "EMR",
+      "nameKo": "에머슨 일렉트릭",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "EOG",
+      "nameKo": "EOG 리소시스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "EQIX",
+      "nameKo": "에퀴닉스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "EQR",
+      "nameKo": "에쿼티 레지덴셜",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "EQT",
+      "nameKo": "EQT",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ERIE",
+      "nameKo": "이리 인뎀니티",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ES",
+      "nameKo": "에버소스 에너지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ESS",
+      "nameKo": "에식스 프로퍼티 트러스트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ETN",
+      "nameKo": "이튼",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ETR",
+      "nameKo": "엔터지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "EVRG",
+      "nameKo": "에버지",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "EW",
+      "nameKo": "에드워즈 라이프사이언시스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "EXC",
+      "nameKo": "엑셀론",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "EXE",
+      "nameKo": "익스팬드 에너지",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "EXPD",
+      "nameKo": "익스페디터스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "EXPE",
+      "nameKo": "익스피디아",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "EXR",
+      "nameKo": "엑스트라 스페이스 스토리지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "F",
+      "nameKo": "포드",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "FANG",
+      "nameKo": "다이아몬드백 에너지",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "FAST",
+      "nameKo": "패스널",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "FCX",
+      "nameKo": "프리포트 맥모란",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "FDS",
+      "nameKo": "팩트셋",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "FDX",
+      "nameKo": "페덱스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "FDXF",
+      "nameKo": "페덱스 프레이트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "FE",
+      "nameKo": "퍼스트에너지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "FFIV",
+      "nameKo": "F5",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "FICO",
+      "nameKo": "페어 아이작",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "FIS",
+      "nameKo": "피델리티 내셔널 인포메이션 서비스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "FISV",
+      "nameKo": "파이서브",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "FITB",
+      "nameKo": "피프스 서드 뱅코프",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "FIX",
+      "nameKo": "컴포트 시스템즈 USA",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "FLEX",
+      "nameKo": "플렉스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "FOX",
+      "nameKo": "폭스 (클래스 B)",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "FOXA",
+      "nameKo": "폭스 (클래스 A)",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "FRT",
+      "nameKo": "페더럴 리얼티",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "FSLR",
+      "nameKo": "퍼스트 솔라",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "FTNT",
+      "nameKo": "포티넷",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "FTV",
+      "nameKo": "포티브",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "GD",
+      "nameKo": "제너럴 다이내믹스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "GDDY",
+      "nameKo": "고대디",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "GE",
+      "nameKo": "GE 에어로스페이스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "GEHC",
+      "nameKo": "GE 헬스케어",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "GEN",
+      "nameKo": "젠 디지털",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "GEV",
+      "nameKo": "GE 버노바",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "GILD",
+      "nameKo": "길리어드 사이언스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "GIS",
+      "nameKo": "제너럴 밀스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "GL",
+      "nameKo": "글로브 라이프",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "GLW",
+      "nameKo": "코닝",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "GM",
+      "nameKo": "제너럴 모터스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "GNRC",
+      "nameKo": "제너락",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "GOOG",
+      "nameKo": "알파벳 (클래스 C)",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "GOOGL",
+      "nameKo": "알파벳",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "GPC",
+      "nameKo": "제뉴인 파츠",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "GPN",
+      "nameKo": "글로벌 페이먼츠",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "GRMN",
+      "nameKo": "가민",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "GS",
+      "nameKo": "골드만삭스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "GWW",
+      "nameKo": "W.W. 그레인저",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "HAL",
+      "nameKo": "핼리버튼",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "HAS",
+      "nameKo": "해즈브로",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "HBAN",
+      "nameKo": "헌팅턴 뱅크셰어스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "HCA",
+      "nameKo": "HCA 헬스케어",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "HD",
+      "nameKo": "홈디포",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "HIG",
+      "nameKo": "하트포드",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "HII",
+      "nameKo": "헌팅턴 잉걸스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "HLT",
+      "nameKo": "힐튼",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "HON",
+      "nameKo": "허니웰",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "HONA",
+      "nameKo": "허니웰 에어로스페이스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "HOOD",
+      "nameKo": "로빈후드",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "HPE",
+      "nameKo": "휴렛 팩커드 엔터프라이즈",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "HPQ",
+      "nameKo": "HP",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "HRL",
+      "nameKo": "호멜 푸즈",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "HSIC",
+      "nameKo": "헨리 셰인",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "HST",
+      "nameKo": "호스트 호텔스 앤 리조트",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "HSY",
+      "nameKo": "허쉬",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "HUBB",
+      "nameKo": "허벨",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "HUM",
+      "nameKo": "휴매나",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "HWM",
+      "nameKo": "하우멧 에어로스페이스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "IBKR",
+      "nameKo": "인터랙티브 브로커스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "IBM",
+      "nameKo": "IBM",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ICE",
+      "nameKo": "인터콘티넨털 익스체인지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "IDXX",
+      "nameKo": "아이덱스 래버러토리스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "IEX",
+      "nameKo": "아이덱스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "IFF",
+      "nameKo": "인터내셔널 플레이버스 앤 프래그런스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "INCY",
+      "nameKo": "인사이트",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "INTC",
+      "nameKo": "인텔",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "INTU",
+      "nameKo": "인튜이트",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "INVH",
+      "nameKo": "인비테이션 홈즈",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "IP",
+      "nameKo": "인터내셔널 페이퍼",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "IQV",
+      "nameKo": "아이큐비아",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "IR",
+      "nameKo": "인거솔 랜드",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "IRM",
+      "nameKo": "아이언 마운틴",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ISRG",
+      "nameKo": "인튜이티브 서지컬",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "IT",
+      "nameKo": "가트너",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ITW",
+      "nameKo": "일리노이 툴 웍스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "IVZ",
+      "nameKo": "인베스코",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "J",
+      "nameKo": "제이콥스 솔루션스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "JBHT",
+      "nameKo": "J.B. 헌트",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "JBL",
+      "nameKo": "자빌",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "JCI",
+      "nameKo": "존슨 컨트롤스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "JKHY",
+      "nameKo": "잭 헨리",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "JNJ",
+      "nameKo": "존슨앤드존슨",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "JPM",
+      "nameKo": "JP모건",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "KDP",
+      "nameKo": "큐리그 닥터페퍼",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "KEY",
+      "nameKo": "키코프",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "KEYS",
+      "nameKo": "키사이트 테크놀로지스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "KHC",
+      "nameKo": "크래프트 하인즈",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "KIM",
+      "nameKo": "킴코 리얼티",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "KKR",
+      "nameKo": "KKR",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "KLAC",
+      "nameKo": "KLA",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "KMB",
+      "nameKo": "킴벌리클라크",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "KMI",
+      "nameKo": "킨더 모건",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "KO",
+      "nameKo": "코카콜라",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "KR",
+      "nameKo": "크로거",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "KVUE",
+      "nameKo": "켄뷰",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "L",
+      "nameKo": "로우스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "LDOS",
+      "nameKo": "레이도스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "LEN",
+      "nameKo": "레나",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "LH",
+      "nameKo": "랩코프",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "LHX",
+      "nameKo": "L3해리스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "LII",
+      "nameKo": "레녹스 인터내셔널",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "LIN",
+      "nameKo": "린데",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "LITE",
+      "nameKo": "루멘텀",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "LLY",
+      "nameKo": "일라이 릴리",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "LMT",
+      "nameKo": "록히드 마틴",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "LNT",
+      "nameKo": "얼라이언트 에너지",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "LOW",
+      "nameKo": "로우스 컴퍼니스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "LRCX",
+      "nameKo": "램리서치",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "LULU",
+      "nameKo": "룰루레몬",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "LUV",
+      "nameKo": "사우스웨스트항공",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "LVS",
+      "nameKo": "라스베이거스 샌즈",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "LYB",
+      "nameKo": "라이온델바젤",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "LYV",
+      "nameKo": "라이브 네이션",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MA",
+      "nameKo": "마스터카드",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MAA",
+      "nameKo": "미드 아메리카 아파트먼트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MAR",
+      "nameKo": "메리어트",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "MAS",
+      "nameKo": "마스코",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MCD",
+      "nameKo": "맥도날드",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MCHP",
+      "nameKo": "마이크로칩 테크놀로지",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "MCK",
+      "nameKo": "맥케슨",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MCO",
+      "nameKo": "무디스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MDLZ",
+      "nameKo": "몬델리즈",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "MDT",
+      "nameKo": "메드트로닉",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MET",
+      "nameKo": "메트라이프",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "META",
+      "nameKo": "메타",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "MGM",
+      "nameKo": "MGM 리조트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MKC",
+      "nameKo": "맥코믹",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MLM",
+      "nameKo": "마틴 마리에타",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MMM",
+      "nameKo": "3M",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MNST",
+      "nameKo": "몬스터 베버리지",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "MO",
+      "nameKo": "알트리아",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MOS",
+      "nameKo": "모자이크",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MPC",
+      "nameKo": "마라톤 페트롤리엄",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MPWR",
+      "nameKo": "모놀리식 파워 시스템즈",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "MRK",
+      "nameKo": "머크",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MRNA",
+      "nameKo": "모더나",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "MRSH",
+      "nameKo": "마시 맥레넌",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MRVL",
+      "nameKo": "마벨 테크놀로지",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "MS",
+      "nameKo": "모건스탠리",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MSCI",
+      "nameKo": "MSCI",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MSFT",
+      "nameKo": "마이크로소프트",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "MSI",
+      "nameKo": "모토로라 솔루션스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MTB",
+      "nameKo": "M&T 뱅크",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MTD",
+      "nameKo": "메틀러 톨레도",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "MU",
+      "nameKo": "마이크론",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "NCLH",
+      "nameKo": "노르웨이지안 크루즈 라인",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "NDAQ",
+      "nameKo": "나스닥",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "NDSN",
+      "nameKo": "노드슨",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "NEE",
+      "nameKo": "넥스트에라 에너지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "NEM",
+      "nameKo": "뉴몬트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "NFLX",
+      "nameKo": "넷플릭스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "NI",
+      "nameKo": "나이소스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "NKE",
+      "nameKo": "나이키",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "NOC",
+      "nameKo": "노스롭 그루먼",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "NOW",
+      "nameKo": "서비스나우",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "NRG",
+      "nameKo": "NRG 에너지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "NSC",
+      "nameKo": "노퍽 서던",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "NTAP",
+      "nameKo": "넷앱",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "NTRS",
+      "nameKo": "노던 트러스트",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "NUE",
+      "nameKo": "뉴코어",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "NVDA",
+      "nameKo": "엔비디아",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "NVR",
+      "nameKo": "NVR",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "NWS",
+      "nameKo": "뉴스코프 (클래스 B)",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "NWSA",
+      "nameKo": "뉴스코프 (클래스 A)",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "NXPI",
+      "nameKo": "NXP 반도체",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "O",
+      "nameKo": "리얼티 인컴",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ODFL",
+      "nameKo": "올드 도미니언 프레이트 라인",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "OKE",
+      "nameKo": "오닉",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "OMC",
+      "nameKo": "옴니콤",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ON",
+      "nameKo": "온세미",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ORCL",
+      "nameKo": "오라클",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ORLY",
+      "nameKo": "오라일리 오토모티브",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "OTIS",
+      "nameKo": "오티스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "OXY",
+      "nameKo": "옥시덴털 페트롤리엄",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PANW",
+      "nameKo": "팔로알토 네트웍스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "PAYX",
+      "nameKo": "페이첵스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "PCAR",
+      "nameKo": "팩카",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "PCG",
+      "nameKo": "PG&E",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PEG",
+      "nameKo": "퍼블릭 서비스 엔터프라이즈",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PEP",
+      "nameKo": "펩시코",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "PFE",
+      "nameKo": "화이자",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PFG",
+      "nameKo": "프린시펄 파이낸셜",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "PG",
+      "nameKo": "P&G",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PGR",
+      "nameKo": "프로그레시브",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PH",
+      "nameKo": "파커 하니핀",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PHM",
+      "nameKo": "풀트그룹",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PKG",
+      "nameKo": "패키징 코퍼레이션 오브 아메리카",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PLD",
+      "nameKo": "프로로지스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PLTR",
+      "nameKo": "팔란티어",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "PM",
+      "nameKo": "필립모리스 인터내셔널",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PNC",
+      "nameKo": "PNC 파이낸셜",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PNR",
+      "nameKo": "펜테어",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PNW",
+      "nameKo": "피너클 웨스트 캐피털",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PODD",
+      "nameKo": "인슐렛",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "PPG",
+      "nameKo": "PPG 인더스트리스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PPL",
+      "nameKo": "PPL",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PRU",
+      "nameKo": "푸르덴셜 파이낸셜",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PSA",
+      "nameKo": "퍼블릭 스토리지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PSKY",
+      "nameKo": "파라마운트 스카이댄스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "PSX",
+      "nameKo": "필립스 66",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PTC",
+      "nameKo": "PTC",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "PWR",
+      "nameKo": "콴타 서비스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "PYPL",
+      "nameKo": "페이팔",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "Q",
+      "nameKo": "큐니티 일렉트로닉스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "QCOM",
+      "nameKo": "퀄컴",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "RCL",
+      "nameKo": "로열 캐리비안",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "REG",
+      "nameKo": "리전시 센터스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "REGN",
+      "nameKo": "리제네론",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "RF",
+      "nameKo": "리전스 파이낸셜",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "RJF",
+      "nameKo": "레이먼드 제임스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "RL",
+      "nameKo": "랄프 로렌",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "RMD",
+      "nameKo": "레스메드",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ROK",
+      "nameKo": "로크웰 오토메이션",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ROL",
+      "nameKo": "롤린스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ROP",
+      "nameKo": "로퍼 테크놀로지스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ROST",
+      "nameKo": "로스 스토어스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "RSG",
+      "nameKo": "리퍼블릭 서비스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "RTX",
+      "nameKo": "RTX",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "RVTY",
+      "nameKo": "레비티",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SBAC",
+      "nameKo": "SBA 커뮤니케이션스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "SBUX",
+      "nameKo": "스타벅스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "SCHW",
+      "nameKo": "찰스 슈왑",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SHW",
+      "nameKo": "셔윈 윌리엄스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SJM",
+      "nameKo": "J.M. 스머커",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SLB",
+      "nameKo": "슐럼버거",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SMCI",
+      "nameKo": "슈퍼마이크로",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "SNA",
+      "nameKo": "스냅온",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SNDK",
+      "nameKo": "샌디스크",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "SNPS",
+      "nameKo": "시놉시스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "SO",
+      "nameKo": "서던 컴퍼니",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SOLV",
+      "nameKo": "솔벤텀",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SPG",
+      "nameKo": "사이먼 프로퍼티 그룹",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SPGI",
+      "nameKo": "S&P 글로벌",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SRE",
+      "nameKo": "셈프라",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "STE",
+      "nameKo": "스테리스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "STLD",
+      "nameKo": "스틸 다이내믹스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "STT",
+      "nameKo": "스테이트 스트리트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "STX",
+      "nameKo": "씨게이트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "STZ",
+      "nameKo": "컨스텔레이션 브랜즈",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SW",
+      "nameKo": "스머핏 웨스트록",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SWK",
+      "nameKo": "스탠리 블랙 앤 데커",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SWKS",
+      "nameKo": "스카이웍스 솔루션스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "SYF",
+      "nameKo": "싱크로니 파이낸셜",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SYK",
+      "nameKo": "스트라이커",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "SYY",
+      "nameKo": "시스코 푸드",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "T",
+      "nameKo": "AT&T",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TAP",
+      "nameKo": "몰슨 쿠어스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TDG",
+      "nameKo": "트랜스다임",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TDY",
+      "nameKo": "텔레다인",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TECH",
+      "nameKo": "바이오테크니",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "TEL",
+      "nameKo": "TE 커넥티비티",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TER",
+      "nameKo": "테라다인",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "TFC",
+      "nameKo": "트루이스트 파이낸셜",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TGT",
+      "nameKo": "타겟",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TJX",
+      "nameKo": "TJX",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TKO",
+      "nameKo": "TKO 그룹",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TMO",
+      "nameKo": "써모 피셔 사이언티픽",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TMUS",
+      "nameKo": "T-모바일 US",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "TPL",
+      "nameKo": "텍사스 퍼시픽 랜드",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TPR",
+      "nameKo": "태피스트리",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TRGP",
+      "nameKo": "타르가 리소시스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TRMB",
+      "nameKo": "트림블",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "TROW",
+      "nameKo": "T. 로우 프라이스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "TRV",
+      "nameKo": "트래블러스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TSCO",
+      "nameKo": "트랙터 서플라이",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "TSLA",
+      "nameKo": "테슬라",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "TSN",
+      "nameKo": "타이슨 푸드",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TT",
+      "nameKo": "트레인 테크놀로지스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TTD",
+      "nameKo": "트레이드 데스크",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "TTWO",
+      "nameKo": "테이크투 인터랙티브",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "TXN",
+      "nameKo": "텍사스 인스트루먼트",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "TXT",
+      "nameKo": "텍스트론",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "TYL",
+      "nameKo": "타일러 테크놀로지스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "UAL",
+      "nameKo": "유나이티드항공",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "UBER",
+      "nameKo": "우버",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "UDR",
+      "nameKo": "UDR",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "UHS",
+      "nameKo": "유니버설 헬스 서비스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ULTA",
+      "nameKo": "울타 뷰티",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "UNH",
+      "nameKo": "유나이티드헬스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "UNP",
+      "nameKo": "유니언 퍼시픽",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "UPS",
+      "nameKo": "UPS",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "URI",
+      "nameKo": "유나이티드 렌탈스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "USB",
+      "nameKo": "US 뱅코프",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "V",
+      "nameKo": "비자",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "VEEV",
+      "nameKo": "비바 시스템즈",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "VICI",
+      "nameKo": "VICI 프로퍼티스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "VLO",
+      "nameKo": "발레로 에너지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "VLTO",
+      "nameKo": "베랄토",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "VMC",
+      "nameKo": "벌칸 머티리얼스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "VRSK",
+      "nameKo": "베리스크 애널리틱스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "VRSN",
+      "nameKo": "베리사인",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "VRT",
+      "nameKo": "버티브",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "VRTX",
+      "nameKo": "버텍스 파마슈티컬스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "VST",
+      "nameKo": "비스트라",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "VTR",
+      "nameKo": "벤타스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "VTRS",
+      "nameKo": "비아트리스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "VZ",
+      "nameKo": "버라이즌",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "WAB",
+      "nameKo": "왑텍",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "WAT",
+      "nameKo": "워터스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "WBD",
+      "nameKo": "워너 브라더스 디스커버리",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "WDAY",
+      "nameKo": "워크데이",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "WDC",
+      "nameKo": "웨스턴 디지털",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "WEC",
+      "nameKo": "WEC 에너지",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "WELL",
+      "nameKo": "웰타워",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "WFC",
+      "nameKo": "웰스파고",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "WM",
+      "nameKo": "웨이스트 매니지먼트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "WMB",
+      "nameKo": "윌리엄스 컴퍼니스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "WMT",
+      "nameKo": "월마트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "WRB",
+      "nameKo": "W.R. 버클리",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "WSM",
+      "nameKo": "윌리엄스 소노마",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "WST",
+      "nameKo": "웨스트 파마슈티컬 서비스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "WTW",
+      "nameKo": "윌리스 타워스 왓슨",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "WY",
+      "nameKo": "웨어하우저",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "WYNN",
+      "nameKo": "윈 리조트",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "XEL",
+      "nameKo": "엑셀 에너지",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "XOM",
+      "nameKo": "엑슨모빌",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "XYL",
+      "nameKo": "자일럼",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "XYZ",
+      "nameKo": "블록",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "YUM",
+      "nameKo": "얌 브랜즈",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ZBH",
+      "nameKo": "짐머 바이오메트",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    },
+    {
+      "symbol": "ZBRA",
+      "nameKo": "지브라 테크놀로지스",
+      "exchange": "NASDAQ",
+      "exchangeKo": "나스닥"
+    },
+    {
+      "symbol": "ZTS",
+      "nameKo": "조에티스",
+      "exchange": "NYSE",
+      "exchangeKo": "NYSE"
+    }
+  ]
+}

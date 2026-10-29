@@ -49,6 +49,7 @@ from market_data.common.redis_keys import RedisKeyBuilder  # noqa: E402
 from market_data.serving.intervals import candle_count_for_24h  # noqa: E402
 from market_data.serving.hot_symbols import DEFAULT_HOT_LIMIT, build_hot_symbols_payload  # noqa: E402
 from market_data.serving.provider import MarketDataProvider  # noqa: E402
+from app.services.instrument_names import with_korean_names  # noqa: E402
 from market_data.serving.time_utils import parse_utc_time  # noqa: E402
 
 
@@ -314,11 +315,14 @@ def market_symbol_page(
         "total": total,
         "hasPrev": page > 1,
         "hasNext": end < total,
-        "symbols": symbol_summaries_for(
-            page_symbols,
-            max_items=None,
-            backfill_service=backfill_service,
-        ),
+        "symbols": [
+            with_korean_names(summary)
+            for summary in symbol_summaries_for(
+                page_symbols,
+                max_items=None,
+                backfill_service=backfill_service,
+            )
+        ],
     }
 
 
