@@ -1,0 +1,52 @@
+name: ✨ 기능 개발
+description: 새로 만들 기능이나 개선할 작업을 등록합니다
+title: "[Feat] "
+labels: ["type: feature"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 무엇을 만드나요?
+      description: 결과물이 무엇인지 한 문장으로 적어주세요.
+      placeholder: JWT 기반 로그인 API를 구현합니다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: 왜 필요한가요?
+      description: 배경과 목적. 나중에 "이거 왜 했더라"를 막아주는 부분입니다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: todo
+    attributes:
+      label: 할 일
+      description: 체크박스로 쪼개면 진행 상황이 이슈 목록에서 바로 보입니다.
+      value: |
+        - [ ] 
+        - [ ] 
+        - [ ] 
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: 완료 조건
+      description: 이 조건들이 만족되면 이슈를 닫습니다.
+      placeholder: |
+        - POST /auth/login 이 access token을 반환한다
+        - 잘못된 비밀번호는 401을 반환한다
+    validations:
+      required: true
+
+  - type: input
+    id: refs
+    attributes:
+      label: 참고 자료 / 관련 이슈
+      placeholder: "#12, 디자인 시안 링크, 스펙 문서"
+    validations:
+      required: false

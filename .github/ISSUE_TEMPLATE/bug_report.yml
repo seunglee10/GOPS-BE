@@ -1,0 +1,50 @@
+name: 🐛 버그 리포트
+description: 동작하지 않거나 예상과 다르게 동작하는 것을 신고합니다
+title: "[Bug] "
+labels: ["type: bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 무슨 일이 일어났나요?
+      description: 어떤 상황에서 무엇이 잘못됐는지 한두 문장으로 적어주세요.
+      placeholder: 로그인 버튼을 누르면 500 에러가 뜨고 아무 반응이 없습니다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 재현 방법
+      description: 다른 사람이 그대로 따라 했을 때 같은 문제가 나오도록 적어주세요.
+      value: |
+        1. `/login` 페이지 접속
+        2. 이메일/비밀번호 입력 후 로그인 클릭
+        3. 콘솔에 500 에러 확인
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대한 동작
+      placeholder: 로그인 성공 후 대시보드로 이동해야 합니다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 로그 / 스크린샷
+      description: 에러 메시지, 스택 트레이스, 화면 캡처가 있다면 붙여주세요.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: env
+    attributes:
+      label: 환경
+      placeholder: "macOS 15 / Chrome 130 / main 브랜치 a1b2c3d"
+    validations:
+      required: false
