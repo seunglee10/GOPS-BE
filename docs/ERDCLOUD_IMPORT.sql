@@ -10,9 +10,11 @@
 --   app_users is the internal owner key; OAuth subjects remain in user_identities during compatibility.
 --   fk_logical_* constraints describe code-level relationships that ClickHouse does not enforce.
 
--- ============================================================================
+-- =====================================================================);
+
 -- PostgreSQL: order, alerts, recommendations, paper trading, chart assets
--- ============================================================================
+-- =====================================================================);
+
 
 CREATE TABLE app_users (
     app_user_id CHAR(36) NOT NULL,
@@ -81,6 +83,20 @@ CREATE TABLE user_consents (
     consented_at DATETIME(3) NOT NULL,
     PRIMARY KEY (app_user_id),
     CONSTRAINT fk_user_consents_user FOREIGN KEY (app_user_id) REFERENCES app_users(app_user_id)
+);
+
+CREATE TABLE user_identity_tokens (
+    provider VARCHAR(64) NOT NULL,
+    provider_subject VARCHAR(255) NOT NULL,
+    access_token TEXT,
+    refresh_token TEXT,
+    access_expires_at DATETIME(3),
+    refresh_expires_at DATETIME(3),
+    scope TEXT,
+    created_at DATETIME(3) NOT NULL,
+    updated_at DATETIME(3) NOT NULL,
+    PRIMARY KEY (provider, provider_subject),
+    CONSTRAINT fk_user_identity_tokens_identity FOREIGN KEY (provider, provider_subject) REFERENCES user_identities(provider, provider_subject)
 );
 
 CREATE TABLE instruments (
@@ -870,10 +886,12 @@ CREATE TABLE chart_assets_geometry_asset_snapshots (
     PRIMARY KEY (dataset_id, symbol, `interval`)
 );
 
--- ============================================================================
+-- =====================================================================);
+
 -- ClickHouse logical model: market data, news, fundamentals, company journal
 -- ch_ primary keys represent ClickHouse ORDER BY identity for ERD visualization.
--- ============================================================================
+-- =====================================================================);
+
 
 CREATE TABLE ch_symbols (
     symbol VARCHAR(32) NOT NULL,
