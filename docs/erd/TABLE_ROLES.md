@@ -9,7 +9,7 @@
 | `app_users` | PostgreSQL | 내부 사용자 기준정보와 활성 상태 | 모든 사용자 소유 테이블의 `app_user_id` |
 | `user_identities` | PostgreSQL | Google 등 외부 인증 주체를 내부 사용자로 매핑 | `app_users` |
 | `email_credentials` | PostgreSQL | 이메일 가입 사용자의 비밀번호 해시와 인증 완료 시각 | `app_users` |
-| `email_verifications` | PostgreSQL | 이메일로 보낸 인증 코드·비밀번호 재설정 토큰의 해시, 만료, 시도 횟수 | `email` (FK 없음, 가입 전에도 쌓임) |
+| `email_verifications` | PostgreSQL | 이메일로 보낸 인증 코드·비밀번호 재설정 토큰의 해시, 만료, 시도 횟수. 가입 코드는 확인 전까지 비밀번호 해시를 보류(`pending_password_hash`) | `email` (FK 없음, 가입 전에도 쌓임) |
 | `login_attempts` | PostgreSQL | 이메일별 로그인 실패 횟수와 잠금 해제 시각 | `email` (FK 없음, 없는 계정도 셈) |
 | `user_consents` | PostgreSQL | 약관·개인정보·연령 필수 동의와 마케팅 선택 동의 | `app_users` |
 | `user_identity_tokens` | PostgreSQL | 소셜 제공자가 발급한 access/refresh 토큰. 제공자 API 호출용이며 응답·로그에 싣지 않음 | `user_identities` |

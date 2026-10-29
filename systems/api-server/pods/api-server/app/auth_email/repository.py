@@ -48,6 +48,7 @@ class EmailVerification:
     attempts: int
     consumed_at: datetime | None
     created_at: datetime
+    pending_password_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -75,7 +76,13 @@ class EmailAuthRepository(Protocol):
     def mark_verified(self, app_user_id: str, verified_at: datetime) -> None: ...
 
     def create_verification(
-        self, email: str, purpose: str, code_hash: str, expires_at: datetime, created_at: datetime
+        self,
+        email: str,
+        purpose: str,
+        code_hash: str,
+        expires_at: datetime,
+        created_at: datetime,
+        pending_password_hash: str | None = None,
     ) -> EmailVerification: ...
     def latest_verification(self, email: str, purpose: str) -> EmailVerification | None: ...
     def find_verification_by_hash(self, purpose: str, code_hash: str) -> EmailVerification | None: ...
@@ -135,7 +142,13 @@ class InMemoryEmailAuthRepository:
             self.credentials[credential.email] = replace(credential, email_verified_at=verified_at)
 
     def create_verification(
-        self, email: str, purpose: str, code_hash: str, expires_at: datetime, created_at: datetime
+        self,
+        email: str,
+        purpose: str,
+        code_hash: str,
+        expires_at: datetime,
+        created_at: datetime,
+        pending_password_hash: str | None = None,
     ) -> EmailVerification:
         # 같은 이메일·목적의 살아 있는 이전 값은 무효화한다. 유효한 코드는 항상 하나다.
         self.verifications = [
@@ -153,6 +166,7 @@ class InMemoryEmailAuthRepository:
             attempts=0,
             consumed_at=None,
             created_at=created_at,
+            pending_password_hash=pending_password_hash,
         )
         self._next_id += 1
         self.verifications.append(record)
@@ -296,7 +310,13 @@ class PostgresEmailAuthRepository:
     # -- verifications ------------------------------------------------------
 
     def create_verification(
-        self, email: str, purpose: str, code_hash: str, expires_at: datetime, created_at: datetime
+        self,
+        email: str,
+        purpose: str,
+        code_hash: str,
+        expires_at: datetime,
+        created_at: datetime,
+        pending_password_hash: str | None = None,
     ) -> EmailVerification:
         try:
             with self._connect() as conn:
@@ -309,11 +329,14 @@ class PostgresEmailAuthRepository:
                 )
                 row = conn.execute(
                     """
-                    INSERT INTO email_verifications (email, code_hash, purpose, expires_at, created_at)
-                    VALUES (%s, %s, %s, %s, %s)
-                    RETURNING id, email, code_hash, purpose, expires_at, attempts, consumed_at, created_at
+                    INSERT INTO email_verifications (
+                        email, code_hash, purpose, expires_at, created_at, pending_password_hash
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id, email, code_hash, purpose, expires_at, attempts, consumed_at, created_at,
+                              pending_password_hash
                     """,
-                    (email, code_hash, purpose, expires_at, created_at),
+                    (email, code_hash, purpose, expires_at, created_at, pending_password_hash),
                 ).fetchone()
                 conn.commit()
         except psycopg.Error as exc:
@@ -326,7 +349,8 @@ class PostgresEmailAuthRepository:
     def latest_verification(self, email: str, purpose: str) -> EmailVerification | None:
         row = self._fetchone(
             """
-            SELECT id, email, code_hash, purpose, expires_at, attempts, consumed_at, created_at
+            SELECT id, email, code_hash, purpose, expires_at, attempts, consumed_at, created_at,
+                   pending_password_hash
             FROM email_verifications
             WHERE email = %s AND purpose = %s
             ORDER BY created_at DESC, id DESC
@@ -339,7 +363,8 @@ class PostgresEmailAuthRepository:
     def find_verification_by_hash(self, purpose: str, code_hash: str) -> EmailVerification | None:
         row = self._fetchone(
             """
-            SELECT id, email, code_hash, purpose, expires_at, attempts, consumed_at, created_at
+            SELECT id, email, code_hash, purpose, expires_at, attempts, consumed_at, created_at,
+                   pending_password_hash
             FROM email_verifications
             WHERE purpose = %s AND code_hash = %s
             ORDER BY created_at DESC, id DESC
@@ -479,6 +504,7 @@ def _verification(row: dict[str, Any] | None) -> EmailVerification | None:
         attempts=int(row["attempts"]),
         consumed_at=_aware(row["consumed_at"]),
         created_at=_aware(row["created_at"]) or datetime.now(timezone.utc),
+        pending_password_hash=row.get("pending_password_hash") or None,
     )
 
 

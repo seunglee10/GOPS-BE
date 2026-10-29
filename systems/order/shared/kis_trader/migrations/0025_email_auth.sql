@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS email_verifications (
     purpose TEXT NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
+    pending_password_hash TEXT,
     consumed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT email_verifications_purpose_check CHECK (purpose IN ('verify', 'reset'))
@@ -46,6 +47,9 @@ CREATE INDEX IF NOT EXISTS email_verifications_code_hash_idx
 
 COMMENT ON TABLE email_verifications IS
     '이메일로 보낸 인증 코드·재설정 토큰의 해시와 만료·시도 횟수.';
+COMMENT ON COLUMN email_verifications.pending_password_hash IS
+    '가입 요청이 들고 온 비밀번호 해시. 이 코드가 확인될 때만 email_credentials 로 옮긴다. '
+    '미인증 재가입이 기존 비밀번호를 덮어쓰지 못하게 하는 장치다.';
 
 -- 로그인 실패 횟수와 잠금. 계정이 없는 이메일도 세어서 존재 여부가 새지 않게 한다.
 CREATE TABLE IF NOT EXISTS login_attempts (

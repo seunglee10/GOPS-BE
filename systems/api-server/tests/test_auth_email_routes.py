@@ -201,6 +201,36 @@ class EmailAuthRoutesTest(unittest.TestCase):
         self.client.cookies.clear()
         self.assertEqual(self.login(password="newpass99").status_code, 200)
 
+    def test_resignup_cannot_change_password_before_its_own_code_is_verified(self):
+        # 피해자가 pw1 로 가입하고 아직 인증 전. 공격자가 같은 이메일·pw2 로 재가입한다.
+        self.assertEqual(self.signup(password="victim11").status_code, 201)
+        stored_before = self.repository.find_credential(self.EMAIL).password_hash
+        self.assertEqual(self.signup(password="attack22", consents={**self.CONSENTS, "mkt": True}).status_code, 201)
+        # 저장된 비밀번호·동의는 그대로다.
+        self.assertEqual(self.repository.find_credential(self.EMAIL).password_hash, stored_before)
+        self.assertFalse(self.repository.get_consent(self.repository.find_credential(self.EMAIL).app_user_id).mkt)
+        # 인증 전에는 로그인되지 않는다. 공격자의 비밀번호는 아예 틀린 비밀번호다.
+        self.assertEqual(self.login(password="victim11").status_code, 403)
+        self.assertEqual(self.login(password="attack22").status_code, 401)
+
+        # 메일을 받은 쪽(이메일 주인)이 두 번째 코드로 인증하면 그 코드의 비밀번호가 쓰인다.
+        self.assertEqual(self.verify(code=self.mailer.codes[1][1]).status_code, 200)
+        self.client.cookies.clear()
+        self.assertEqual(self.login(password="attack22").status_code, 200)
+        self.client.cookies.clear()
+        self.assertEqual(self.login(password="victim11").status_code, 401)
+
+    def test_first_code_is_invalid_after_resignup_and_keeps_first_password(self):
+        self.assertEqual(self.signup(password="victim11").status_code, 201)
+        self.assertEqual(self.signup(password="attack22").status_code, 201)
+        # 재가입은 이전 코드를 무효화한다. 유효한 코드는 항상 하나다.
+        first = self.verify(code=self.mailer.codes[0][1])
+        self.assertEqual(first.status_code, 400)
+        self.assertEqual(first.json()["detail"]["code"], "invalid_code")
+        # 아무것도 확인되지 않았으니 비밀번호는 첫 가입 값 그대로다.
+        self.assertTrue(verify_password("victim11", self.repository.find_credential(self.EMAIL).password_hash))
+        self.assertEqual(self.login(password="victim11").status_code, 403)
+
     def test_weak_password_and_missing_consent_are_422(self):
         weak = self.signup(password="abcdefgh")
         self.assertEqual(weak.status_code, 422)

@@ -133,13 +133,13 @@ class EmailAuthService:
         password_hash = hash_password(password)
         if existing is None:
             credential = self.repository.create_credential(email, password_hash)
+            self.repository.save_consent(credential.app_user_id, consented_at=now, **consents)
         else:
-            # 인증을 못 끝낸 가입은 다시 시도할 수 있다. 코드는 그 메일로만 오니
-            # 남의 미인증 가입을 가로채도 얻는 게 없다.
-            self.repository.update_password(existing.app_user_id, password_hash)
-            credential = EmailCredential(existing.app_user_id, email, password_hash, None)
-        self.repository.save_consent(credential.app_user_id, consented_at=now, **consents)
-        self._issue_code(email, now)
+            # 인증을 못 끝낸 가입은 다시 시도할 수 있지만, 저장된 비밀번호·동의는 건드리지
+            # 않는다. 새 비밀번호는 코드와 함께 보류해 두고 그 코드가 확인될 때만 옮긴다.
+            # 그래야 남이 내 미인증 이메일로 재가입해 비밀번호를 바꿔 끼우지 못한다.
+            credential = existing
+        self._issue_code(email, now, pending_password_hash=password_hash)
         return SignupResult(credential=credential)
 
     def resend(self, email_value: Any) -> int:
@@ -175,9 +175,14 @@ class EmailAuthService:
         if credential is None:
             raise EmailAuthError(410, "expired")
         self.repository.consume_verification(record.id, now)
+        password_hash = credential.password_hash
+        if record.pending_password_hash and record.pending_password_hash != password_hash:
+            # 이 코드를 받은 가입 요청의 비밀번호가 계정 비밀번호가 된다.
+            self.repository.update_password(credential.app_user_id, record.pending_password_hash)
+            password_hash = record.pending_password_hash
         self.repository.mark_verified(credential.app_user_id, now)
         self.repository.clear_login_attempts(email)
-        return email_user(EmailCredential(credential.app_user_id, email, credential.password_hash, now))
+        return email_user(EmailCredential(credential.app_user_id, email, password_hash, now))
 
     # -- 로그인 --------------------------------------------------------------
 
@@ -262,10 +267,15 @@ class EmailAuthService:
 
     # -- helpers -------------------------------------------------------------
 
-    def _issue_code(self, email: str, now: datetime) -> None:
+    def _issue_code(self, email: str, now: datetime, *, pending_password_hash: str | None = None) -> None:
         code = "".join(secrets.choice("0123456789") for _ in range(CODE_LENGTH))
         self.repository.create_verification(
-            email, PURPOSE_VERIFY, self._code_hash(PURPOSE_VERIFY, email, code), now + CODE_TTL, now
+            email,
+            PURPOSE_VERIFY,
+            self._code_hash(PURPOSE_VERIFY, email, code),
+            now + CODE_TTL,
+            now,
+            pending_password_hash=pending_password_hash,
         )
         self.mailer.send_verification_code(email, code)
 

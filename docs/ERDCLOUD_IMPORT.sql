@@ -60,6 +60,7 @@ CREATE TABLE email_verifications (
     purpose VARCHAR(16) NOT NULL,
     expires_at DATETIME(3) NOT NULL,
     attempts INT NOT NULL,
+    pending_password_hash TEXT,
     consumed_at DATETIME(3),
     created_at DATETIME(3) NOT NULL,
     PRIMARY KEY (id),
