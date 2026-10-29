@@ -8,6 +8,7 @@
 |---|---|---|---|
 | `app_users` | PostgreSQL | 내부 사용자 기준정보와 활성 상태 | 모든 사용자 소유 테이블의 `app_user_id` |
 | `user_identities` | PostgreSQL | Google 등 외부 인증 주체를 내부 사용자로 매핑 | `app_users` |
+| `user_identity_tokens` | PostgreSQL | 소셜 제공자가 발급한 access/refresh 토큰. 제공자 API 호출용이며 응답·로그에 싣지 않음 | `user_identities` |
 | `orders` | PostgreSQL | 실주문 요청 원본과 현재 상태 | 사용자, 종목, 주문 이벤트 |
 | `order_events` | PostgreSQL | 주문 상태 변경 이력 | `orders` |
 | `idempotency_requests` | PostgreSQL | 같은 주문 API 요청의 중복 생성 차단 | `orders` |

@@ -39,6 +39,20 @@ CREATE TABLE user_identities (
     CONSTRAINT fk_user_identities_user FOREIGN KEY (app_user_id) REFERENCES app_users(app_user_id)
 );
 
+CREATE TABLE user_identity_tokens (
+    provider VARCHAR(64) NOT NULL,
+    provider_subject VARCHAR(255) NOT NULL,
+    access_token TEXT,
+    refresh_token TEXT,
+    access_expires_at DATETIME(3),
+    refresh_expires_at DATETIME(3),
+    scope TEXT,
+    created_at DATETIME(3) NOT NULL,
+    updated_at DATETIME(3) NOT NULL,
+    PRIMARY KEY (provider, provider_subject),
+    CONSTRAINT fk_user_identity_tokens_identity FOREIGN KEY (provider, provider_subject) REFERENCES user_identities(provider, provider_subject)
+);
+
 CREATE TABLE instruments (
     instrument_id CHAR(36) NOT NULL,
     canonical_symbol VARCHAR(64) NOT NULL,
