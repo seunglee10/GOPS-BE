@@ -207,6 +207,46 @@ class EmailAuthService:
             session_ttl_seconds=REMEMBER_TTL_SECONDS if remember else None,
         )
 
+    # -- 비밀번호 재설정 -------------------------------------------------------
+
+    def forgot(self, email_value: Any) -> None:
+        email = normalize_email(email_value)
+        credential = self.repository.find_credential(email)
+        if credential is None:
+            return  # 없는 이메일도 200. 존재 여부를 흘리지 않는다.
+        now = self._now()
+        token = secrets.token_urlsafe(RESET_TOKEN_BYTES)
+        self.repository.create_verification(
+            email, PURPOSE_RESET, self._token_hash(token), now + RESET_TTL, now
+        )
+        self.mailer.send_password_reset(email, self.reset_link(token))
+
+    def reset(self, token_value: Any, password: Any) -> ResetResult:
+        token = str(token_value or "").strip()
+        if not token:
+            raise EmailAuthError(400, "invalid_token")
+        if not password_is_strong(password):
+            raise EmailAuthError(422, "weak_password")
+        now = self._now()
+        record = self.repository.find_verification_by_hash(PURPOSE_RESET, self._token_hash(token))
+        if record is None or record.consumed_at is not None:
+            raise EmailAuthError(400, "invalid_token")
+        if record.expires_at <= now:
+            raise EmailAuthError(410, "expired")
+        credential = self.repository.find_credential(record.email)
+        if credential is None:
+            raise EmailAuthError(400, "invalid_token")
+
+        self.repository.consume_verification(record.id, now)
+        self.repository.update_password(credential.app_user_id, hash_password(password))
+        # 재설정 메일을 받았다는 것 자체가 이메일 소유 증명이다.
+        self.repository.mark_verified(credential.app_user_id, now)
+        self.repository.clear_login_attempts(record.email)
+        return ResetResult(app_user_id=credential.app_user_id, email=record.email)
+
+    def reset_link(self, token: str) -> str:
+        return f"{self.public_base_url}{RESET_PATH}?step=reset&token={token}"
+
     # -- helpers -------------------------------------------------------------
 
     def _issue_code(self, email: str, now: datetime) -> None:
@@ -219,6 +259,10 @@ class EmailAuthService:
     @staticmethod
     def _code_hash(purpose: str, email: str, code: str) -> str:
         return hashlib.sha256(f"{purpose}:{email}:{code}".encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _token_hash(token: str) -> str:
+        return hashlib.sha256(f"{PURPOSE_RESET}:{token}".encode("utf-8")).hexdigest()
 
 
 def _iso(value: datetime) -> str:

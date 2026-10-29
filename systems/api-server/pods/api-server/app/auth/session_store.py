@@ -103,6 +103,18 @@ class RedisSessionStore:
         if session_id:
             self.redis.delete(self._session_key(session_id))
 
+    def delete_sessions_for_user(self, app_user_id: str | None) -> int:
+        if not app_user_id:
+            return 0
+        index_key = self._user_sessions_key(app_user_id)
+        members = self.redis.smembers(index_key) or set()
+        keys = [member if isinstance(member, str) else member.decode("utf-8") for member in members]
+        deleted = 0
+        if keys:
+            deleted = int(self.redis.delete(*keys) or 0)
+        self.redis.delete(index_key)
+        return deleted
+
     def _set_json(self, key: str, payload: dict[str, Any], ttl_seconds: int) -> None:
         self.redis.set(key, json.dumps(payload, ensure_ascii=False, separators=(",", ":")), ex=ttl_seconds)
 
@@ -170,6 +182,16 @@ class MemorySessionStore:
     def delete_session(self, session_id: str | None) -> None:
         if session_id:
             self.values.pop(self._session_key(session_id), None)
+
+    def delete_sessions_for_user(self, app_user_id: str | None) -> int:
+        if not app_user_id:
+            return 0
+        keys = self.user_sessions.pop(app_user_id, set())
+        deleted = 0
+        for key in keys:
+            if self.values.pop(key, None) is not None:
+                deleted += 1
+        return deleted
 
     def session_ttl(self, session_id: str) -> float | None:
         """테스트용: 남은 수명(초)."""

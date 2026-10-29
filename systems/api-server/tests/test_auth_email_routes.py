@@ -303,5 +303,66 @@ class EmailAuthRoutesTest(unittest.TestCase):
         self.assertGreater(long_ttl, REMEMBER_TTL_SECONDS - 60)
         self.assertIn(f"Max-Age={REMEMBER_TTL_SECONDS}", long.headers["set-cookie"])
 
+    # -- password reset -------------------------------------------------------
+
+    def test_forgot_and_reset_drops_every_session_of_the_user(self):
+        self.signup_and_verify()
+        other_browser = TestClient(self.app)
+        other_browser.post("/api/auth/email/login", json={"email": self.EMAIL, "password": self.PASSWORD})
+        self.assertEqual(other_browser.get("/api/auth/me").json()["user"]["email"], self.EMAIL)
+
+        forgot = self.client.post("/api/auth/password/forgot", json={"email": self.EMAIL})
+        self.assertEqual(forgot.status_code, 200)
+        self.assertEqual(forgot.json(), {"sent": True})
+        link = self.mailer.links[0][1]
+        self.assertTrue(link.startswith("http://testserver/forgot?step=reset&token="))
+
+        reset = self.client.post(
+            "/api/auth/password/reset", json={"token": self.mailer.last_token(self.EMAIL), "password": "newpass99"}
+        )
+        self.assertEqual(reset.status_code, 200)
+        self.assertEqual(reset.json(), {"reset": True})
+
+        # 요청을 보낸 브라우저와 다른 브라우저 세션이 모두 사라졌다.
+        self.assertIsNone(self.client.get("/api/auth/me").json()["user"])
+        self.assertIsNone(other_browser.get("/api/auth/me").json()["user"])
+
+        # 같은 토큰은 다시 쓸 수 없고, 새 비밀번호로만 로그인된다.
+        reused = self.client.post(
+            "/api/auth/password/reset", json={"token": self.mailer.last_token(self.EMAIL), "password": "another99"}
+        )
+        self.assertEqual(reused.status_code, 400)
+        self.assertEqual(reused.json(), {"code": "invalid_token"})
+        self.assertEqual(self.login().status_code, 401)
+        self.assertEqual(self.login(password="newpass99").status_code, 200)
+
+    def test_forgot_for_unknown_email_returns_200_without_mail(self):
+        response = self.client.post("/api/auth/password/forgot", json={"email": "nobody@example.com"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"sent": True})
+        self.assertEqual(self.mailer.links, [])
+
+    def test_reset_rejects_bad_expired_and_weak_inputs(self):
+        self.signup_and_verify()
+        self.client.post("/api/auth/password/forgot", json={"email": self.EMAIL})
+        token = self.mailer.last_token(self.EMAIL)
+
+        bad = self.client.post("/api/auth/password/reset", json={"token": "nope", "password": "newpass99"})
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(bad.json(), {"code": "invalid_token"})
+
+        weak = self.client.post("/api/auth/password/reset", json={"token": token, "password": "short"})
+        self.assertEqual(weak.status_code, 422)
+        self.assertEqual(weak.json(), {"code": "weak_password"})
+
+        record = self.latest_verification(PURPOSE_RESET)
+        self.rewrite_verification(record, expires_at=record.created_at - timedelta(seconds=1))
+        expired = self.client.post("/api/auth/password/reset", json={"token": token, "password": "newpass99"})
+        self.assertEqual(expired.status_code, 410)
+        self.assertEqual(expired.json(), {"code": "expired"})
+
+        # 비밀번호는 그대로이고 세션도 살아 있다.
+        self.assertEqual(self.client.get("/api/auth/me").json()["user"]["email"], self.EMAIL)
+
 if __name__ == "__main__":
     unittest.main()

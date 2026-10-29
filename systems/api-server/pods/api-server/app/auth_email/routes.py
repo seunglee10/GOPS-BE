@@ -107,6 +107,32 @@ def email_login(request: Request, body: LoginBody) -> Response:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
+@router.post("/api/auth/password/forgot")
+def password_forgot(request: Request, body: EmailOnlyBody) -> Response:
+    config = _enabled_config()
+    try:
+        email_auth_service_from_app(request.app, config).forgot(body.email)
+    except EmailAuthError as exc:
+        return _error(exc)
+    except (EmailAuthRepositoryError, MailerError, AuthConfigError) as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return JSONResponse({"sent": True})
+
+
+@router.post("/api/auth/password/reset")
+def password_reset(request: Request, body: ResetBody) -> Response:
+    config = _enabled_config()
+    try:
+        result = email_auth_service_from_app(request.app, config).reset(body.token, body.password)
+        # 그 사용자의 세션을 전부 지운다. 쿠키로 들어온 세션도 포함된다.
+        session_store_from_app(request.app, config).delete_sessions_for_user(result.app_user_id)
+    except EmailAuthError as exc:
+        return _error(exc)
+    except (EmailAuthRepositoryError, SessionStoreError, AuthConfigError) as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return JSONResponse({"reset": True})
+
+
 # ---------------------------------------------------------------------------
 
 
