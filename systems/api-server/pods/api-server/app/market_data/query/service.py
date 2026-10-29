@@ -18,6 +18,7 @@ from app.market_data.indices.service import get_indices_service
 from app.market_data.query.canonical import CanonicalCandleQuery
 from app.market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv, sp500_universe_symbols
+from app.services.instrument_names import with_korean_names
 from market_data.serving.chart_derived_data import (
     build_indicator_request,
     build_volume_profile_request,
@@ -161,7 +162,10 @@ class MarketDataQueryService:
         return {
             "source": "alpaca",
             "query": query,
-            "symbols": self.provider.search_symbols(query, limit),
+            "symbols": [
+                with_korean_names(item) if isinstance(item, dict) else item
+                for item in self.provider.search_symbols(query, limit)
+            ],
         }
 
     def symbol_page(self, query: str, page: int, page_size: int) -> dict[str, Any]:
@@ -369,9 +373,10 @@ class MarketDataQueryService:
 
     def symbol_detail(self, symbol: str) -> dict[str, Any]:
         try:
-            return self.provider.symbol_detail(normalize_market_symbol(symbol))
+            detail = self.provider.symbol_detail(normalize_market_symbol(symbol))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return with_korean_names(detail) if isinstance(detail, dict) else detail
 
     def volume_profile_bins(
         self,

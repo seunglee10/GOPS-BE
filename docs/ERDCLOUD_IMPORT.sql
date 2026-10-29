@@ -80,6 +80,14 @@ CREATE TABLE instrument_aliases (
     CONSTRAINT fk_instrument_aliases_instrument FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
 );
 
+CREATE TABLE instrument_names_ko (
+    symbol VARCHAR(64) NOT NULL,
+    name_ko VARCHAR(255) NOT NULL,
+    exchange_ko VARCHAR(32),
+    updated_at DATETIME(3) NOT NULL,
+    PRIMARY KEY (symbol)
+);
+
 CREATE TABLE orders (
     order_id VARCHAR(128) NOT NULL,
     request_id VARCHAR(128) NOT NULL,

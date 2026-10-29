@@ -100,7 +100,7 @@ def test_http_query_path_never_rebuilds_the_projection():
         payload = query_service.heatmap("sp500")
 
     assert payload["cacheStatus"] == "stale"
-    assert payload["items"] == [{"symbol": "AAPL", "marketCap": 10}]
+    assert payload["items"] == [{"symbol": "AAPL", "marketCap": 10, "nameKo": "애플", "exchangeKo": "나스닥"}]
     heatmap.snapshot.assert_called_once_with("sp500", allow_rebuild=False)
 
 
@@ -143,6 +143,8 @@ def test_compact_heatmap_payload_keeps_render_fields_and_drops_fundamentals():
         "volume": 1_000,
         "sessionDollarVolume": 195_200,
         "changePercent": 0.72,
+        "nameKo": "애플",
+        "exchangeKo": "나스닥",
     }]
 
 
