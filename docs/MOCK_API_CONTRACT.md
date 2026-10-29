@@ -228,3 +228,4 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 - 새 경로는 `/api/market/`, `/api/agents/`, `/api/llm/` 접두사를 쓰지 않는다. 시뮬레이터 모드에서 `simulation_guard`가 409로 막는 접두사다. 예외: D3·D6은 기존 `market_data/query` 라우터 안에 있으므로 `/api/market/` 아래에 둔다.
 - 새 도메인은 `app/<domain>/routes.py`에 두고 `main.py`에서 등록한다. 리포지토리는 InMemory + Postgres를 두고 `app.state`로 주입한다.
 - 새 테이블은 `systems/order/shared/kis_trader/migrations/00NN_*.sql` 새 파일로만 추가하고 `docs/ERDCLOUD_IMPORT.sql`, `docs/erd/*.sql`, `docs/erd/TABLE_ROLES.md`를 같은 PR에서 갱신한다.
+- 오류 응답은 FastAPI `HTTPException` 관례대로 `{ "detail": { "code": "...", ... } }` 형태다. 이 문서의 `{ code: ... }` 표기는 `detail` 안의 내용을 뜻한다.
