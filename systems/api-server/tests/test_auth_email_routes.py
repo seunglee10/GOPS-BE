@@ -173,6 +173,9 @@ class EmailAuthRoutesTest(unittest.TestCase):
 
         me = self.client.get("/api/auth/me").json()
         self.assertEqual(me["user"]["provider"], "email")
+        self.assertTrue(me["user"]["emailVerified"])
+        self.assertFalse(me["user"]["needsConsent"])  # 가입 때 동의를 저장했다
+        self.assertIsNone(me["user"]["experience"])
 
         self.client.cookies.clear()
         login = self.login()
@@ -326,6 +329,7 @@ class EmailAuthRoutesTest(unittest.TestCase):
         # 요청을 보낸 브라우저와 다른 브라우저 세션이 모두 사라졌다.
         self.assertIsNone(self.client.get("/api/auth/me").json()["user"])
         self.assertIsNone(other_browser.get("/api/auth/me").json()["user"])
+        self.assertEqual(other_browser.post("/api/auth/consent", json=self.CONSENTS).status_code, 401)
 
         # 같은 토큰은 다시 쓸 수 없고, 새 비밀번호로만 로그인된다.
         reused = self.client.post(
@@ -363,6 +367,44 @@ class EmailAuthRoutesTest(unittest.TestCase):
 
         # 비밀번호는 그대로이고 세션도 살아 있다.
         self.assertEqual(self.client.get("/api/auth/me").json()["user"]["email"], self.EMAIL)
+
+    # -- consent (Google 첫 가입) ---------------------------------------------
+
+    def google_login(self):
+        login = self.client.get("/api/auth/google/login", follow_redirects=False)
+        state = parse_qs(urlparse(login.headers["location"]).query)["state"][0]
+        callback = self.client.get(f"/api/auth/google/callback?code=ok-code&state={state}", follow_redirects=False)
+        self.assertEqual(callback.status_code, 307)
+
+    def test_new_google_user_needs_consent_until_posted(self):
+        self.google_login()
+        me = self.client.get("/api/auth/me").json()["user"]
+        self.assertEqual(me["provider"], "google")
+        self.assertTrue(me["needsConsent"])
+
+        missing = self.client.post("/api/auth/consent", json={"tos": True, "privacy": True})
+        self.assertEqual(missing.status_code, 422)
+        self.assertEqual(missing.json(), {"code": "consent_required"})
+        self.assertTrue(self.client.get("/api/auth/me").json()["user"]["needsConsent"])
+
+        consent = self.client.post("/api/auth/consent", json={"tos": True, "privacy": True, "age": True, "mkt": True})
+        self.assertEqual(consent.status_code, 200)
+        self.assertEqual(consent.json(), {"needsConsent": False})
+        self.assertFalse(self.client.get("/api/auth/me").json()["user"]["needsConsent"])
+
+        stored = self.repository.get_consent(me_app_user_id(self.store, self.client, self.config))
+        self.assertTrue(stored.mkt)
+
+    def test_consent_requires_a_session(self):
+        response = self.client.post("/api/auth/consent", json=self.CONSENTS)
+        self.assertEqual(response.status_code, 401)
+
+
+def me_app_user_id(store: MemorySessionStore, client: TestClient, config: AuthConfig) -> str:
+    user = store.get_session(client.cookies.get(config.session_cookie_name))
+    assert user is not None and user.app_user_id
+    return user.app_user_id
+
 
 if __name__ == "__main__":
     unittest.main()

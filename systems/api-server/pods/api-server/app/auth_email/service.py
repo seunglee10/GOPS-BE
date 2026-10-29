@@ -247,6 +247,19 @@ class EmailAuthService:
     def reset_link(self, token: str) -> str:
         return f"{self.public_base_url}{RESET_PATH}?step=reset&token={token}"
 
+    # -- 약관 동의 -------------------------------------------------------------
+
+    def needs_consent(self, user: AuthenticatedUser) -> bool:
+        if not user.app_user_id:
+            return False
+        return self.repository.get_consent(user.app_user_id) is None
+
+    def save_consent(self, user: AuthenticatedUser, consents_value: Any) -> None:
+        if not user.app_user_id:
+            raise EmailAuthError(422, "consent_required")
+        consents = normalize_consents(consents_value)
+        self.repository.save_consent(user.app_user_id, consented_at=self._now(), **consents)
+
     # -- helpers -------------------------------------------------------------
 
     def _issue_code(self, email: str, now: datetime) -> None:

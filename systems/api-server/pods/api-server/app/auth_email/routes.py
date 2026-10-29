@@ -133,6 +133,22 @@ def password_reset(request: Request, body: ResetBody) -> Response:
     return JSONResponse({"reset": True})
 
 
+@router.post("/api/auth/consent")
+def auth_consent(
+    request: Request,
+    body: ConsentBody,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> Response:
+    config = _enabled_config()
+    try:
+        email_auth_service_from_app(request.app, config).save_consent(user, body.model_dump())
+    except EmailAuthError as exc:
+        return _error(exc)
+    except (EmailAuthRepositoryError, AuthConfigError) as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return JSONResponse({"needsConsent": False})
+
+
 # ---------------------------------------------------------------------------
 
 
