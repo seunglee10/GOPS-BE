@@ -2,7 +2,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from app.stocks.service import DEFAULT_MOVERS_LIMIT, MAX_MOVERS_LIMIT, StocksService, get_stocks_service
+from app.stocks.service import DEFAULT_MOVERS_LIMIT, MAX_MOVERS_LIMIT, StocksService, SymbolNotFound, get_stocks_service
 
 router = APIRouter(prefix="/api/stocks", tags=["stocks"])
 
@@ -21,3 +21,11 @@ def stock_movers(
         return stocks_service_from_app(request).movers(sort=sort, limit=limit)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"code": "unsupported_sort", "message": str(exc)}) from exc
+
+
+@router.get("/{symbol}/summary")
+def stock_summary(request: Request, symbol: str) -> dict[str, Any]:
+    try:
+        return stocks_service_from_app(request).summary(symbol)
+    except SymbolNotFound as exc:
+        raise HTTPException(status_code=404, detail={"code": "symbol_not_found", "symbol": symbol.upper()}) from exc
