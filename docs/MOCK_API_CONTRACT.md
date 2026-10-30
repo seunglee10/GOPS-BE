@@ -191,14 +191,26 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 `PUT /api/review/notes/{orderId}` body `{ memo, habit }` → 200
 
 ### D28 캘린더
-`GET /api/calendar?from=2026-10-01&to=2026-10-31&kind=econ|earn&region=kr|us`
+`GET /api/calendar?from=2026-10-01&to=2026-10-31&kind=econ|earn&region=kr|us` (공개, 로그인하면 관심·보유 종목 표시)
 ```json
 { "items": [
-  { "id": "e_1", "date": "2026-10-10", "kind": "econ", "region": "us", "title": "9월 소비자물가(CPI)", "level": "major|watch", "at": "21:30", "done": true, "actual": "3.1%", "forecast": "3.0%", "previous": "3.2%" },
-  { "id": "e_2", "date": "2026-10-29", "kind": "earn", "region": "us", "title": "마이크로소프트 실적", "symbol": "MSFT", "nameKo": "마이크로소프트", "call": "장 마감 후" }
+  { "id": "econ:finnhub:us:20261014T1230:3f2a9c1d0b7e", "date": "2026-10-14", "kind": "econ", "region": "us", "title": "소비자물가(CPI) 전년 대비", "level": "major", "at": "21:30", "done": true, "actual": "2.9%", "forecast": "3%", "previous": "2.9%" },
+  { "id": "earn:MSFT:2026-10-29", "date": "2026-10-29", "kind": "earn", "region": "us", "title": "마이크로소프트 실적", "symbol": "MSFT", "nameKo": "마이크로소프트", "call": "장 마감 후", "level": "watch", "done": false }
 ] }
 ```
-`GET /api/calendar/brief?week=2026-W44` → `{ week, text }`
+- `date`·`at`은 한국 시간이다. `at`은 `HH:MM`, 시각을 모르면 `null`. 정렬은 날짜 → 시각(없으면 그날 맨 뒤) → 경제지표 먼저.
+- `from`·`to`는 필수, 둘 다 포함, 최대 62일. 형식 오류 422 `{ code: "invalid_date", field }`, `to < from` 422 `{ code: "invalid_range" }`, 62일 초과 422 `{ code: "range_too_large", maxDays: 62 }`. `kind`·`region` 생략 시 전부.
+- `level`: `"major" | "watch" | null`.
+  - 경제지표: Finnhub `impact` high→major, medium→watch. CPI·비농업 고용·FOMC·한국은행 기준금리·GDP·실업률·근원 PCE는 매핑표가 major 로 올린다.
+  - 실적: 로그인 사용자의 관심 종목·보유 종목은 `watch`, 그 밖에 시총 상위 50은 `major`, 나머지 `null`. 비로그인은 시총 상위 50만 `major`.
+- 경제지표(`kind=econ`): `title`은 한글 지표 이름(매핑표에 없으면 Finnhub 영문 이름). `done`은 발표값이 있으면 `true`. `actual`·`forecast`·`previous`는 단위를 붙인 문자열이고 없으면 `null`. 원천은 Postgres `economic_events`(economic-calendar 잡, 6시간마다).
+- 실적(`kind=earn`): S&P 500 종목만, `region`은 항상 `"us"`(`region=kr`이면 실적 없음). `title`은 `"{nameKo} 실적"`(한글 이름이 없으면 티커), `call`은 `"장 시작 전" | "장 마감 후" | null`, `done`은 발표가 끝났으면 `true`. 원천은 ClickHouse `yahoo_earnings_estimates`(차트 실적 표시와 같음). 국내 실적은 데이터가 없어 v1 범위 밖이다.
+- 실적 원천이 실패해도 경제지표는 돌려준다. 경제지표 저장소가 실패하면 503 `{ code: "calendar_unavailable" }`.
+
+`GET /api/calendar/brief?week=2026-W44` → `{ week, text, generatedAt }`
+- `week`는 한국 시간 ISO 주(`YYYY-Www`), 생략하면 이번 주. 형식 오류 422 `{ code: "invalid_week" }`.
+- `text`는 그 주 주요 일정을 말하는 해요체 한두 문장(예상치·전망·권유 없음). stock-summary-refresh 잡이 이번 주·다음 주를 6시간마다 만들어 Redis `gops:calendar-brief:{week}`(TTL 8일)에 둔다. 없으면 404 `{ code: "brief_not_ready" }`.
+- 두 경로 모두 시뮬레이터 모드에서는 409(발표값이 리플레이 시점 뒤 정보라서 `simulation_guard`가 막는다).
 
 ### D29 코스
 `GET /api/learn/courses/chart-basics`

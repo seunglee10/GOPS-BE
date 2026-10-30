@@ -1853,6 +1853,42 @@ class ClickHouseMarketDataProvider:
             },
         )
 
+    def earnings_events_between(self, from_time, to_time):
+        """기간 안의 모든 종목 Yahoo 실적 이벤트(수집 시각이 가장 최신인 행). D28 캘린더용."""
+        query = f"""
+        SELECT
+          symbol,
+          formatDateTime(event_at_value, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS eventAt,
+          actualValue,
+          estimate,
+          eventSession,
+          eventStatus,
+          source
+        FROM
+        (
+          SELECT
+            symbol,
+            argMax(event_at, tuple(collected_at, inserted_at)) AS event_at_value,
+            argMax(actual_value, tuple(collected_at, inserted_at)) AS actualValue,
+            argMax(average, tuple(collected_at, inserted_at)) AS estimate,
+            argMax(event_session, tuple(collected_at, inserted_at)) AS eventSession,
+            argMax(event_status, tuple(collected_at, inserted_at)) AS eventStatus,
+            argMax(source, tuple(collected_at, inserted_at)) AS source
+          FROM {self.table('yahoo_earnings_estimates')}
+          WHERE metric = 'eps'
+            AND event_at IS NOT NULL
+            AND event_at >= parseDateTime64BestEffort({{fromTime:String}}) - INTERVAL 120 DAY
+            AND event_at <= parseDateTime64BestEffort({{toTime:String}}) + INTERVAL 120 DAY
+          GROUP BY symbol, fiscal_year, fiscal_period, period_end
+          HAVING event_at_value IS NOT NULL
+        )
+        WHERE event_at_value >= parseDateTime64BestEffort({{fromTime:String}})
+          AND event_at_value <= parseDateTime64BestEffort({{toTime:String}})
+        ORDER BY event_at_value ASC, symbol ASC
+        FORMAT JSONEachRow
+        """
+        return self.query_json_each_row(query, {"fromTime": str(from_time), "toTime": str(to_time)})
+
     def table(self, name):
         return f"{clickhouse_identifier(self.database)}.{clickhouse_identifier(name)}"
 

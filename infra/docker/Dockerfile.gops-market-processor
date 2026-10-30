@@ -18,6 +18,7 @@ COPY systems/market-data/pods/feed-session-controller ./systems/market-data/pods
 COPY systems/market-data/pods/subscription-controller ./systems/market-data/pods/subscription-controller
 COPY systems/market-data/jobs/symbol-registry-sync ./systems/market-data/jobs/symbol-registry-sync
 COPY systems/market-data/jobs/instrument-names-ko-seed ./systems/market-data/jobs/instrument-names-ko-seed
+COPY systems/market-data/jobs/economic-calendar ./systems/market-data/jobs/economic-calendar
 COPY systems/market-data/jobs/coverage-repair ./systems/market-data/jobs/coverage-repair
 COPY systems/market-data/jobs/candle-bootstrap ./systems/market-data/jobs/candle-bootstrap
 

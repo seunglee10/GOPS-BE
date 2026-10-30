@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.alerts.routes import router as alerts_router
 from app.auth_email.routes import router as auth_email_router
+from app.calendar.routes import router as calendar_router
 from app.company_journal.routes import router as company_journal_router
 from app.contracts.chart import AgentChatMessage, AgentChatRequest, ChartProposalRequest
 from app.core.config import CORS_ORIGINS, read_dotenv_value
@@ -128,6 +129,7 @@ def create_app() -> FastAPI:
     app.include_router(recommendations_router)
     app.include_router(stock_ai_summary_router)
     app.include_router(market_brief_router)
+    app.include_router(calendar_router)
     app.include_router(streams_router)
 
     log_runtime_config()

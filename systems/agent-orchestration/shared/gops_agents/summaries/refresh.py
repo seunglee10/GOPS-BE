@@ -3,6 +3,7 @@
 대상 종목: 최근 24시간 뉴스가 있는 종목 + 시총 상위 50. 종목마다 1시간에 한 번만 다시 만든다
 (Redis 에 저장된 generatedAt 기준). 결과는 gops:stocks:ai-summary:{SYMBOL}, TTL 24시간.
 시장 요약은 미국 장 마감(16:15 ET, 조기 폐장일은 13:15 ET) 뒤 첫 실행에서 한 번 만든다.
+캘린더 주간 요약은 이번 주·다음 주(한국 시간 ISO 주)를 6시간에 한 번씩 다시 만든다. gops:calendar-brief:{week}, TTL 8일.
 """
 
 from __future__ import annotations
@@ -15,7 +16,15 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from .keys import MARKET_BRIEF_TTL_SECONDS, STOCK_SUMMARY_TTL_SECONDS, market_brief_key, stock_summary_key
+from .calendar_brief import CalendarBriefGenerator, CalendarBriefInput, current_and_next_week, week_bounds
+from .keys import (
+    CALENDAR_BRIEF_TTL_SECONDS,
+    MARKET_BRIEF_TTL_SECONDS,
+    STOCK_SUMMARY_TTL_SECONDS,
+    calendar_brief_key,
+    market_brief_key,
+    stock_summary_key,
+)
 from .market_brief import MarketBriefGenerator, MarketBriefInput
 from .names import display_name
 from .sources import SummarySource, seed_market_cap_symbols, top_market_cap
@@ -39,6 +48,7 @@ class RefreshConfig:
     min_interval_seconds: int = 3600
     max_symbols: int = 300
     brief_news_limit: int = 6
+    calendar_brief_min_interval_seconds: int = 6 * 3600
 
     @classmethod
     def from_env(cls) -> "RefreshConfig":
@@ -49,6 +59,9 @@ class RefreshConfig:
             candle_limit=_int_env("STOCK_SUMMARY_CANDLE_LIMIT", cls.candle_limit),
             min_interval_seconds=_int_env("STOCK_SUMMARY_MIN_INTERVAL_SECONDS", cls.min_interval_seconds),
             max_symbols=_int_env("STOCK_SUMMARY_MAX_SYMBOLS", cls.max_symbols),
+            calendar_brief_min_interval_seconds=_int_env(
+                "CALENDAR_BRIEF_MIN_INTERVAL_SECONDS", cls.calendar_brief_min_interval_seconds
+            ),
         )
 
 
@@ -242,6 +255,47 @@ def refresh_market_brief(
         logger.warning("market brief s3 archive failed: %s", exc)
         result["s3Error"] = type(exc).__name__
     return result
+
+
+# ---------- 캘린더 주간 요약 ----------
+
+def refresh_calendar_briefs(
+    source: SummarySource,
+    redis_client: Any,
+    generator: CalendarBriefGenerator,
+    *,
+    now: datetime,
+    weeks: list[str] | None = None,
+    force: bool = False,
+    config: RefreshConfig | None = None,
+) -> dict[str, Any]:
+    """이번 주·다음 주 요약을 만든다. 저장된 generatedAt 이 6시간 안이면 건너뛴다(--calendar-brief 는 무시)."""
+    config = config or RefreshConfig()
+    results: dict[str, Any] = {}
+    for week in weeks or current_and_next_week(now):
+        key = calendar_brief_key(week)
+        stored = _read_json(redis_client, key)
+        generated_at = parse_iso((stored or {}).get("generatedAt"))
+        if (
+            not force
+            and generated_at is not None
+            and (now - generated_at).total_seconds() < config.calendar_brief_min_interval_seconds
+        ):
+            results[week] = {"status": "skipped", "reason": "recently_generated"}
+            continue
+        try:
+            monday, sunday = week_bounds(week)
+            data = CalendarBriefInput(week=week, items=source.calendar_items(monday, sunday))
+            if not data.has_data():
+                results[week] = {"status": "skipped", "reason": "no_events"}
+                continue
+            brief, used = generator.generate_with_source(data)
+            _write_json(redis_client, key, brief, CALENDAR_BRIEF_TTL_SECONDS)
+            results[week] = {"status": "written", "generator": used}
+        except Exception as exc:  # 요약 실패가 다른 단계를 멈추지 않게 한다.
+            logger.exception("calendar brief failed week=%s", week)
+            results[week] = {"status": "failed", "error": type(exc).__name__}
+    return results
 
 
 # ---------- Redis 도우미 ----------
