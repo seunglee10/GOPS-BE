@@ -232,3 +232,46 @@ def test_postgres_memo_status_page_executions_and_cash_entries():
     assert executions[0]["memo"] == "지지선 매수"
     assert executions[0]["price"] == Decimal("142.3")
     assert repository.list_cash_entries("memo-user", event_types=frozenset({"cash.dividend"})) == []
+
+
+def test_postgres_review_executions_and_order_notes():
+    repository = reset_repository()
+    buy = repository.create_order(
+        user_id="review-user",
+        idempotency_key_hash="review-1",
+        body_hash="review-body-1",
+        request=order_request(symbol="NVDA", qty="2", price="150"),
+        memo="주문 메모",
+    ).order
+    other = repository.create_order(
+        user_id="other-user",
+        idempotency_key_hash="review-2",
+        body_hash="review-body-2",
+        request=order_request(symbol="AAPL", qty="1", price="50"),
+    ).order
+    repository.match_quote(
+        symbol="NVDA",
+        bid_price=Decimal("140"),
+        ask_price=Decimal("142"),
+        quote_timestamp="2026-09-22T14:00:00Z",
+        quote_event_id="review-q1",
+    )
+
+    [execution] = repository.list_review_executions("review-user")
+    assert execution["order_id"] == buy["order_id"]
+    assert execution["order_type"] == "limit"
+    assert execution["memo"] == "주문 메모"
+    assert execution["order_created_at"] is not None
+
+    assert repository.upsert_order_note("review-user", other["order_id"], memo="x", habit=None, habit_source="auto") is None
+    saved = repository.upsert_order_note("review-user", buy["order_id"], memo="복기", habit="chase", habit_source="user")
+    assert saved["habit"] == "chase" and saved["habit_source"] == "user" and saved["memo"] == "복기"
+    assert saved["app_user_id"] is not None
+    saved = repository.upsert_order_note("review-user", buy["order_id"], memo=None, habit=None, habit_source="auto")
+    assert saved["memo"] is None and saved["habit"] is None
+    notes = repository.list_order_notes("review-user", [buy["order_id"], other["order_id"]])
+    assert list(notes) == [buy["order_id"]]
+    assert repository.list_order_notes("other-user", [buy["order_id"]]) == {}
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        repository.upsert_order_note("review-user", buy["order_id"], memo=None, habit="yolo", habit_source="user")

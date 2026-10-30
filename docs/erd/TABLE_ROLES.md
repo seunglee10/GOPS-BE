@@ -61,6 +61,7 @@
 | `paper_executions` | PostgreSQL | 부분 체결을 포함한 불변 체결 원장 | `paper_orders` |
 | `paper_order_events` | PostgreSQL | 모의주문 상태 변경 이력 | 주문, 선택적 체결 |
 | `paper_cash_ledger` | PostgreSQL | 모의 현금 증감 원장 | 주문, 선택적 체결 |
+| `order_notes` | PostgreSQL | 투자 복기에서 고친 주문 메모와 사용자가 고른 습관 분류 | `paper_orders`, 사용자 |
 | `simulation_matcher_checkpoints` | PostgreSQL | 시뮬레이션 matcher 재시작 위치 | replay run |
 
 `paper_orders.filled_qty`와 평균 체결가는 조회용 집계다. 금액·수량의 원장은 각각 `paper_cash_ledger`, `paper_executions`가 담당한다.

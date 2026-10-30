@@ -60,6 +60,7 @@ class InMemoryPaperTradingRepository:
         self.idempotency: dict[tuple[str, str], tuple[str, str]] = {}
         self.ledger: list[dict[str, Any]] = []
         self.portfolio_history: list[dict[str, Any]] = []
+        self.order_notes: dict[str, dict[str, Any]] = {}
         self._lock = RLock()
 
     def ensure_account(self, user_id: str) -> dict[str, Any]:
@@ -284,6 +285,54 @@ class InMemoryPaperTradingRepository:
                 rows.append(_execution_view(execution, order))
             rows.sort(key=lambda row: (row["executed_at"], row["execution_id"]), reverse=True)
             return rows[:limit]
+
+    def list_review_executions(self, user_id: str) -> list[dict[str, Any]]:
+        """현재 계좌 세대의 체결 전부를 오래된 순으로. 복기(D27)가 평균 단가를 다시 계산할 때 쓴다."""
+        with self._lock:
+            account, _run = self._current(user_id)
+            rows = []
+            for execution in self.executions.values():
+                order = self.orders.get(execution["order_id"])
+                if not order or order["user_id"] != user_id or order["generation"] != account["current_generation"]:
+                    continue
+                row = _execution_view(execution, order)
+                row["order_created_at"] = _as_datetime(order["created_at"])
+                rows.append(row)
+            rows.sort(key=lambda row: (row["executed_at"], row["execution_id"]))
+            return rows
+
+    def list_order_notes(self, user_id: str, order_ids: list[str]) -> dict[str, dict[str, Any]]:
+        with self._lock:
+            return {
+                order_id: dict(self.order_notes[order_id])
+                for order_id in order_ids
+                if order_id in self.order_notes
+                and (self.orders.get(order_id) or {}).get("user_id") == user_id
+            }
+
+    def upsert_order_note(
+        self,
+        user_id: str,
+        order_id: str,
+        *,
+        memo: str | None,
+        habit: str | None,
+        habit_source: str,
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            order = self.orders.get(order_id)
+            if not order or order["user_id"] != user_id:
+                return None
+            row = {
+                "order_id": order_id,
+                "app_user_id": order.get("app_user_id"),
+                "memo": memo,
+                "habit": habit,
+                "habit_source": habit_source,
+                "updated_at": utc_now(),
+            }
+            self.order_notes[order_id] = row
+            return dict(row)
 
     def list_cash_entries(
         self,

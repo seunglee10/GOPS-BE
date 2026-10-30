@@ -376,6 +376,66 @@ class PostgresPaperTradingRepository:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def list_review_executions(self, user_id: str) -> list[dict[str, Any]]:
+        """현재 계좌 세대의 체결 전부를 오래된 순으로. 복기(D27)가 평균 단가를 다시 계산할 때 쓴다."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT pe.execution_id, po.order_id, po.symbol, po.side, po.order_type, po.memo,
+                       pe.quantity, pe.price, pe.executed_at, po.created_at AS order_created_at
+                FROM paper_executions pe
+                JOIN paper_orders po ON po.order_id = pe.order_id
+                JOIN paper_accounts pa ON pa.user_id = po.user_id
+                WHERE po.user_id = %s AND po.generation = pa.current_generation
+                ORDER BY pe.executed_at ASC, pe.execution_id ASC
+                """,
+                (user_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_order_notes(self, user_id: str, order_ids: list[str]) -> dict[str, dict[str, Any]]:
+        if not order_ids:
+            return {}
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT n.order_id, n.app_user_id, n.memo, n.habit, n.habit_source, n.updated_at
+                FROM order_notes n
+                JOIN paper_orders po ON po.order_id = n.order_id
+                WHERE po.user_id = %s AND n.order_id = ANY(%s)
+                """,
+                (user_id, list(order_ids)),
+            ).fetchall()
+            return {row["order_id"]: dict(row) for row in rows}
+
+    def upsert_order_note(
+        self,
+        user_id: str,
+        order_id: str,
+        *,
+        memo: str | None,
+        habit: str | None,
+        habit_source: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO order_notes (order_id, app_user_id, memo, habit, habit_source, updated_at)
+                SELECT po.order_id, po.app_user_id, %s, %s, %s, now()
+                FROM paper_orders po
+                WHERE po.order_id = %s AND po.user_id = %s
+                ON CONFLICT (order_id) DO UPDATE SET
+                    memo = EXCLUDED.memo,
+                    habit = EXCLUDED.habit,
+                    habit_source = EXCLUDED.habit_source,
+                    app_user_id = COALESCE(EXCLUDED.app_user_id, order_notes.app_user_id),
+                    updated_at = EXCLUDED.updated_at
+                RETURNING order_id, app_user_id, memo, habit, habit_source, updated_at
+                """,
+                (memo, habit, habit_source, order_id, user_id),
+            ).fetchone()
+            return dict(row) if row else None
+
     def list_cash_entries(
         self,
         user_id: str,

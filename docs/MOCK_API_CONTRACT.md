@@ -177,18 +177,37 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 `POST /api/paper/risk/pretrade` 응답 `checks[]`에 `code: "chase_buy" | "avg_down_no_stop" | "sell_on_drop" | "position_weight"`가 추가된다.
 
 ### D27 투자 복기
-`GET /api/review/monthly?month=2026-09`
+`GET /api/review/monthly?month=2026-09` (로그인 필요, `month` 생략 시 미국 동부 기준 이번 달, 형식이 틀리면 422 `{"detail":{"code":"invalid_month"}}`)
 ```json
-{ "month": "2026-09", "kpi": { "realizedPnl": 412.5, "returnPercent": 1.9, "winRate": 57.1, "tradeCount": 14, "missedProfit": 120.0 },
-  "prevMonth": { "realizedPnl": -80.0, "returnPercent": -0.4, "winRate": 42.9, "tradeCount": 7 },
-  "benchmark": { "spxReturnPercent": 2.3 },
-  "byHabit": [ { "habit": "plan|chase|rush|avg|news|exit", "labelKo": "계획대로", "pnl": 300.0, "count": 5 } ],
-  "bySymbol": [ { "symbol": "NVDA", "nameKo": "엔비디아", "pnl": 210.0 } ],
-  "trades": [ { "orderId": "...", "at": "...", "symbol": "NVDA", "side": "buy", "qty": 10, "price": 140.1, "avgPriceAtSell": null, "pnl": null, "returnPercent": null,
-                "habit": "chase", "memo": "급등해서 따라 샀다", "priceAfter": { "d1": 141.0, "d5": 145.2 } } ] }
+{ "month": "2026-09",
+  "kpi": { "realizedPnl": 230.0, "evalPnl": 610.0, "returnPercent": 0.61, "winRate": 83.33, "winCount": 5, "tradeCount": 6,
+           "avgWin": 126.0, "avgLoss": 20.0, "payoffRatio": 6.3, "mistakePnl": 250.0, "mistakeCount": 2, "missedProfit": 130.0 },
+  "prevMonth": { "realizedPnl": 0.0, "evalPnl": 40.0, "returnPercent": 0.04, "winRate": 100.0, "tradeCount": 1, "...": "kpi 와 같은 키" },
+  "benchmark": { "spxReturnPercent": 2.0, "prevSpxReturnPercent": 2.04 },
+  "byHabit": [ { "habit": "plan", "labelKo": "계획한 주문", "pnl": 100.0, "count": 1, "winCount": 1, "missedProfit": 0.0 } ],
+  "bySymbol": [ { "symbol": "NVDA", "nameKo": "엔비디아", "pnl": 550.0, "count": 3 } ],
+  "trades": [ { "orderId": "...", "at": "2026-09-15T15:00:00Z", "symbol": "NVDA", "nameKo": "엔비디아", "side": "sell", "orderType": "limit",
+                "qty": 10, "price": 120.0, "avgPriceAtSell": 95.0, "pnl": 250.0, "returnPercent": 26.32,
+                "markPrice": 110.0, "evalPnl": 250.0, "evalReturnPercent": 26.32, "missedProfit": 100.0,
+                "habit": "exit", "habitAuto": "exit", "habitSource": "auto", "memo": "목표가 도달", "orderMemo": "목표가 도달",
+                "priceAfter": { "d1": 125.0, "d5": 119.0 } } ] }
 ```
-습관 분류 규칙(서버): `chase` 당일 +3% 이상에서 매수, `rush` 장 시작 10분 내 시장가, `avg` 손실 중 추가 매수, `news` 주문 1시간 내 관련 뉴스, `exit` 수익 중 매도, 그 외 `plan`. 사용자가 메모에서 바꾸면 사용자 값 우선.
-`PUT /api/review/notes/{orderId}` body `{ memo, habit }` → 200
+- 대상: 현재 계좌 세대의 페이퍼 체결. 주문 단위로 묶고, 첫 체결 시각(미국 동부 날짜)이 그달인 주문만 싣는다. `trades` 는 시간 오름차순.
+- 평균 단가: 페이퍼 보유 종목과 같은 이동평균. 체결을 처음부터 다시 쌓아 매도 직전 평균(`avgPriceAtSell`)을 구한다.
+- `pnl`·`returnPercent`: 판 주문의 확정 손익. 산 주문은 `null`.
+- `evalPnl`·`evalReturnPercent`: 판 주문은 `pnl`과 같고, 산 주문은 최근 종가(`markPrice`) 기준. 목업의 "판 주문은 확정 손익, 들고 있는 주문은 오늘 가격 기준" 숫자다. `byHabit.pnl`, `bySymbol.pnl`, `kpi.evalPnl`, `winRate`, `avgWin`·`avgLoss`·`payoffRatio`(손익비)는 이 값으로 계산한다.
+- `returnPercent`(kpi): `evalPnl` ÷ 계좌 시작 금액 × 100. `benchmark.spxReturnPercent`: S&P 500(`^GSPC`, 없으면 `SPY`) 일봉 종가 기준 그달 수익률(전달 마지막 종가 대비).
+- `mistakePnl`·`mistakeCount`: 습관이 `chase`·`avg` 인 주문의 손익 합과 건수.
+- `missedProfit`: 판 주문만. max(0, 판 뒤 5거래일 종가 중 최고값 − 판 가격) × 수량. kpi·byHabit 는 그 합.
+- `priceAfter.d1`·`d5`: 체결일 다음 1번째·5번째 거래일 종가. 아직 없으면 `null`.
+- `memo`: 복기 메모가 있으면 그것, 없으면 주문 메모(`orderMemo`, D21).
+- 체크리스트를 몇 개 채웠는지 같은 점수는 싣지 않는다.
+
+습관 분류 규칙(서버, 위에서부터 먼저 걸리는 값): `rush` 장 시작(9:30 ET) 10분 안의 시장가 주문, `chase` 체결일 종가가 직전 거래일보다 +3% 이상 오른 날의 매수, `avg` 들고 있는 종목을 평균 단가보다 싸게(손실 중) 더 산 매수, `news` 주문 전 1시간 안에 그 종목 관련 뉴스가 있었던 주문, `exit` 확정 손익이 플러스인 매도, 그 외 `plan`. 사용자가 고른 값(`habitSource: "user"`)이 있으면 그 값이 우선이고, 서버 값은 `habitAuto` 에 남는다.
+`labelKo`: plan `계획한 주문`, exit `수익 내고 판 주문`, news `뉴스 보고 바로 낸 주문`, rush `장 시작 직후 시장가 주문`, chase `급등일 추격 매수`, avg `손실 중 물타기`. `byHabit` 은 이 순서로 6개 모두 싣는다(0건 포함).
+
+`PUT /api/review/notes/{orderId}` body `{ memo?, habit? }` → 200 `{ orderId, memo, habit, habitSource, updatedAt }`
+보낸 키만 바꾼다. `memo: null`·빈 문자열은 복기 메모를 지워 주문 메모로 돌아가고, `habit: null` 은 서버 분류로 돌아간다. 메모 200자 초과 422 `memo_too_long`, 문자열이 아니면 `invalid_memo`, 습관 값이 틀리면 `invalid_habit`. 남의 주문이나 없는 주문은 404 `order_not_found`. 저장은 `order_notes` 테이블(마이그레이션 0031).
 
 ### D28 캘린더
 `GET /api/calendar?from=2026-10-01&to=2026-10-31&kind=econ|earn&region=kr|us`

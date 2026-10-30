@@ -123,6 +123,20 @@ class PaperTradingRepository(Protocol):
         limit: int = 50,
     ) -> list[dict[str, Any]]: ...
 
+    def list_review_executions(self, user_id: str) -> list[dict[str, Any]]: ...
+
+    def list_order_notes(self, user_id: str, order_ids: list[str]) -> dict[str, dict[str, Any]]: ...
+
+    def upsert_order_note(
+        self,
+        user_id: str,
+        order_id: str,
+        *,
+        memo: str | None,
+        habit: str | None,
+        habit_source: str,
+    ) -> dict[str, Any] | None: ...
+
     def list_order_events(self, user_id: str, order_id: str) -> list[dict[str, Any]]: ...
 
     def cancel_order(self, user_id: str, order_id: str) -> dict[str, Any]: ...
