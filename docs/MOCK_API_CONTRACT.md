@@ -119,6 +119,8 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 { "id": "n_123", "titleKo": "...", "source": "Reuters", "publishedAt": "...", "url": "...", "category": "corp",
   "relatedSymbols": [ { "symbol": "NVDA", "nameKo": "엔비디아" } ], "bodyKo": ["문단1", "문단2"] }
 ```
+`category`는 수집 단계에서 키워드 규칙(`market_data/news/categorize.py`)으로 붙인다. 값이 비어 있는 과거 기사는 읽을 때 같은 규칙으로 계산한다. `symbol`·`symbols`가 모두 없으면 인기 종목(급등·급락·거래대금) 뉴스로 채운다.
+`bodyKo`는 기사 전문 번역이 아니다. 저장된 한국어 요약(`localized_summary`)과 핵심 포인트(`key_points`)를 문단으로 나눈 것이다. 없는 id는 404 `{ "detail": { "code": "news_not_found" } }`, 시뮬레이션 중에는 409.
 
 ### D14 종목 AI 요약
 `GET /api/stocks/{symbol}/ai-summary`

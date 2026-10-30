@@ -19,6 +19,7 @@ from app.market_data.query.canonical import CanonicalCandleQuery
 from app.market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 from app.services.alfaka_market_data import get_market_data_provider, normalize_market_symbol, requested_ma_from_csv, sp500_universe_symbols
 from app.services.instrument_names import with_korean_names
+from app.news.content import news_category, related_symbols, title_ko
 from market_data.serving.chart_derived_data import (
     build_indicator_request,
     build_volume_profile_request,
@@ -71,8 +72,9 @@ def news_lookback_days_from_env() -> int:
 
 
 class MarketDataQueryService:
-    def __init__(self, provider=None, backfill_service=None, fill_service=None, redis_client=None, canonical_query=None, derived_service=None):
+    def __init__(self, provider=None, backfill_service=None, fill_service=None, redis_client=None, canonical_query=None, derived_service=None, news_hotness=None):
         self.provider = provider or get_market_data_provider()
+        self._news_hotness = news_hotness
         self.backfill_service = backfill_service or get_backfill_service(self.provider)
         self.fill_service = fill_service or get_on_demand_fill_service(self.provider)
         self.canonical_query = canonical_query or CanonicalCandleQuery(self.provider, self.fill_service)
@@ -659,26 +661,67 @@ class MarketDataQueryService:
 
     def latest_news(
         self,
-        symbol: str,
+        symbol: str | None = None,
         limit: int = 10,
         locale: str = "ko-KR",
         now: datetime | None = None,
+        *,
+        category: str | None = None,
+        symbols: list[str] | None = None,
     ) -> dict[str, Any]:
-        symbol = normalize_market_symbol(symbol)
+        requested: list[str] = []
+        for value in [symbol, *(symbols or [])]:
+            if read_string(value):
+                normalized = normalize_market_symbol(value)
+                if normalized not in requested:
+                    requested.append(normalized)
         limit = max(1, min(int(limit), 30))
-        rows, source = (
-            self._latest_news_rows_as_of(symbol, limit, locale, now)
-            if now is not None
-            else self._latest_news_rows(symbol, limit, locale)
-        )
+        if not requested:
+            requested, _ = self._hot_news_symbols(limit)
+        # category 가 비어 있는 과거 행은 읽을 때 분류하므로 거르기 전에 넉넉히 가져온다.
+        fetch_limit = min(limit * 3, 90) if category else limit
+        if not requested:
+            rows, source = [], "no-data"
+        elif now is not None:
+            rows, source = self._latest_news_rows_as_of(requested, fetch_limit, locale, now)
+        elif len(requested) == 1:
+            rows, source = self._latest_news_rows(requested[0], fetch_limit, locale)
+        else:
+            rows, source = self._watchlist_news_rows(requested, fetch_limit, locale)
+            rows = dedupe_news_rows(rows, requested)
+        fallback_symbol = requested[0] if requested else ""
+        items = [normalize_news_item(row, fallback_symbol) for row in rows]
+        if category:
+            items = [item for item in items if item["category"] == category]
+        items = items[:limit]
+        # 시뮬레이션(now 지정)에서는 오늘 거래량이 가상시각 이후 정보라 isHot 을 켜지 않는다.
+        hot = set() if now is not None else self._hot_news_symbols_for_items(items)
+        for item in items:
+            item["isHot"] = any(entry["symbol"] in hot for entry in item["relatedSymbols"])
         payload = {
-            "symbol": symbol,
+            "symbol": fallback_symbol,
+            "symbols": requested,
             "source": source,
-            "items": [normalize_news_item(row, symbol) for row in rows],
+            "items": items,
         }
+        if category:
+            payload["category"] = category
         if now is not None:
             payload["asOf"] = chart_event_iso(now)
         return payload
+
+    def _hot_news_symbols_for_items(self, items: list[dict[str, Any]]) -> set[str]:
+        symbols = [entry["symbol"] for item in items for entry in item.get("relatedSymbols") or []]
+        if not symbols:
+            return set()
+        try:
+            if self._news_hotness is None:
+                from app.news.hotness import news_hotness_for_provider
+
+                self._news_hotness = news_hotness_for_provider(self.provider)
+            return self._news_hotness.hot_symbols(symbols)
+        except Exception:
+            return set()
 
     def daily_news(
         self,
@@ -868,7 +911,7 @@ class MarketDataQueryService:
 
     def _latest_news_rows_as_of(
         self,
-        symbol: str,
+        symbols: list[str],
         limit: int,
         locale: str,
         as_of: datetime,
@@ -879,7 +922,7 @@ class MarketDataQueryService:
             return [], "no-data"
         try:
             rows = method(
-                [symbol],
+                list(symbols),
                 as_of=chart_event_iso(as_of),
                 limit=limit,
                 days=30,
@@ -1383,6 +1426,9 @@ def normalize_news_item(row: dict[str, Any], fallback_symbol: str) -> dict[str, 
         "source": read_string(row.get("source")),
         "publishedAt": read_string(row.get("publishedAt")) or read_string(row.get("published_at")),
         "impactDirection": read_string(row.get("impactDirection")) or read_string(row.get("impact_direction")),
+        "category": news_category(row),
+        "relatedSymbols": related_symbols({**row, "symbols": symbols or [symbol.upper()]}),
+        "titleKo": title_ko(row),
     }
 
 

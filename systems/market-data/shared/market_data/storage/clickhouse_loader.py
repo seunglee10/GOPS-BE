@@ -561,13 +561,20 @@ def symbol_to_clickhouse_row(payload):
 
 
 def news_to_clickhouse_row(payload):
+    from market_data.news.categorize import categorize_news, normalize_news_category
+
+    headline = payload.get("headline") or "Untitled news"
+    category = normalize_news_category(payload.get("category")) or categorize_news(
+        headline, payload.get("summary"), payload.get("symbols") or [payload.get("symbol")]
+    )
     return {
         "published_at": clickhouse_time(payload.get("publishedAt") or payload.get("createdAt") or payload.get("timestamp")),
         "symbol": payload.get("symbol", "UNKNOWN"),
         "article_id": str(payload.get("articleId") or payload.get("sourceEventId") or ""),
-        "headline": payload.get("headline") or "Untitled news",
+        "headline": headline,
         "summary": payload.get("summary"),
         "content": payload.get("content"),
+        "category": category,
         "url": payload.get("url"),
         "source": payload.get("source") or "alpaca",
         "author": payload.get("author"),
@@ -730,7 +737,8 @@ class ClickHouseHttpClient:
                 updated_at Nullable(DateTime64(3, 'UTC')),
                 received_at Nullable(DateTime64(3, 'UTC')),
                 raw String,
-                inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+                inserted_at DateTime64(3, 'UTC') DEFAULT now64(3),
+                category LowCardinality(String) DEFAULT ''
             )
             ENGINE = ReplacingMergeTree(inserted_at)
             PARTITION BY toYYYYMM(published_at)
@@ -767,7 +775,8 @@ class ClickHouseHttpClient:
                 model LowCardinality(String),
                 localized_at DateTime64(3, 'UTC'),
                 raw String,
-                inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+                inserted_at DateTime64(3, 'UTC') DEFAULT now64(3),
+                category LowCardinality(String) DEFAULT ''
             )
             ENGINE = ReplacingMergeTree(localized_at)
             PARTITION BY toYYYYMM(published_at)
@@ -813,6 +822,15 @@ class ClickHouseHttpClient:
             "ADD COLUMN IF NOT EXISTS relevance_score_v2 Float32 DEFAULT 0 AFTER subject_relevance, "
             "ADD COLUMN IF NOT EXISTS relevance_reason String DEFAULT '' AFTER relevance_score_v2, "
             "ADD COLUMN IF NOT EXISTS direct_signals Array(String) DEFAULT [] AFTER relevance_reason"
+        )
+        # 뉴스 분류(D13). 마이그레이션 0002 와 같은 정의라 어느 쪽이 먼저 돌아도 결과가 같습니다.
+        self.execute(
+            f"ALTER TABLE {self.database}.news_articles "
+            "ADD COLUMN IF NOT EXISTS category LowCardinality(String) DEFAULT ''"
+        )
+        self.execute(
+            f"ALTER TABLE {self.database}.news_article_localizations "
+            "ADD COLUMN IF NOT EXISTS category LowCardinality(String) DEFAULT ''"
         )
         if os.getenv("CLICKHOUSE_ENSURE_SESSION_COLUMNS", "true").lower() not in {"1", "true", "yes"}:
             return
