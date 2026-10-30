@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.alerts.routes import router as alerts_router
+from app.auth_email.routes import router as auth_email_router
 from app.company_journal.routes import router as company_journal_router
 from app.contracts.chart import AgentChatMessage, AgentChatRequest, ChartProposalRequest
 from app.core.config import CORS_ORIGINS, read_dotenv_value
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(auth_router)
+    app.include_router(auth_email_router)
     app.include_router(account_router)
     app.include_router(charts_router)
     app.include_router(chart_assets_router)

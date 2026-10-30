@@ -5,15 +5,18 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.auth.config import AuthConfig, AuthConfigError
 from app.auth.dependencies import optional_current_user, require_current_user
 from app.auth.identity import IdentityStoreError, identity_resolver_from_app
 from app.auth.google import GOOGLE_AUTHORIZATION_ENDPOINT, GoogleOAuthClient, GoogleOAuthError
 from app.auth.kakao import KAKAO_AUTHORIZATION_ENDPOINT, KakaoOAuthClient, KakaoOAuthError
-from app.auth.models import AuthUserError
+from app.auth.models import AuthenticatedUser, AuthUserError
 from app.auth.session_store import SessionStoreError, session_store_from_app
 from app.auth.tokens import TokenStoreError, token_store_from_app
+from app.auth_email.repository import EmailAuthRepositoryError
+from app.auth_email.routes import email_auth_service_from_app
 
 
 router = APIRouter(tags=["auth"])
@@ -204,10 +207,27 @@ def kakao_oauth_callback(
 async def auth_me(request: Request) -> dict[str, Any]:
     config = AuthConfig.from_env()
     user = await optional_current_user(request)
+    if user is None:
+        return {"authEnabled": config.enabled, "user": None}
+    try:
+        needs_consent = await run_in_threadpool(_needs_consent, request, config, user)
+    except EmailAuthRepositoryError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return {
         "authEnabled": config.enabled,
-        "user": user.to_public() if user else None,
+        "user": {
+            **user.to_public(),
+            "emailVerified": user.email_verified,
+            "needsConsent": needs_consent,
+            # 투자 경험(new|some|pro)은 아직 저장하는 곳이 없다. 자리만 둔다.
+            "experience": None,
+        },
     }
+
+
+def _needs_consent(request: Request, config: AuthConfig, user: AuthenticatedUser) -> bool:
+    # 소셜 첫 가입은 user_consents 행이 없어 true 가 된다. 이메일 가입은 가입 때 저장돼 false.
+    return email_auth_service_from_app(request.app, config).needs_consent(user)
 
 
 @router.post("/api/auth/logout")
