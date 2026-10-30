@@ -16,6 +16,17 @@ FILLED_STATUS = "filled"
 CANCELLED_STATUS = "cancelled"
 ACTIVE_STATUSES = frozenset({PENDING_STATUS, PARTIALLY_FILLED_STATUS})
 TERMINAL_STATUSES = frozenset({FILLED_STATUS, CANCELLED_STATUS, "rejected"})
+MAX_ORDER_MEMO_LENGTH = 200
+
+# 주문 내역 화면(D22)의 필터 4종과 내부 상태의 대응표.
+# 부분 체결은 아직 미체결 수량이 남아 있으므로 '대기'에 넣고,
+# 거부(rejected)는 체결되지 않고 끝난 주문이라 '취소'에 넣는다.
+ORDER_STATUS_FILTERS: dict[str, frozenset[str] | None] = {
+    "all": None,
+    "pending": frozenset({PENDING_STATUS, PARTIALLY_FILLED_STATUS}),
+    "filled": frozenset({FILLED_STATUS}),
+    "cancelled": frozenset({CANCELLED_STATUS, "rejected"}),
+}
 
 
 def utc_now() -> datetime:
@@ -28,6 +39,7 @@ def public_order(row: dict[str, Any]) -> dict[str, Any]:
     payload.pop("instrument_id", None)
     payload["price"] = payload.get("limit_price", payload.get("price"))
     payload["execution_mode"] = payload.get("execution_mode") or "paper"
+    payload["memo"] = payload.get("memo")
     if payload["execution_mode"] == "simulation":
         payload["simulation"] = True
         payload["runId"] = payload.get("simulation_run_id")
@@ -75,6 +87,7 @@ class PaperTradingRepository(Protocol):
         simulation_submitted_sequence: int | None = None,
         virtual_submitted_at: str | None = None,
         order_type: str = "limit",
+        memo: str | None = None,
     ) -> PaperOrderCreationResult: ...
 
     def pretrade(self, user_id: str, request: OrderRequest) -> dict[str, Any]: ...
@@ -88,6 +101,26 @@ class PaperTradingRepository(Protocol):
         status: str | None = None,
         include_previous: bool = False,
         limit: int = 100,
+    ) -> list[dict[str, Any]]: ...
+
+    def page_orders(
+        self,
+        user_id: str,
+        *,
+        statuses: frozenset[str] | None = None,
+        include_previous: bool = False,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[dict[str, Any]], int]: ...
+
+    def list_executions(self, user_id: str, *, limit: int = 50) -> list[dict[str, Any]]: ...
+
+    def list_cash_entries(
+        self,
+        user_id: str,
+        *,
+        event_types: frozenset[str],
+        limit: int = 50,
     ) -> list[dict[str, Any]]: ...
 
     def list_order_events(self, user_id: str, order_id: str) -> list[dict[str, Any]]: ...
