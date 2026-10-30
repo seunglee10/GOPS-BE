@@ -90,8 +90,8 @@
 | `ch_market_status_events` | `market_data.market_status_events` | 거래소·피드 상태 이벤트 | instrument/market, time |
 | `ch_market_events` | `market_data.market_events` | 정규화된 시장 이벤트 | instrument, type, time |
 | `ch_agent_graph_expansions` | `market_data.agent_graph_expansions` | 에이전트 종목 관계 확장 결과 | instrument, relation version |
-| `ch_news_articles` | `market_data.news_articles` | 종목 뉴스 원문·메타데이터 | instrument, article |
-| `ch_news_article_localizations` | `market_data.news_article_localizations` | 뉴스 번역·현지화 결과 | article, locale |
+| `ch_news_articles` | `market_data.news_articles` | 종목 뉴스 원문·메타데이터, 분류(`category`) | instrument, article |
+| `ch_news_article_localizations` | `market_data.news_article_localizations` | 뉴스 번역·현지화 결과, 분류(`category`) | article, locale |
 | `ch_news_company_daily_summaries` | `market_data.news_company_daily_summaries` | 종목별 일간 뉴스 요약 | instrument, date, locale |
 | `ch_load_audit` | `market_data.load_audit` | 적재 batch 감사와 건수 | batch |
 | `ch_backfill_jobs` | `market_data.backfill_jobs` | 시장 데이터 백필 요청 상태 | request, instrument |

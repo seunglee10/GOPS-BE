@@ -437,19 +437,46 @@ def market_symbol_status(symbol: str) -> dict[str, Any]:
     return get_query_service().latest_status(symbol)
 
 
+NEWS_CATEGORY_PATTERN = "^(market|corp|earn|rate|etf|global)$"
+MAX_NEWS_FILTER_SYMBOLS = 20
+
+
 @router.get("/api/market/news/latest")
 def market_latest_news(
     request: Request,
-    symbol: str = Query(min_length=1, max_length=12),
+    symbol: str | None = Query(default=None, min_length=1, max_length=12),
     limit: int = Query(default=10, ge=1, le=30),
     locale: str = Query(default="ko-KR", max_length=16),
+    category: str | None = Query(default=None, pattern=NEWS_CATEGORY_PATTERN),
+    symbols: str | None = Query(default=None, max_length=400),
 ) -> dict[str, Any]:
+    # symbol·symbols 둘 다 없으면 서비스가 인기 종목(급등·급락·거래대금) 뉴스로 채운다.
+    symbol_list = news_symbols_from_csv(symbols)
+    if len(symbol_list) > MAX_NEWS_FILTER_SYMBOLS:
+        raise HTTPException(status_code=400, detail={"code": "too_many_symbols", "max": MAX_NEWS_FILTER_SYMBOLS})
     return get_query_service().latest_news(
-        symbol,
+        symbol if isinstance(symbol, str) else None,
         limit=limit,
         locale=locale,
         now=chart_event_reference_time(request),
+        category=category if isinstance(category, str) else None,
+        symbols=symbol_list,
     )
+
+
+def news_symbols_from_csv(value: Any) -> list[str]:
+    if not isinstance(value, str):
+        return []
+    result: list[str] = []
+    for part in value.split(","):
+        symbol = part.strip().upper()
+        if not symbol:
+            continue
+        if len(symbol) > 12:
+            raise HTTPException(status_code=400, detail={"code": "invalid_symbol", "symbol": symbol})
+        if symbol not in result:
+            result.append(symbol)
+    return result
 
 
 @router.get("/api/market/news/daily")

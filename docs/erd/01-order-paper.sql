@@ -39,6 +39,7 @@ CREATE TABLE paper_orders (
   instrument_id CHAR(36), symbol VARCHAR(64) NOT NULL, side VARCHAR(16) NOT NULL,
   qty DECIMAL(24,0) NOT NULL, limit_price DECIMAL(24,6) NOT NULL,
   status VARCHAR(32) NOT NULL, filled_qty DECIMAL(24,0) NOT NULL, fill_price DECIMAL(24,6),
+  memo VARCHAR(200),
   CONSTRAINT fk_paper_order_user FOREIGN KEY (app_user_id) REFERENCES app_users(app_user_id),
   CONSTRAINT fk_paper_order_instrument FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
 );

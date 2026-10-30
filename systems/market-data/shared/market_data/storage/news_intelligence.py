@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
 
+from market_data.news.categorize import categorize_news, normalize_news_category
 from market_data.news.relevance import classify_subject_relevance, normalize_subject_level
 from market_data.storage.clickhouse_loader import clickhouse_time, clickhouse_time_or_none
 
@@ -27,6 +28,8 @@ def build_news_intelligence_record(event, intelligence=None, *, locale="ko-KR", 
         "relevanceScoreV2": float(intelligence.get("relevanceScoreV2") or relevance["relevanceScoreV2"]),
         "relevanceReason": clean_text(intelligence.get("relevanceReason") or relevance["relevanceReason"], 500),
         "directSignals": clean_text_list(intelligence.get("directSignals") or relevance["directSignals"], 12, 80),
+        "category": normalize_news_category(event.get("category"))
+        or categorize_news(event.get("headline"), event.get("summary"), symbols or [symbol]),
         "locale": locale,
         "publishedAt": published_at,
         "headline": event.get("headline") or "Untitled news",
@@ -74,6 +77,8 @@ def news_intelligence_to_clickhouse_row(record):
         "impact_direction": record.get("impactDirection") or "neutral",
         "why_it_matters": record.get("whyItMatters") or "",
         "model": record.get("model") or "deterministic",
+        "category": normalize_news_category(record.get("category"))
+        or categorize_news(record.get("headline"), record.get("summary"), record.get("symbols") or [record.get("symbol")]),
         "localized_at": clickhouse_time_or_none(record.get("localizedAt")) or clickhouse_time(None),
         "raw": json.dumps(record.get("raw") or record, ensure_ascii=False, separators=(",", ":")),
     }

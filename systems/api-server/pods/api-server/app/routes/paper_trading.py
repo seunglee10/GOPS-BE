@@ -33,6 +33,8 @@ from kis_trader.domain.status import OrderContractError
 from kis_trader.paper import InMemoryPaperTradingRepository, PostgresPaperTradingRepository
 from kis_trader.paper.fixture import HOLDING_BY_SYMBOL, SEED_PROFILE, configured_seed_profile, fallback_price
 from kis_trader.paper.models import (
+    MAX_ORDER_MEMO_LENGTH,
+    ORDER_STATUS_FILTERS,
     PaperCapacityError,
     PaperIdempotencyConflictError,
     PaperOrderError,
@@ -45,6 +47,9 @@ from kis_trader.security.validation import assert_no_forbidden_fields
 
 router = APIRouter(tags=["paper-trading"])
 logger = logging.getLogger(__name__)
+
+DEFAULT_PAPER_ORDER_PAGE_SIZE = 20
+MAX_PAPER_ORDER_PAGE_SIZE = 500
 
 
 @router.get("/api/paper/symbols/search")
@@ -146,6 +151,7 @@ async def create_paper_order(
     except OrderContractError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     order_request = _validate_paper_order_payload(payload)
+    memo = _validate_paper_order_memo(payload.get("memo"))
     _validate_paper_symbol(request.app, order_request.symbol)
     repository = paper_repository_from_app(request.app)
     key_hash = hash_idempotency_key(f"paper:{current_user.sub}:{idempotency_key}")
@@ -156,6 +162,7 @@ async def create_paper_order(
             idempotency_key_hash=key_hash,
             body_hash=stable_body_hash(payload),
             request=order_request,
+            memo=memo,
         )
     except PaperIdempotencyConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -173,21 +180,45 @@ async def create_paper_order(
 @router.get("/api/paper/orders")
 def list_paper_orders(
     request: Request,
+    status_filter: str = Query(default="all", alias="status"),
+    page: int = Query(default=1, ge=1),
+    size: int | None = Query(default=None, ge=1, le=MAX_PAPER_ORDER_PAGE_SIZE),
     order_status: str | None = None,
     include_previous: bool = False,
-    limit: int = 100,
+    limit: int | None = None,
     current_user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    """주문 내역 (D22). `status` 는 화면 필터 4종, `order_status` 는 예전 내부 상태 필터다.
+
+    예전 호출(`?limit=500`, `?order_status=filled`)도 그대로 동작한다. `size` 가 없으면
+    `limit` 을 한 페이지 크기로 쓴다. 예전 프론트가 읽는 `orders` 키는 `items` 와 같은 목록이다.
+    """
+    bucket = (status_filter or "all").strip().lower()
+    if bucket not in ORDER_STATUS_FILTERS:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_order_status", "allowed": list(ORDER_STATUS_FILTERS)},
+        )
+    statuses = ORDER_STATUS_FILTERS[bucket]
     normalized_status = order_status.strip().lower() if order_status else None
-    if normalized_status not in {None, "pending", "filled", "cancelled", "rejected"}:
+    if normalized_status not in {None, "pending", "partially_filled", "filled", "cancelled", "rejected"}:
         raise HTTPException(status_code=422, detail="unsupported paper order status")
-    orders = paper_repository_from_app(request.app).list_orders(
-        current_user.sub,
-        status=normalized_status,
-        include_previous=include_previous,
-        limit=limit,
-    )
-    return {"orders": jsonable_encoder(orders)}
+    if normalized_status is not None:
+        statuses = frozenset({normalized_status}) & statuses if statuses is not None else frozenset({normalized_status})
+    page_size = size or max(1, min(limit or DEFAULT_PAPER_ORDER_PAGE_SIZE, MAX_PAPER_ORDER_PAGE_SIZE))
+    if statuses is not None and not statuses:
+        items: list[dict[str, Any]] = []
+        total = 0
+    else:
+        items, total = paper_repository_from_app(request.app).page_orders(
+            current_user.sub,
+            statuses=statuses,
+            include_previous=include_previous,
+            offset=(page - 1) * page_size,
+            limit=page_size,
+        )
+    encoded = jsonable_encoder(items)
+    return {"items": encoded, "total": total, "page": page, "size": page_size, "orders": encoded}
 
 
 @router.get("/api/paper/orders/{order_id}")
@@ -527,6 +558,21 @@ def _validate_paper_order_payload(payload: dict[str, Any]):
         return validate_order_request_payload(payload, default_account_alias="paper-account")
     except OrderContractError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _validate_paper_order_memo(value: Any) -> str | None:
+    """주문 메모 (D21). 없거나 공백뿐이면 None, 200자를 넘으면 422."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise HTTPException(status_code=422, detail={"code": "invalid_memo", "field": "memo"})
+    memo = value.strip()
+    if len(memo) > MAX_ORDER_MEMO_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "memo_too_long", "field": "memo", "maxLength": MAX_ORDER_MEMO_LENGTH},
+        )
+    return memo or None
 
 
 def _validate_paper_symbol(app: Any, symbol: str) -> dict[str, Any]:

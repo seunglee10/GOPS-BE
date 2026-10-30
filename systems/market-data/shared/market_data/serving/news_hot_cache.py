@@ -353,6 +353,7 @@ def localized_news_cache_item(row):
         "whyItMatters": row.get("whyItMatters") or row.get("why_it_matters"),
         "model": row.get("model"),
         "localizedAt": row.get("localizedAt") or row.get("localized_at"),
+        "category": row.get("category") or raw.get("category"),
     }
 
 

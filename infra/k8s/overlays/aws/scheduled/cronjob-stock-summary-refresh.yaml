@@ -1,0 +1,72 @@
+# 역할: 종목 AI 요약(D14, gops:stocks:ai-summary:{SYMBOL}, TTL 24h)을 매시 갱신하고,
+#       미국 장 마감(16:15 ET) 뒤 첫 실행에서 오늘 시장 요약(D15, gops:market-brief:{date}, TTL 3일)을 한 번 만듭니다.
+# 종목별로 1시간에 한 번만 다시 만들기 때문에 매시 실행이어도 같은 종목을 두 번 부르지 않습니다.
+# schedule 은 UTC 입니다. 시장 요약 시각 판단은 잡 안에서 America/New_York 기준으로 합니다.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gops-stock-summary-refresh
+  namespace: alfaka-market-data
+spec:
+  schedule: "5 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app: gops-stock-summary-refresh
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 1
+      activeDeadlineSeconds: 3000
+      template:
+        metadata:
+          labels:
+            app: gops-stock-summary-refresh
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            karpenter.sh/nodepool: batch
+          tolerations:
+            - key: gops.io/dedicated
+              operator: Equal
+              value: batch
+              effect: NoSchedule
+          serviceAccountName: alfaka-market-data-sa
+          containers:
+            - name: stock-summary-refresh
+              image: YOUR_ECR_REPOSITORY/gops-agent-orchestrator:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-u", "/app/systems/agent-orchestration/jobs/stock-summary-refresh/main.py"]
+              env:
+                - name: STOCK_SUMMARY_LLM_ENABLED
+                  value: "true"
+                - name: STOCK_SUMMARY_TOP_MARKET_CAP
+                  value: "50"
+                - name: STOCK_SUMMARY_MIN_INTERVAL_SECONDS
+                  value: "3600"
+                - name: MARKET_BRIEF_S3_BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: alfaka-market-data-config
+                      key: S3_BUCKET
+                - name: MARKET_BRIEF_S3_PREFIX
+                  value: market-brief/v1
+              envFrom:
+                - configMapRef:
+                    name: alfaka-market-data-config
+                - secretRef:
+                    name: alfaka-clickhouse-secret
+                    optional: false
+                - secretRef:
+                    name: alfaka-openai-secret
+                    optional: false
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi

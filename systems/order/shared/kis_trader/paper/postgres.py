@@ -143,6 +143,7 @@ class PostgresPaperTradingRepository:
         simulation_submitted_sequence: int | None = None,
         virtual_submitted_at: str | None = None,
         order_type: str = "limit",
+        memo: str | None = None,
     ) -> PaperOrderCreationResult:
         with self._connect() as conn:
             with conn.transaction():
@@ -221,9 +222,9 @@ class PostgresPaperTradingRepository:
                     INSERT INTO paper_orders (
                         order_id, user_id, generation, market, symbol, side, qty, limit_price,
                         exchange, order_division, order_type, execution_mode, simulation_run_id,
-                        simulation_submitted_sequence, virtual_submitted_at,
+                        simulation_submitted_sequence, virtual_submitted_at, memo,
                         status, idempotency_key_hash, body_hash
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                               'pending', %s, %s)
                     """,
                     (
@@ -242,6 +243,7 @@ class PostgresPaperTradingRepository:
                         simulation_run_id,
                         simulation_submitted_sequence,
                         virtual_submitted_at,
+                        memo,
                         idempotency_key_hash,
                         body_hash,
                     ),
@@ -333,6 +335,77 @@ class PostgresPaperTradingRepository:
         params.append(limit)
         with self._connect() as conn:
             return [public_order(dict(row)) for row in conn.execute(query, params).fetchall()]
+
+    def page_orders(
+        self,
+        user_id: str,
+        *,
+        statuses: frozenset[str] | None = None,
+        include_previous: bool = False,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[dict[str, Any]], int]:
+        offset = max(0, int(offset))
+        limit = max(1, min(int(limit), 500))
+        where = """
+            FROM paper_orders po
+            JOIN paper_accounts pa ON pa.user_id = po.user_id
+            WHERE po.user_id = %s
+        """
+        params: list[Any] = [user_id]
+        if not include_previous:
+            where += " AND po.generation = pa.current_generation"
+        if statuses is not None:
+            where += " AND po.status = ANY(%s)"
+            params.append(sorted(statuses))
+        with self._connect() as conn:
+            total = conn.execute(f"SELECT count(*) AS total {where}", params).fetchone()["total"]
+            rows = conn.execute(
+                f"SELECT po.* {where} ORDER BY po.created_at DESC, po.order_id DESC LIMIT %s OFFSET %s",
+                [*params, limit, offset],
+            ).fetchall()
+            return [public_order(dict(row)) for row in rows], int(total)
+
+    def list_executions(self, user_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 500))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT pe.execution_id, po.order_id, po.symbol, po.side, po.order_type, po.memo,
+                       pe.quantity, pe.price, pe.executed_at
+                FROM paper_executions pe
+                JOIN paper_orders po ON po.order_id = pe.order_id
+                JOIN paper_accounts pa ON pa.user_id = po.user_id
+                WHERE po.user_id = %s AND po.generation = pa.current_generation
+                ORDER BY pe.executed_at DESC, pe.execution_id DESC
+                LIMIT %s
+                """,
+                (user_id, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_cash_entries(
+        self,
+        user_id: str,
+        *,
+        event_types: frozenset[str],
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 500))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT pcl.* FROM paper_cash_ledger pcl
+                JOIN paper_accounts pa ON pa.user_id = pcl.user_id
+                WHERE pcl.user_id = %s
+                  AND pcl.generation = pa.current_generation
+                  AND pcl.event_type = ANY(%s)
+                ORDER BY pcl.created_at DESC, pcl.entry_id DESC
+                LIMIT %s
+                """,
+                (user_id, sorted(event_types), limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
 
     def list_order_events(self, user_id: str, order_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:

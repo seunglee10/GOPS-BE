@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import statistics
 from collections.abc import Callable
 from datetime import date, datetime, timezone
@@ -459,10 +460,24 @@ def ai_summary_fields(summary: dict[str, Any] | None) -> dict[str, Any]:
     news = summary.get("news")
     first_news = news[0] if isinstance(news, list) and news and isinstance(news[0], dict) else {}
     return {
-        "issue": read_text(summary.get("head")),
+        "issue": read_text(summary.get("issueLine")) or issue_from_head(summary.get("head")),
         "issueNewsId": read_text(first_news.get("newsId")),
         "chartNote": read_text(summary.get("chartNote")),
     }
+
+
+ISSUE_MAX_CHARS = 24
+
+
+def issue_from_head(head: Any) -> str | None:
+    """issueLine 이 없는 예전 캐시용: head 첫 문장을 24자로 자르고 넘치면 '…'."""
+    text = read_text(head)
+    if text is None:
+        return None
+    first = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0].strip()
+    if len(first) <= ISSUE_MAX_CHARS:
+        return first
+    return first[: ISSUE_MAX_CHARS - 1].rstrip() + "…"
 
 
 def average_volume(volumes: list[float]) -> float | None:

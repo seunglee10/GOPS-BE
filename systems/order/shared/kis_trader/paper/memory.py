@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from threading import RLock
 from typing import Any
@@ -117,6 +118,7 @@ class InMemoryPaperTradingRepository:
         simulation_submitted_sequence: int | None = None,
         virtual_submitted_at: str | None = None,
         order_type: str = "limit",
+        memo: str | None = None,
     ) -> PaperOrderCreationResult:
         with self._lock:
             account, run = self._current(user_id)
@@ -170,6 +172,7 @@ class InMemoryPaperTradingRepository:
                 "virtual_submitted_at": virtual_submitted_at,
                 "virtual_filled_at": None,
                 "seed_profile": None,
+                "memo": memo,
                 "status": PENDING_STATUS,
                 "filled_qty": Decimal("0"),
                 "fill_price": None,
@@ -250,6 +253,60 @@ class InMemoryPaperTradingRepository:
             ]
             rows.sort(key=lambda row: (row["created_at"], row["order_id"]), reverse=True)
             return [public_order(row) for row in rows[:max(1, min(limit, 500))]]
+
+    def page_orders(
+        self,
+        user_id: str,
+        *,
+        statuses: frozenset[str] | None = None,
+        include_previous: bool = False,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[dict[str, Any]], int]:
+        offset = max(0, int(offset))
+        limit = max(1, min(int(limit), 500))
+        with self._lock:
+            account, _run = self._current(user_id)
+            rows = [
+                row for row in self.orders.values()
+                if row["user_id"] == user_id
+                and (include_previous or row["generation"] == account["current_generation"])
+                and (statuses is None or row["status"] in statuses)
+            ]
+            rows.sort(key=lambda row: (row["created_at"], row["order_id"]), reverse=True)
+            return [public_order(row) for row in rows[offset:offset + limit]], len(rows)
+
+    def list_executions(self, user_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 500))
+        with self._lock:
+            account, _run = self._current(user_id)
+            rows = []
+            for execution in self.executions.values():
+                order = self.orders.get(execution["order_id"])
+                if not order or order["user_id"] != user_id or order["generation"] != account["current_generation"]:
+                    continue
+                rows.append(_execution_view(execution, order))
+            rows.sort(key=lambda row: (row["executed_at"], row["execution_id"]), reverse=True)
+            return rows[:limit]
+
+    def list_cash_entries(
+        self,
+        user_id: str,
+        *,
+        event_types: frozenset[str],
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 500))
+        with self._lock:
+            account, _run = self._current(user_id)
+            rows = [
+                dict(entry) for entry in self.ledger
+                if entry["user_id"] == user_id
+                and entry["generation"] == account["current_generation"]
+                and entry["event_type"] in event_types
+            ]
+            rows.sort(key=lambda row: (row["created_at"], row["entry_id"]), reverse=True)
+            return rows[:limit]
 
     def list_order_events(self, user_id: str, order_id: str) -> list[dict[str, Any]]:
         with self._lock:
@@ -791,6 +848,7 @@ class InMemoryPaperTradingRepository:
         execution_id: str | None = None,
         cash_delta: Decimal = Decimal("0"),
         reserved_cash_delta: Decimal = Decimal("0"),
+        payload: dict[str, Any] | None = None,
     ) -> None:
         self.ledger.append({
             "entry_id": f"paper_led_{uuid4().hex}",
@@ -803,6 +861,7 @@ class InMemoryPaperTradingRepository:
             "reserved_cash_delta": reserved_cash_delta,
             "cash_balance_after": run["cash_balance"],
             "reserved_cash_after": run["reserved_cash"],
+            "payload": dict(payload or {}),
             "created_at": utc_now(),
         })
 
@@ -836,3 +895,25 @@ class InMemoryPaperTradingRepository:
             "executed_at": executed_at or utc_now(),
         })
         return execution_id
+
+
+def _execution_view(execution: dict[str, Any], order: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "execution_id": execution["execution_id"],
+        "order_id": order["order_id"],
+        "symbol": order["symbol"],
+        "side": order["side"],
+        "order_type": order.get("order_type") or "limit",
+        "memo": order.get("memo"),
+        "quantity": execution["quantity"],
+        "price": execution["price"],
+        "executed_at": _as_datetime(execution["executed_at"]),
+    }
+
+
+def _as_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)

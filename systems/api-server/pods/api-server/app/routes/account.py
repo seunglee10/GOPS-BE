@@ -11,6 +11,7 @@ from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
 from app.core.sectors import sector_payload_fields
 from app.market_data.indices.service import get_indices_service
+from app.services.account_activity import CASH_ACTIVITY_EVENT_TYPES, build_account_activity
 from app.services.alpaca_corporate_actions import enrich_holdings_with_alpaca_dividends
 from app.services.portfolio_performance import build_portfolio_performance, parse_datetime, performance_start_at
 from app.services.portfolio_market_enrichment import enrich_holdings_with_market_stats
@@ -70,6 +71,38 @@ def account_holdings(
         payload = enrich_holdings_with_market_stats(request.app, payload)
     _remember_portfolio_holdings_snapshot(request.app, user.sub, payload)
     return jsonable_encoder(payload)
+
+
+@router.get("/api/account/activity")
+def account_activity(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    """계좌 최근 활동 (D20). 체결·규칙 발동·입금·배당을 최신순으로 합친다."""
+    from app.routes.paper_trading import paper_repository_from_app
+
+    repository = paper_repository_from_app(request.app)
+    executions = repository.list_executions(user.sub, limit=limit)
+    cash_entries = repository.list_cash_entries(user.sub, event_types=CASH_ACTIVITY_EVENT_TYPES, limit=limit)
+    notifications: list[dict[str, Any]] = []
+    try:
+        from app.alerts.routes import _repository_from_app as alert_repository_from_app
+
+        # 시스템 알림이 섞여 있어 규칙 발동만 골라내면 줄어드므로 넉넉히 읽는다.
+        notifications = alert_repository_from_app(request.app).list_notifications(
+            user.sub,
+            limit=min(limit * 5, 500),
+        )
+    except Exception:
+        logger.warning("account activity skipped rule notifications", exc_info=True)
+    items = build_account_activity(
+        executions=executions,
+        notifications=notifications,
+        cash_entries=cash_entries,
+        limit=limit,
+    )
+    return {"items": jsonable_encoder(items)}
 
 
 @router.get("/api/account/performance")

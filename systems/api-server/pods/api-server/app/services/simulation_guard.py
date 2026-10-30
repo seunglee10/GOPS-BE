@@ -5,11 +5,14 @@ import re
 
 UNSAFE_SIMULATION_PREFIXES = (
     "/api/market/",
+    "/api/market-brief/",
     "/api/agent/",
     "/api/agents/",
     "/api/ai-coach/",
     "/api/company-journal/",
     "/api/llm/",
+    # 기사 본문은 발행 시각과 무관하게 id 로 열리므로 시뮬레이션에서 미래 기사를 보일 수 있다.
+    "/api/news/",
     "/api/charts/analysis-assets",
     "/api/charts/backfill",
     "/api/charts/compare",

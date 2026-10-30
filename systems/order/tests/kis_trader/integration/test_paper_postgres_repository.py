@@ -190,3 +190,45 @@ def test_postgres_global_symbol_capacity_is_serialized():
 
     assert sorted(results) == ["accepted", "capacity"]
     assert len(repository.active_order_symbols()) == 1
+
+
+def test_postgres_memo_status_page_executions_and_cash_entries():
+    repository = reset_repository()
+    memo_order = repository.create_order(
+        user_id="memo-user",
+        idempotency_key_hash="memo-1",
+        body_hash="memo-body-1",
+        request=order_request(symbol="NVDA", qty="2", price="150"),
+        memo="지지선 매수",
+    ).order
+    assert memo_order["memo"] == "지지선 매수"
+    plain = repository.create_order(
+        user_id="memo-user",
+        idempotency_key_hash="memo-2",
+        body_hash="memo-body-2",
+        request=order_request(symbol="AAPL", qty="1", price="50"),
+    ).order
+    assert plain["memo"] is None
+    repository.cancel_order("memo-user", plain["order_id"])
+    repository.match_quote(
+        symbol="NVDA",
+        bid_price=Decimal("140"),
+        ask_price=Decimal("142.3"),
+        quote_timestamp="2026-09-22T14:00:00Z",
+        quote_event_id="nvda-q1",
+    )
+
+    assert repository.get_order("memo-user", memo_order["order_id"])["memo"] == "지지선 매수"
+    items, total = repository.page_orders("memo-user", statuses=frozenset({"filled"}))
+    assert total == 1 and items[0]["memo"] == "지지선 매수"
+    items, total = repository.page_orders("memo-user", statuses=frozenset({"cancelled", "rejected"}))
+    assert total == 1 and items[0]["order_id"] == plain["order_id"]
+    items, total = repository.page_orders("memo-user", offset=1, limit=1)
+    assert total == 2 and len(items) == 1
+
+    executions = repository.list_executions("memo-user")
+    assert len(executions) == 1
+    assert executions[0]["symbol"] == "NVDA"
+    assert executions[0]["memo"] == "지지선 매수"
+    assert executions[0]["price"] == Decimal("142.3")
+    assert repository.list_cash_entries("memo-user", event_types=frozenset({"cash.dividend"})) == []

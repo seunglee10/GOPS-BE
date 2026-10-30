@@ -39,6 +39,11 @@ def _rsi14_from_closes(closes):
     return round(100.0 - 100.0 / (1.0 + average_gain / average_loss), 4)
 
 
+def is_missing_column_error(exc, column):
+    text = str(exc)
+    return column in text and ("UNKNOWN_IDENTIFIER" in text or "Missing columns" in text or "Unknown expression identifier" in text)
+
+
 class ClickHouseMarketDataProvider:
     def __init__(self, url=None, database=None, user=None, password=None, now_provider=None):
         """ClickHouse HTTP API 접속 정보를 환경변수 또는 인자로 초기화합니다."""
@@ -1535,7 +1540,7 @@ class ClickHouseMarketDataProvider:
           impact_direction AS impactDirection,
           why_it_matters AS whyItMatters,
           model,
-          formatDateTime(localized_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS localizedAt
+          formatDateTime(localized_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS localizedAt{{category_select}}
         FROM {self.table('news_article_localizations')}
         WHERE target_symbol IN {{symbols:Array(String)}}
           AND locale = {{locale:String}}
@@ -1545,7 +1550,74 @@ class ClickHouseMarketDataProvider:
         LIMIT {{limit:UInt32}}
         FORMAT JSONEachRow
         """
-        return self.query_json_each_row(query, parameters)
+        return self._query_news_with_optional_category(query, parameters)
+
+    def _query_news_with_optional_category(self, query_template, parameters):
+        """category 컬럼(마이그레이션 0002)이 아직 없는 환경에서도 뉴스 조회가 깨지지 않게 합니다.
+
+        컬럼이 없으면 한 번 실패한 뒤 그 프로세스에서는 category 없이 조회하고,
+        API 가 읽는 시점에 같은 키워드 규칙으로 분류를 계산합니다.
+        """
+        if not getattr(self, "_news_category_column_missing", False):
+            try:
+                return self.query_json_each_row(query_template.replace("{category_select}", ",\n          category"), parameters)
+            except RuntimeError as exc:
+                if not is_missing_column_error(exc, "category"):
+                    raise
+                self._news_category_column_missing = True
+        return self.query_json_each_row(query_template.replace("{category_select}", ""), parameters)
+
+    def localized_news_article_by_id(self, article_id, locale="ko-KR"):
+        """기사 본문 화면(GET /api/news/{id})용. 같은 기사가 종목별로 여러 행이면 관련도가 가장 높은 행을 씁니다."""
+        query = f"""
+        SELECT
+          formatDateTime(published_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS publishedAt,
+          symbol,
+          article_id AS articleId,
+          locale,
+          symbols,
+          target_symbol AS targetSymbol,
+          headline,
+          summary,
+          url,
+          source,
+          localized_headline AS localizedHeadline,
+          localized_summary AS localizedSummary,
+          key_points AS keyPoints,
+          why_it_matters AS whyItMatters,
+          event_type AS eventType,
+          formatDateTime(localized_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS localizedAt{{category_select}}
+        FROM {self.table('news_article_localizations')}
+        WHERE article_id = {{articleId:String}}
+          AND locale = {{locale:String}}
+        ORDER BY relevance_score_v2 DESC, localized_at DESC, inserted_at DESC
+        LIMIT 1
+        FORMAT JSONEachRow
+        """
+        rows = self._query_news_with_optional_category(query, {"articleId": str(article_id), "locale": locale})
+        return rows[0] if rows else None
+
+    def news_article_by_id(self, article_id):
+        """현지화 행이 아직 없는 기사의 원문 행. 본문 화면의 대체 경로입니다."""
+        query = f"""
+        SELECT
+          formatDateTime(published_at, '%Y-%m-%dT%H:%i:%S.000Z', 'UTC') AS publishedAt,
+          symbol,
+          article_id AS articleId,
+          headline,
+          summary,
+          content,
+          url,
+          source,
+          raw{{category_select}}
+        FROM {self.table('news_articles')}
+        WHERE article_id = {{articleId:String}}
+        ORDER BY inserted_at DESC
+        LIMIT 1
+        FORMAT JSONEachRow
+        """
+        rows = self._query_news_with_optional_category(query, {"articleId": str(article_id)})
+        return rows[0] if rows else None
 
     def company_daily_news_summaries(self, symbol, limit=5, days=30, locale="ko-KR"):
         query = f"""
