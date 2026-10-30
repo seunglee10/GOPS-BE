@@ -100,7 +100,14 @@ def test_http_query_path_never_rebuilds_the_projection():
         payload = query_service.heatmap("sp500")
 
     assert payload["cacheStatus"] == "stale"
-    assert payload["items"] == [{"symbol": "AAPL", "marketCap": 10, "nameKo": "애플", "exchangeKo": "나스닥"}]
+    assert payload["items"] == [{
+        "symbol": "AAPL",
+        "marketCap": 10,
+        "changePercent1w": None,
+        "changePercent1m": None,
+        "nameKo": "애플",
+        "exchangeKo": "나스닥",
+    }]
     heatmap.snapshot.assert_called_once_with("sp500", allow_rebuild=False)
 
 
@@ -123,6 +130,8 @@ def test_compact_heatmap_payload_keeps_render_fields_and_drops_fundamentals():
             "volume": 1_000,
             "sessionDollarVolume": 195_200,
             "changePercent": 0.72,
+            "changePercent1w": 3.1,
+            "changePercent1m": -4.25,
             "revenue": 383_000,
             "financialSeries": [{"period": "2026Q1"}],
         }],
@@ -143,9 +152,110 @@ def test_compact_heatmap_payload_keeps_render_fields_and_drops_fundamentals():
         "volume": 1_000,
         "sessionDollarVolume": 195_200,
         "changePercent": 0.72,
+        "changePercent1w": 3.1,
+        "changePercent1m": -4.25,
         "nameKo": "애플",
         "exchangeKo": "나스닥",
     }]
+
+
+def trading_dates(count, latest="2026-07-17"):
+    """Weekday trading dates, newest first."""
+    from datetime import date, timedelta
+
+    current = date.fromisoformat(latest)
+    dates = []
+    while len(dates) < count:
+        if current.weekday() < 5:
+            dates.append(current.isoformat())
+        current -= timedelta(days=1)
+    return dates
+
+
+class FakePeriodClickHouse:
+    def __init__(self, closes_by_symbol, quotes):
+        self.closes_by_symbol = closes_by_symbol
+        self.quotes = quotes
+        self.daily_close_calls = []
+
+    def latest_quotes(self, symbols, limit=None):
+        return [row for row in self.quotes if row["symbol"] in set(symbols)]
+
+    def recent_daily_closes(self, symbols, days=20):
+        self.daily_close_calls.append({"symbols": list(symbols), "days": days})
+        return {symbol: points[:days] for symbol, points in self.closes_by_symbol.items() if symbol in set(symbols)}
+
+
+def build_period_projection(closes_by_symbol, quotes):
+    provider = FakeProvider()
+    provider.clickhouse_provider = FakePeriodClickHouse(closes_by_symbol, quotes)
+    adapter = Mock()
+    adapter.latest_for_symbols.return_value = {}
+    service = MarketHeatmapService(provider=provider, fundamentals_adapter=adapter)
+    seed = [{"symbol": "AAPL", "sector": "Information Technology"}, {"symbol": "MSFT", "sector": "Information Technology"}]
+    with patch("app.market_data.heatmap.service.load_heatmap_seed_items", return_value=seed):
+        payload = service.rebuild("sp500")
+    return provider, payload
+
+
+def test_projection_adds_week_and_month_change_from_one_batched_daily_query():
+    dates = trading_dates(23, latest="2026-07-16")
+    # 최신 일봉(7/16)은 전 거래일, 현재 가격은 7/17 장중.
+    aapl_closes = [(day, 100.0 + index) for index, day in enumerate(dates)]
+    provider, payload = build_period_projection(
+        {"AAPL": aapl_closes, "MSFT": aapl_closes[:3]},
+        [
+            {"symbol": "AAPL", "lastPrice": 110.0, "previousClose": 100.0, "sourceUpdatedAt": "2026-07-17T15:00:00.000Z"},
+            {"symbol": "MSFT", "lastPrice": 50.0, "previousClose": 100.0, "sourceUpdatedAt": "2026-07-17T15:00:00.000Z"},
+        ],
+    )
+
+    calls = provider.clickhouse_provider.daily_close_calls
+    assert calls == [{"symbols": ["AAPL", "MSFT"], "days": 23}]
+    items = {item["symbol"]: item for item in payload["items"]}
+    # 5거래일 전 종가 = 104, 21거래일 전 종가 = 120
+    assert items["AAPL"]["changePercent1w"] == round((110 - 104) / 104 * 100, 2)
+    assert items["AAPL"]["changePercent1m"] == round((110 - 120) / 120 * 100, 2)
+    assert items["MSFT"]["changePercent1w"] is None
+    assert items["MSFT"]["changePercent1m"] is None
+    compact = compact_heatmap_payload(payload)
+    assert compact["items"][0]["changePercent1w"] == items["AAPL"]["changePercent1w"]
+    # 캐시에 저장된 projection에도 들어가므로 요청마다 다시 계산하지 않습니다.
+    cached = json.loads(provider.redis_provider.redis.values["gops:market:on-demand:v1:heatmap:sp500"])
+    assert cached["items"][0]["changePercent1m"] == items["AAPL"]["changePercent1m"]
+
+
+def test_projection_skips_todays_closed_candle_after_the_close():
+    dates = trading_dates(23, latest="2026-07-17")
+    closes = [(day, 100.0 + index) for index, day in enumerate(dates)]
+    _, payload = build_period_projection(
+        {"AAPL": closes},
+        # 7/17 장 마감 뒤: 최신 마감 일봉이 오늘이므로 5거래일 전은 index 5
+        [{"symbol": "AAPL", "lastPrice": 100.0, "sourceUpdatedAt": "2026-07-17T21:00:00.000Z"}],
+    )
+
+    item = payload["items"][0]
+    assert item["changePercent1w"] == round((100 - 105) / 105 * 100, 2)
+    assert item["changePercent1m"] == round((100 - 121) / 121 * 100, 2)
+
+
+def test_projection_period_changes_are_null_when_daily_query_fails():
+    provider = FakeProvider()
+
+    class BrokenClickHouse(FakePeriodClickHouse):
+        def recent_daily_closes(self, symbols, days=20):
+            raise RuntimeError("clickhouse down")
+
+    provider.clickhouse_provider = BrokenClickHouse({}, [{"symbol": "AAPL", "lastPrice": 10.0}])
+    adapter = Mock()
+    adapter.latest_for_symbols.return_value = {}
+    service = MarketHeatmapService(provider=provider, fundamentals_adapter=adapter)
+    with patch("app.market_data.heatmap.service.load_heatmap_seed_items", return_value=[{"symbol": "AAPL"}]):
+        payload = service.rebuild("sp500")
+
+    assert payload["items"][0]["lastPrice"] == 10.0
+    assert payload["items"][0]["changePercent1w"] is None
+    assert payload["items"][0]["changePercent1m"] is None
 
 
 def test_projection_worker_uses_lock_and_forces_a_fresh_projection():

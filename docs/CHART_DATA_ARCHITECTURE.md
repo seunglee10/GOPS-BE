@@ -112,6 +112,15 @@ baseline. The simulator loads all 502 canonical `v2/split/regular` closes once
 at process start and fails closed when the baseline is incomplete; it never
 falls back to the first replay trade or a scenario-seed percentage.
 
+LIVE heatmap items also carry `changePercent1w` and `changePercent1m`: the
+item's `lastPrice` compared with the closed canonical daily close 5 and 21
+trading sessions before the price's New York trading date. When the newest
+closed daily candle already belongs to that date (after the close), it is
+skipped. The projection worker reads the last 23 closed daily candles for all
+symbols in one batched ClickHouse query (`recent_daily_closes`) while
+rebuilding, so HTTP requests never compute them. Missing history or a failed
+query yields null. SIM does not compute period changes.
+
 ## Query Contract
 
 The single candle read boundary is `CanonicalCandleQuery`:

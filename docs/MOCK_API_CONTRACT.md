@@ -12,7 +12,7 @@ JSON 키는 camelCase, 시각은 UTC ISO 8601(`Z`), 금액은 달러 숫자(원�
 | # | 목업 데이터·행동 | 목업 위치 | 엔드포인트 | 상태 |
 |---|---|---|---|---|
 | D1 | 종목 마스터 `S` (한글명·거래소·현재가·등락·시총) | 8~26 | `GET /api/market/symbols`, `/symbols/{symbol}`, `/symbols/search`, `/heatmap` items | 있음 + 신규 필드 `nameKo`, `exchangeKo` |
-| D2 | 섹터·트리맵 `SECTORS` | 28~40 | `GET /api/market/heatmap?universe=sp500` | 있음 |
+| D2 | 섹터·트리맵 `SECTORS`, 기간 선택 `mp` | 28~40, 623~649 | `GET /api/market/heatmap?universe=sp500` | 있음 + 신규 필드 `changePercent1w`, `changePercent1m` |
 | D3 | 지수 묶음 + 스파크라인 `MKT` | 723~739 | `GET /api/market/indices` | 있음 + 신규 심볼(`KRW=X`, `^TNX`, `^VIX`)·필드 `nameKo`, `sparkline` |
 | D4 | 장 상태 문구 | 홈 상단 | `GET /api/market/status`, `GET /api/market/next-open` | 있음 |
 | D5 | 홈 순위표 `TRADE`·`WHY`·`CHART` | 650~720 | `GET /api/stocks/movers` | 신규 |
@@ -68,6 +68,19 @@ JSON 키는 camelCase, 시각은 UTC ISO 8601(`Z`), 금액은 달러 숫자(원�
 { "symbol": "NVDA", "companyName": "NVIDIA Corp", "nameKo": "엔비디아", "exchange": "NASDAQ", "exchangeKo": "나스닥", "sector": "Information Technology", "sectorLabelKo": "정보기술" }
 ```
 시드에 없는 종목은 `nameKo: null`, `exchangeKo: null`. `/heatmap` items와 `/symbols/search` items에도 같은 두 필드가 붙는다.
+
+### D2 시장 지도 기간 등락
+`GET /api/market/heatmap?universe=sp500` items
+```json
+{ "symbol": "NVDA", "lastPrice": 131.2, "previousClose": 128.4, "changePercent": 2.18, "changePercent1w": 4.06, "changePercent1m": -3.51 }
+```
+- `changePercent`: 1일. 직전 정규장 종가 대비 (기존과 같음)
+- `changePercent1w`: `lastPrice`를 5거래일 전 마감 일봉 종가와 비교한 등락률(%, 소수 둘째 자리)
+- `changePercent1m`: 같은 방식으로 21거래일 전 종가와 비교
+- 기준 거래일은 `lastPrice` 시각의 뉴욕 거래일이다. 장 마감 뒤라 오늘 일봉이 이미 마감됐으면 오늘 일봉은 세지 않는다
+- 일봉이 모자라거나 조회에 실패하면 `null`. 시드 대체 응답(`cacheStatus=seed`)과 배포 전 캐시도 두 필드를 `null`로 내려준다
+- 값은 projection worker가 갱신할 때 한 번 계산해 캐시에 넣는다. 요청마다 다시 계산하지 않는다
+- 두 필드는 실시간 projection에서만 계산한다. 시뮬레이터는 두 필드를 주지 않으며, projection 값은 현재 시점 기준이라 SIM 날짜와 맞지 않는다. 프론트는 SIM에서 1주·1개월을 비활성 또는 `—`로 그린다
 
 ### D3 지수
 `GET /api/market/indices`
