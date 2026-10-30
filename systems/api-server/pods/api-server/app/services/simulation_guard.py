@@ -6,6 +6,9 @@ import re
 UNSAFE_SIMULATION_PREFIXES = (
     "/api/market/",
     "/api/market-brief/",
+    # 캘린더는 이미 나온 경제지표 발표값(actual)과 실적 발표 여부를 보여 주므로 리플레이 시점 뒤 정보다.
+    # "/api/calendar" 하나로 /api/calendar 와 /api/calendar/brief 를 같이 막는다.
+    "/api/calendar",
     "/api/agent/",
     "/api/agents/",
     "/api/ai-coach/",

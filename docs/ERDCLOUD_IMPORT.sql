@@ -154,6 +154,24 @@ CREATE TABLE instrument_names_ko (
     PRIMARY KEY (symbol)
 );
 
+CREATE TABLE economic_events (
+    event_id VARCHAR(128) NOT NULL,
+    event_date DATE NOT NULL,
+    event_time_local VARCHAR(5),
+    region VARCHAR(2) NOT NULL,
+    title_ko VARCHAR(255),
+    title_en VARCHAR(255) NOT NULL,
+    importance VARCHAR(16) NOT NULL,
+    actual VARCHAR(64),
+    forecast VARCHAR(64),
+    previous VARCHAR(64),
+    unit VARCHAR(32),
+    source VARCHAR(32) NOT NULL,
+    updated_at DATETIME(3) NOT NULL,
+    PRIMARY KEY (event_id),
+    KEY idx_economic_events_date_region (event_date, region)
+);
+
 CREATE TABLE orders (
     order_id VARCHAR(128) NOT NULL,
     request_id VARCHAR(128) NOT NULL,

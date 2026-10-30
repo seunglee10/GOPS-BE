@@ -1042,6 +1042,27 @@ services:
       - app_net
       - data_net
 
+  economic-calendar:
+    profiles: ["jobs"]
+    image: gops-market-processor
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-market-processor
+    container_name: alfaka-economic-calendar
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
+      # 비어 있으면 잡은 로그만 남기고 0 으로 끝난다.
+      FINNHUB_API_KEY: "${FINNHUB_API_KEY:-}"
+      ECONOMIC_CALENDAR_PAST_DAYS: "${ECONOMIC_CALENDAR_PAST_DAYS:-7}"
+      ECONOMIC_CALENDAR_FUTURE_DAYS: "${ECONOMIC_CALENDAR_FUTURE_DAYS:-35}"
+    command: ["python", "-u", "systems/market-data/jobs/economic-calendar/main.py"]
+    restart: "no"
+    networks:
+      - data_net
+
   agent-orchestrator:
     image: gops-agent-orchestrator
     build:
@@ -1457,6 +1478,8 @@ services:
       OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.2}"
       STOCK_SUMMARY_SYMBOLS: "${STOCK_SUMMARY_SYMBOLS:-}"
       MARKET_BRIEF_S3_BUCKET: "${MARKET_BRIEF_S3_BUCKET:-}"
+      # 캘린더 주간 요약이 economic_events 를 읽는다. 없으면 실적 일정만으로 만든다.
+      DATABASE_URL: "postgresql://gops:${POSTGRES_PASSWORD:-gops_dev_password}@postgres:5432/gops"
     command: ["python", "-u", "/app/systems/agent-orchestration/jobs/stock-summary-refresh/main.py"]
     restart: "no"
     networks:
