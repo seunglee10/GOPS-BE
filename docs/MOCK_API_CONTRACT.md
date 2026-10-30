@@ -127,7 +127,7 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
   "news": [ { "text": "...", "newsId": "n_123" } ], "risks": [ { "text": "...", "newsId": "n_124" } ],
   "events": [ { "title": "실적 발표", "at": "2026-11-20", "note": "..." } ], "chartNote": "20일선 위에서 거래량 늘며 상승" }
 ```
-뉴스가 적재될 때 종목별로 미리 생성해 Redis에 저장한다(목업 1083 주석과 같은 설계). 없으면 404.
+뉴스가 적재될 때 종목별로 미리 생성해 Redis에 저장한다(목업 1083 주석과 같은 설계). 없으면 404 `{"detail":{"code":"summary_not_ready"}}`. 생성 방식은 `STOCK_SUMMARIES.md`.
 
 ### D15 오늘 시장 요약
 `GET /api/market-brief/today`
