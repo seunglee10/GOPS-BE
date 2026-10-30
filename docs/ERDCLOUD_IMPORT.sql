@@ -61,6 +61,7 @@ CREATE TABLE email_verifications (
     expires_at DATETIME(3) NOT NULL,
     attempts INT NOT NULL,
     pending_password_hash TEXT,
+    pending_consents JSON,
     consumed_at DATETIME(3),
     created_at DATETIME(3) NOT NULL,
     PRIMARY KEY (id),

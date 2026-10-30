@@ -19,7 +19,7 @@ CREATE TABLE email_credentials (
 CREATE TABLE email_verifications (
   id BIGINT PRIMARY KEY, email VARCHAR(320) NOT NULL, code_hash VARCHAR(128) NOT NULL,
   purpose VARCHAR(16) NOT NULL, expires_at DATETIME(3) NOT NULL, attempts INT NOT NULL,
-  pending_password_hash TEXT, consumed_at DATETIME(3), created_at DATETIME(3) NOT NULL
+  pending_password_hash TEXT, pending_consents JSON, consumed_at DATETIME(3), created_at DATETIME(3) NOT NULL
 );
 CREATE TABLE login_attempts (
   email VARCHAR(320) PRIMARY KEY, failed_count INT NOT NULL, locked_until DATETIME(3),

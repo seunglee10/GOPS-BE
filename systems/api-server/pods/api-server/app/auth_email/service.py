@@ -40,6 +40,11 @@ RESET_PATH = "/forgot"
 
 REQUIRED_CONSENTS = ("tos", "privacy", "age")
 
+# 인증 전 계정의 email_credentials.password_hash. verify_password 가 언제나 False 를 낸다.
+# 쓸 수 있는 비밀번호는 인증 코드 행(pending_password_hash)에만 있고, 그 코드가 확인될 때
+# 비로소 여기로 옮겨진다.
+UNUSABLE_PASSWORD_HASH = "!unverified"
+
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -130,16 +135,12 @@ class EmailAuthService:
             raise EmailAuthError(409, "email_taken")
 
         now = self._now()
-        password_hash = hash_password(password)
-        if existing is None:
-            credential = self.repository.create_credential(email, password_hash)
-            self.repository.save_consent(credential.app_user_id, consented_at=now, **consents)
-        else:
-            # 인증을 못 끝낸 가입은 다시 시도할 수 있지만, 저장된 비밀번호·동의는 건드리지
-            # 않는다. 새 비밀번호는 코드와 함께 보류해 두고 그 코드가 확인될 때만 옮긴다.
-            # 그래야 남이 내 미인증 이메일로 재가입해 비밀번호를 바꿔 끼우지 못한다.
-            credential = existing
-        self._issue_code(email, now, pending_password_hash=password_hash)
+        # 가입 요청의 비밀번호·동의는 인증 코드 행에만 보류한다. email_credentials 에는 쓸 수
+        # 없는 자리표시 해시만 두고, user_consents 도 아직 쓰지 않는다. 그 코드가 확인될 때
+        # verify() 가 함께 옮긴다. 그래서 미인증 이메일로 재가입·재전송을 몇 번 해도 확인되지
+        # 않은 비밀번호가 계정 비밀번호가 되는 경로가 없다.
+        credential = existing or self.repository.create_credential(email, UNUSABLE_PASSWORD_HASH)
+        self._issue_code(email, now, pending_password_hash=hash_password(password), pending_consents=consents)
         return SignupResult(credential=credential)
 
     def resend(self, email_value: Any) -> int:
@@ -153,8 +154,20 @@ class EmailAuthService:
                 raise EmailAuthError(429, "too_soon", retryAfterSeconds=retry_after)
         credential = self.repository.find_credential(email)
         # 모르는 이메일·이미 인증된 계정에도 같은 응답을 준다. 존재 여부를 흘리지 않는다.
-        if credential is not None and not credential.verified:
-            self._issue_code(email, now)
+        # 보류된 비밀번호가 없는 행(이미 쓴 코드 등)에서는 새 코드를 만들지 않는다. 다시 가입해야 한다.
+        if (
+            credential is not None
+            and not credential.verified
+            and latest is not None
+            and latest.pending_password_hash
+        ):
+            # 새 코드에 직전 가입 요청의 보류 비밀번호·동의를 그대로 옮긴다.
+            self._issue_code(
+                email,
+                now,
+                pending_password_hash=latest.pending_password_hash,
+                pending_consents=latest.pending_consents,
+            )
         return int(RESEND_INTERVAL.total_seconds())
 
     def verify(self, email_value: Any, code_value: Any) -> AuthenticatedUser:
@@ -174,12 +187,19 @@ class EmailAuthService:
         credential = self.repository.find_credential(email)
         if credential is None:
             raise EmailAuthError(410, "expired")
+        if not credential.verified and (not record.pending_password_hash or not record.pending_consents):
+            # 저장된(확인되지 않은) 비밀번호로 대신 인증하지 않는다. 다시 가입해야 한다.
+            raise EmailAuthError(410, "expired")
         self.repository.consume_verification(record.id, now)
         password_hash = credential.password_hash
-        if record.pending_password_hash and record.pending_password_hash != password_hash:
-            # 이 코드를 받은 가입 요청의 비밀번호가 계정 비밀번호가 된다.
+        if record.pending_password_hash:
+            # 이 코드를 받은 가입 요청의 비밀번호·동의가 계정 값이 된다.
             self.repository.update_password(credential.app_user_id, record.pending_password_hash)
             password_hash = record.pending_password_hash
+        if record.pending_consents:
+            self.repository.save_consent(
+                credential.app_user_id, consented_at=now, **normalize_consents(record.pending_consents)
+            )
         self.repository.mark_verified(credential.app_user_id, now)
         self.repository.clear_login_attempts(email)
         return email_user(EmailCredential(credential.app_user_id, email, password_hash, now))
@@ -194,7 +214,7 @@ class EmailAuthService:
             raise EmailAuthError(423, "locked", lockedUntil=_iso(attempt.locked_until))
 
         credential = self.repository.find_credential(email)
-        if credential is None or not verify_password(password, credential.password_hash):
+        if credential is None or not self._password_matches(credential, password):
             failed = 1 if attempt is None or (attempt.locked_until and attempt.locked_until <= now) else attempt.failed_count + 1
             if failed >= LOGIN_MAX_FAILURES:
                 locked_until = now + LOGIN_LOCK_DURATION
@@ -267,7 +287,24 @@ class EmailAuthService:
 
     # -- helpers -------------------------------------------------------------
 
-    def _issue_code(self, email: str, now: datetime, *, pending_password_hash: str | None = None) -> None:
+    def _password_matches(self, credential: EmailCredential, password: Any) -> bool:
+        if credential.verified:
+            return verify_password(password, credential.password_hash)
+        # 인증 전 계정은 계정 비밀번호가 없다. 지금 살아 있는 가입 코드의 보류 비밀번호와
+        # 맞으면 "맞게 쳤지만 인증 전"(403 unverified)으로 알려 줄 뿐, 세션은 주지 않는다.
+        latest = self.repository.latest_verification(credential.email, PURPOSE_VERIFY)
+        if latest is None or latest.consumed_at is not None:
+            return False
+        return verify_password(password, latest.pending_password_hash)
+
+    def _issue_code(
+        self,
+        email: str,
+        now: datetime,
+        *,
+        pending_password_hash: str | None = None,
+        pending_consents: dict[str, bool] | None = None,
+    ) -> None:
         code = "".join(secrets.choice("0123456789") for _ in range(CODE_LENGTH))
         self.repository.create_verification(
             email,
@@ -276,6 +313,7 @@ class EmailAuthService:
             now + CODE_TTL,
             now,
             pending_password_hash=pending_password_hash,
+            pending_consents=pending_consents,
         )
         self.mailer.send_verification_code(email, code)
 

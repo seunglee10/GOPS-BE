@@ -30,9 +30,12 @@ POST /api/auth/consent          { tos, privacy, age, mkt } -> 200 { needsConsent
 - 비밀번호는 8자 이상, 영문·숫자 각 1자 이상. 아니면 `422 weak_password`.
 - `tos`·`privacy`·`age` 는 필수, `mkt` 는 선택. 빠지면 `422 consent_required`.
 - 인증 코드 6자리, 5분, 5회 틀리면 `410 expired`. 재전송은 30초마다(`429 too_soon`).
-- 인증을 못 끝낸 가입은 같은 이메일로 다시 가입할 수 있다(새 코드). 이때 저장된 비밀번호·동의는
-  건드리지 않고 새 비밀번호 해시를 코드 행(`pending_password_hash`)에 보류했다가 그 코드가 확인될
-  때만 옮긴다. 남이 내 미인증 이메일로 재가입해도 비밀번호를 바꿔 끼울 수 없다.
+- 가입 요청의 비밀번호 해시·약관 동의는 인증 코드 행(`pending_password_hash`, `pending_consents`)에만
+  보류하고, 그 코드가 확인될 때 `email_credentials`·`user_consents` 로 옮긴다. 인증 전
+  `email_credentials.password_hash` 는 쓸 수 없는 자리표시 값이다. 재전송은 직전 행의 보류 값을 새
+  코드로 옮기고, 보류 값이 없는 코드로는 인증하지 않는다(`410 expired`, 다시 가입).
+- 인증을 못 끝낸 가입은 같은 이메일로 다시 가입할 수 있다(새 코드, 이전 코드 무효). 남이 내 미인증
+  이메일로 재가입해도 메일함의 코드 없이는 비밀번호를 정할 수 없다.
   인증이 끝난 이메일이면 `409 email_taken`.
 - 로그인: 잠금 중 `423 locked` → 비밀번호 확인(`401 invalid_credentials`, 5회면 423)
   → 미인증 `403 unverified`. 없는 이메일도 같은 401 이라 존재 여부가 새지 않는다.

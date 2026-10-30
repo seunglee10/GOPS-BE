@@ -14,6 +14,7 @@ from typing import Any, Protocol
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from app.auth.identity import database_conninfo, deterministic_app_user_id
 
@@ -49,6 +50,7 @@ class EmailVerification:
     consumed_at: datetime | None
     created_at: datetime
     pending_password_hash: str | None = None
+    pending_consents: dict[str, bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,7 @@ class EmailAuthRepository(Protocol):
         expires_at: datetime,
         created_at: datetime,
         pending_password_hash: str | None = None,
+        pending_consents: dict[str, bool] | None = None,
     ) -> EmailVerification: ...
     def latest_verification(self, email: str, purpose: str) -> EmailVerification | None: ...
     def find_verification_by_hash(self, purpose: str, code_hash: str) -> EmailVerification | None: ...
@@ -149,6 +152,7 @@ class InMemoryEmailAuthRepository:
         expires_at: datetime,
         created_at: datetime,
         pending_password_hash: str | None = None,
+        pending_consents: dict[str, bool] | None = None,
     ) -> EmailVerification:
         # 같은 이메일·목적의 살아 있는 이전 값은 무효화한다. 유효한 코드는 항상 하나다.
         self.verifications = [
@@ -167,6 +171,7 @@ class InMemoryEmailAuthRepository:
             consumed_at=None,
             created_at=created_at,
             pending_password_hash=pending_password_hash,
+            pending_consents=dict(pending_consents) if pending_consents else None,
         )
         self._next_id += 1
         self.verifications.append(record)
@@ -263,9 +268,7 @@ class PostgresEmailAuthRepository:
                     """
                     INSERT INTO email_credentials (app_user_id, email, password_hash)
                     VALUES (%s, %s, %s)
-                    ON CONFLICT (app_user_id) DO UPDATE SET
-                        password_hash = EXCLUDED.password_hash,
-                        updated_at = now()
+                    ON CONFLICT (app_user_id) DO UPDATE SET updated_at = now()
                     RETURNING app_user_id, email, password_hash, email_verified_at
                     """,
                     (app_user_id, email, password_hash),
@@ -317,6 +320,7 @@ class PostgresEmailAuthRepository:
         expires_at: datetime,
         created_at: datetime,
         pending_password_hash: str | None = None,
+        pending_consents: dict[str, bool] | None = None,
     ) -> EmailVerification:
         try:
             with self._connect() as conn:
@@ -330,13 +334,17 @@ class PostgresEmailAuthRepository:
                 row = conn.execute(
                     """
                     INSERT INTO email_verifications (
-                        email, code_hash, purpose, expires_at, created_at, pending_password_hash
+                        email, code_hash, purpose, expires_at, created_at,
+                        pending_password_hash, pending_consents
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     RETURNING id, email, code_hash, purpose, expires_at, attempts, consumed_at, created_at,
-                              pending_password_hash
+                              pending_password_hash, pending_consents
                     """,
-                    (email, code_hash, purpose, expires_at, created_at, pending_password_hash),
+                    (
+                        email, code_hash, purpose, expires_at, created_at, pending_password_hash,
+                        Jsonb(pending_consents) if pending_consents else None,
+                    ),
                 ).fetchone()
                 conn.commit()
         except psycopg.Error as exc:
@@ -350,7 +358,7 @@ class PostgresEmailAuthRepository:
         row = self._fetchone(
             """
             SELECT id, email, code_hash, purpose, expires_at, attempts, consumed_at, created_at,
-                   pending_password_hash
+                   pending_password_hash, pending_consents
             FROM email_verifications
             WHERE email = %s AND purpose = %s
             ORDER BY created_at DESC, id DESC
@@ -364,7 +372,7 @@ class PostgresEmailAuthRepository:
         row = self._fetchone(
             """
             SELECT id, email, code_hash, purpose, expires_at, attempts, consumed_at, created_at,
-                   pending_password_hash
+                   pending_password_hash, pending_consents
             FROM email_verifications
             WHERE purpose = %s AND code_hash = %s
             ORDER BY created_at DESC, id DESC
@@ -505,7 +513,14 @@ def _verification(row: dict[str, Any] | None) -> EmailVerification | None:
         consumed_at=_aware(row["consumed_at"]),
         created_at=_aware(row["created_at"]) or datetime.now(timezone.utc),
         pending_password_hash=row.get("pending_password_hash") or None,
+        pending_consents=_consent_flags(row.get("pending_consents")),
     )
+
+
+def _consent_flags(value: Any) -> dict[str, bool] | None:
+    if not isinstance(value, dict):
+        return None
+    return {str(key): bool(flag) for key, flag in value.items()}
 
 
 def _consent(row: dict[str, Any] | None) -> Consent | None:

@@ -23,6 +23,8 @@ COMMENT ON COLUMN email_credentials.email IS
     '소문자로 정규화한 이메일. user_identities.provider_subject 와 같은 값이다.';
 COMMENT ON COLUMN email_credentials.email_verified_at IS
     'NULL 이면 아직 인증 코드를 확인하지 않은 계정. 로그인은 403 unverified.';
+COMMENT ON COLUMN email_credentials.password_hash IS
+    '인증 전에는 쓸 수 없는 자리표시 값. 코드가 확인될 때 pending_password_hash 가 옮겨진다.';
 
 -- 인증 코드(purpose='verify', 6자리·5분)와 비밀번호 재설정 토큰(purpose='reset',
 -- 32바이트·30분)을 한 테이블에 둔다. 둘 다 "이메일로 보낸 1회용 비밀값의 해시"라
@@ -35,6 +37,7 @@ CREATE TABLE IF NOT EXISTS email_verifications (
     expires_at TIMESTAMPTZ NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     pending_password_hash TEXT,
+    pending_consents JSONB,
     consumed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT email_verifications_purpose_check CHECK (purpose IN ('verify', 'reset'))
@@ -50,6 +53,8 @@ COMMENT ON TABLE email_verifications IS
 COMMENT ON COLUMN email_verifications.pending_password_hash IS
     '가입 요청이 들고 온 비밀번호 해시. 이 코드가 확인될 때만 email_credentials 로 옮긴다. '
     '미인증 재가입이 기존 비밀번호를 덮어쓰지 못하게 하는 장치다.';
+COMMENT ON COLUMN email_verifications.pending_consents IS
+    '가입 요청의 약관 동의 {tos,privacy,age,mkt}. 코드가 확인될 때 user_consents 로 옮긴다.';
 
 -- 로그인 실패 횟수와 잠금. 계정이 없는 이메일도 세어서 존재 여부가 새지 않게 한다.
 CREATE TABLE IF NOT EXISTS login_attempts (

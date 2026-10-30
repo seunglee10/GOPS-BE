@@ -201,35 +201,89 @@ class EmailAuthRoutesTest(unittest.TestCase):
         self.client.cookies.clear()
         self.assertEqual(self.login(password="newpass99").status_code, 200)
 
+    def age_out_latest_code(self):
+        # 재전송 30초 제한을 넘긴 것처럼 이 이메일의 코드 행을 모두 31초 전으로 민다(순서 유지).
+        self.repository.verifications = [
+            replace(item, created_at=item.created_at - timedelta(seconds=31)) if item.email == self.EMAIL else item
+            for item in self.repository.verifications
+        ]
+
+    def test_signup_stores_no_usable_password_or_consent_before_verify(self):
+        self.assertEqual(self.signup(password="victim11").status_code, 201)
+        credential = self.repository.find_credential(self.EMAIL)
+        self.assertFalse(verify_password("victim11", credential.password_hash))
+        self.assertIsNone(self.repository.get_consent(credential.app_user_id))
+        # 맞는 비밀번호를 쳐도 인증 전이라 403, 세션은 없다.
+        self.assertEqual(self.login(password="victim11").status_code, 403)
+        self.assertIsNone(self.client.get("/api/auth/me").json()["user"])
+
     def test_resignup_cannot_change_password_before_its_own_code_is_verified(self):
         # 피해자가 pw1 로 가입하고 아직 인증 전. 공격자가 같은 이메일·pw2 로 재가입한다.
         self.assertEqual(self.signup(password="victim11").status_code, 201)
-        stored_before = self.repository.find_credential(self.EMAIL).password_hash
         self.assertEqual(self.signup(password="attack22", consents={**self.CONSENTS, "mkt": True}).status_code, 201)
-        # 저장된 비밀번호·동의는 그대로다.
-        self.assertEqual(self.repository.find_credential(self.EMAIL).password_hash, stored_before)
-        self.assertFalse(self.repository.get_consent(self.repository.find_credential(self.EMAIL).app_user_id).mkt)
-        # 인증 전에는 로그인되지 않는다. 공격자의 비밀번호는 아예 틀린 비밀번호다.
-        self.assertEqual(self.login(password="victim11").status_code, 403)
-        self.assertEqual(self.login(password="attack22").status_code, 401)
-
-        # 메일을 받은 쪽(이메일 주인)이 두 번째 코드로 인증하면 그 코드의 비밀번호가 쓰인다.
+        credential = self.repository.find_credential(self.EMAIL)
+        self.assertIsNone(self.repository.get_consent(credential.app_user_id))
+        # 메일을 받은 쪽(이메일 주인)이 두 번째 코드로 인증하면 그 코드의 비밀번호·동의가 쓰인다.
         self.assertEqual(self.verify(code=self.mailer.codes[1][1]).status_code, 200)
+        self.assertTrue(self.repository.get_consent(credential.app_user_id).mkt)
         self.client.cookies.clear()
         self.assertEqual(self.login(password="attack22").status_code, 200)
         self.client.cookies.clear()
         self.assertEqual(self.login(password="victim11").status_code, 401)
 
-    def test_first_code_is_invalid_after_resignup_and_keeps_first_password(self):
+    def test_first_code_is_invalid_after_resignup(self):
         self.assertEqual(self.signup(password="victim11").status_code, 201)
         self.assertEqual(self.signup(password="attack22").status_code, 201)
         # 재가입은 이전 코드를 무효화한다. 유효한 코드는 항상 하나다.
         first = self.verify(code=self.mailer.codes[0][1])
         self.assertEqual(first.status_code, 400)
         self.assertEqual(first.json()["detail"]["code"], "invalid_code")
-        # 아무것도 확인되지 않았으니 비밀번호는 첫 가입 값 그대로다.
-        self.assertTrue(verify_password("victim11", self.repository.find_credential(self.EMAIL).password_hash))
-        self.assertEqual(self.login(password="victim11").status_code, 403)
+        self.assertFalse(self.repository.find_credential(self.EMAIL).verified)
+
+    def test_resend_carries_the_signup_password_to_the_new_code(self):
+        self.assertEqual(self.signup(password="victim11").status_code, 201)
+        self.age_out_latest_code()
+        self.assertEqual(self.client.post("/api/auth/email/resend", json={"email": self.EMAIL}).status_code, 200)
+        self.assertEqual(len(self.mailer.codes), 2)
+        self.assertEqual(self.verify().status_code, 200)
+        self.client.cookies.clear()
+        self.assertEqual(self.login(password="victim11").status_code, 200)
+
+    def test_resignup_then_resend_keeps_the_latest_signup_password(self):
+        self.assertEqual(self.signup(password="victim11").status_code, 201)
+        self.assertEqual(self.signup(password="attack22").status_code, 201)
+        self.age_out_latest_code()
+        self.assertEqual(self.client.post("/api/auth/email/resend", json={"email": self.EMAIL}).status_code, 200)
+        self.assertEqual(self.verify().status_code, 200)
+        self.client.cookies.clear()
+        self.assertEqual(self.login(password="attack22").status_code, 200)
+        self.client.cookies.clear()
+        self.assertEqual(self.login(password="victim11").status_code, 401)
+
+    def test_consents_are_applied_only_after_verify(self):
+        self.assertEqual(self.signup(consents={**self.CONSENTS, "mkt": True}).status_code, 201)
+        app_user_id = self.repository.find_credential(self.EMAIL).app_user_id
+        self.assertIsNone(self.repository.get_consent(app_user_id))
+        self.age_out_latest_code()
+        self.client.post("/api/auth/email/resend", json={"email": self.EMAIL})
+        self.assertIsNone(self.repository.get_consent(app_user_id))
+        self.assertEqual(self.verify().status_code, 200)
+        stored = self.repository.get_consent(app_user_id)
+        self.assertTrue(stored.tos and stored.privacy and stored.age and stored.mkt)
+        self.assertFalse(self.client.get("/api/auth/me").json()["user"]["needsConsent"])
+
+    def test_code_without_pending_password_is_rejected_for_unverified_account(self):
+        self.assertEqual(self.signup().status_code, 201)
+        record = self.latest_verification()
+        self.rewrite_verification(record, pending_password_hash=None)
+        rejected = self.verify()
+        self.assertEqual(rejected.status_code, 410)
+        self.assertEqual(rejected.json()["detail"]["code"], "expired")
+        self.assertFalse(self.repository.find_credential(self.EMAIL).verified)
+        # 그런 행에서는 재전송해도 새 코드가 나가지 않는다.
+        self.age_out_latest_code()
+        self.client.post("/api/auth/email/resend", json={"email": self.EMAIL})
+        self.assertEqual(len(self.mailer.codes), 1)
 
     def test_weak_password_and_missing_consent_are_422(self):
         weak = self.signup(password="abcdefgh")
