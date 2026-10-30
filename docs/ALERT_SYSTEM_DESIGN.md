@@ -72,6 +72,14 @@ PostgreSQL에 함께 저장한다. 이는 화면에서 제안 출처를 보존�
 evaluator의 조건 판정, repeat/status, Redis ZSET, 알림 발송 계약을 바꾸지 않는다.
 기존·직접 생성 알람은 null이다.
 
+규칙 목록 화면이 보여 주는 출처는 별도 컬럼 `source`(`agent`, `chart`, `user`, `default`)다.
+`alerts`와 `trade_conditions`에 같은 값을 쓴다. 생성 body의 `source`로 받고, 없으면
+`proposal_source`가 있거나 `created_via=ai_coach`면 `agent`, `created_via=chart`면 `chart`,
+그 밖에는 `user`다. 자연어 `/api/alerts/commands`는 사용자가 쓴 문장이라 `user`,
+`/api/trade-conditions/commands`는 에이전트 제안을 등록하므로 `agent`다. 조건주문이 만든
+알림은 조건주문의 `source`를 따른다. `0027_rule_source.sql`이 같은 규칙으로 기존 행을
+백필하고 `trade_conditions.source`의 옛 값 `manual`을 `user`로 바꾼다.
+
 **v1 토폴로지 결정 — 단일 pod.** 별도 dispatcher pod 없이 evaluator가 감지와 발송을
 모두 담당한다. 발화는 하루 수백 건 수준이라 발송 부하가 감지를 밀어낼 규모가 아니고,
 Kafka 홉이 하나 빠져 발화→알림함 저장이 10~20ms 빨라진다. 단:
@@ -228,6 +236,7 @@ CREATE TABLE alerts (
   condition     JSONB NOT NULL,
   condition_version SMALLINT NOT NULL DEFAULT 1,
   created_via   TEXT NOT NULL DEFAULT 'manual',
+  source        TEXT NOT NULL DEFAULT 'user',  -- agent | chart | user | default (0027)
   request_id    TEXT,
   last_triggered_at TIMESTAMPTZ
 );

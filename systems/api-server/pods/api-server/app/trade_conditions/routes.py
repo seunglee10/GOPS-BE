@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from app.alerts.routes import _repository_from_app as alert_repository_from_app
 from app.alerts.routes import _resolve_current_price, _sync_projection
 from app.alerts.repository import ACTIVE_ALERT_LIMIT
+from app.alerts.source import DEFAULT_RULE_SOURCE, validate_rule_source
 from app.auth.dependencies import auth_is_enabled, require_current_user
 from app.auth.models import AuthenticatedUser
 from app.services.agent_gateway import get_agent_report
@@ -40,6 +41,8 @@ class TradeConditionCreateBody(BaseModel):
     executionEnabled: bool = True
     alertsEnabled: bool = True
     validity: str = Field(default="DAY", max_length=32)
+    # D23 규칙 출처 (agent|chart|user|default). 없으면 user.
+    source: Any = None
 
 
 class TradeConditionPatchBody(BaseModel):
@@ -77,7 +80,7 @@ def create_trade_condition(
     created = _create_from_values(
         request,
         user_sub=user.sub,
-        source="manual",
+        source=validate_rule_source(body.source) or DEFAULT_RULE_SOURCE,
         symbol=body.symbol,
         side=body.side,
         direction=body.direction,

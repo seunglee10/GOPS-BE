@@ -262,6 +262,14 @@ class PostgresPaperTradingRepository:
                 )
                 return PaperOrderCreationResult(public_order(dict(row)), False)
 
+    def has_idempotent_order(self, user_id: str, idempotency_key_hash: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM paper_orders WHERE user_id = %s AND idempotency_key_hash = %s",
+                (user_id, idempotency_key_hash),
+            ).fetchone()
+            return row is not None
+
     def pretrade(self, user_id: str, request: OrderRequest) -> dict[str, Any]:
         with self._connect() as conn:
             with conn.transaction():
