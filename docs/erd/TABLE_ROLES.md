@@ -12,6 +12,8 @@
 | `email_verifications` | PostgreSQL | 이메일로 보낸 인증 코드·비밀번호 재설정 토큰의 해시, 만료, 시도 횟수. 가입 코드는 확인 전까지 비밀번호 해시·약관 동의를 보류(`pending_password_hash`, `pending_consents`) | `email` (FK 없음, 가입 전에도 쌓임) |
 | `login_attempts` | PostgreSQL | 이메일별 로그인 실패 횟수와 잠금 해제 시각 | `email` (FK 없음, 없는 계정도 셈) |
 | `user_consents` | PostgreSQL | 약관·개인정보·연령 필수 동의와 마케팅 선택 동의 | `app_users` |
+| `user_preferences` | PostgreSQL | 화면 설정(레이아웃·차트·그리기·통화·패널 폭·브랜드)과 투자 경험을 담은 JSON 한 행. `version`으로 낙관적 동시성, 64KB 제한은 API가 검사 | `app_users` |
+| `learn_progress` | PostgreSQL | 학습 코스에서 맞힌 문제와 처음 맞힌 시각. 코스·문제는 API 서버 JSON 시드에 있어 FK 없음 | `app_users`, `course_id`·`question_id`(시드) |
 | `user_identity_tokens` | PostgreSQL | 소셜 제공자가 발급한 access/refresh 토큰. 제공자 API 호출용이며 응답·로그에 싣지 않음 | `user_identities` |
 | `orders` | PostgreSQL | 실주문 요청 원본과 현재 상태 | 사용자, 종목, 주문 이벤트 |
 | `order_events` | PostgreSQL | 주문 상태 변경 이력 | `orders` |
@@ -23,9 +25,9 @@
 | `dlq_events` | PostgreSQL | 처리 실패 메시지와 원본 payload | 재처리 운영 |
 | `reconciliation_runs` | PostgreSQL | 내부 주문과 브로커 상태 대사 실행 결과 | 주문 운영 |
 | `audit_logs` | PostgreSQL | 관리자·외부 주문 작업 감사 스냅샷 | 외부 `order_id`는 의도적으로 FK 없음 |
-| `alerts` | PostgreSQL | 사용자 종목 알림 조건 | 사용자, 종목 |
+| `alerts` | PostgreSQL | 사용자 종목 알림 조건. `source`(agent·chart·user·default)는 규칙 출처, `proposal_source`는 코치 제안 세부 분류 | 사용자, 종목 |
 | `notifications` | PostgreSQL | 알림 발송 결과와 상태 | `alerts` |
-| `trade_conditions` | PostgreSQL | 조건 충족 시 모의주문을 실행하는 규칙 | 사용자, alert/`paper_orders`를 통한 종목 연결 |
+| `trade_conditions` | PostgreSQL | 조건 충족 시 모의주문을 실행하는 규칙. `source`는 alerts와 같은 규칙 출처 | 사용자, alert/`paper_orders`를 통한 종목 연결 |
 | `user_notification_preferences` | PostgreSQL | 사용자별 알림 채널·시간 설정 | `app_users` |
 
 ## 추천·개인화·주문 코칭
@@ -54,6 +56,7 @@
 | `instruments` | PostgreSQL | 종목의 canonical 식별자·시장·통화 기준정보 | 모든 종목 소유 데이터 |
 | `instrument_aliases` | PostgreSQL | 공급자별 심볼을 canonical 종목으로 매핑 | `instruments` |
 | `instrument_names_ko` | PostgreSQL | 종목 한글 이름·거래소 한글 표기 시드(원본은 `market_data/reference/instrument_names_ko.json`) | `symbol`은 `instruments.canonical_symbol`과 같은 표기, FK 없음 |
+| `economic_events` | PostgreSQL | 미국·한국 경제지표 발표 일정과 발표값(D28 캘린더 `kind=econ`). economic-calendar 잡이 Finnhub 에서 6시간마다 upsert, 날짜·시각은 한국 시간 | 독립 테이블, FK 없음. 실적 일정은 ClickHouse `yahoo_earnings_estimates` 를 읽는다 |
 | `paper_accounts` | PostgreSQL | 사용자별 현재 모의 현금 계좌 | `app_users` |
 | `paper_account_runs` | PostgreSQL | 시뮬레이션 실행별 계좌 상태 | 사용자 |
 | `paper_positions` | PostgreSQL | 사용자별 종목 현재 보유 집계 | 사용자, 종목 |

@@ -1,0 +1,62 @@
+# 역할: Finnhub 경제 캘린더(미국·한국)를 6시간마다 받아 PostgreSQL economic_events 에 upsert 합니다(D28 kind=econ).
+#       과거 7일도 다시 받아 발표가 끝난 지표의 actual 을 채웁니다. 0030_economic_events.sql 마이그레이션이 먼저 필요합니다.
+# FINNHUB_API_KEY 가 없으면 로그만 남기고 0 으로 끝납니다. schedule 은 UTC 입니다.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gops-economic-calendar
+  namespace: alfaka-market-data
+spec:
+  schedule: "20 */6 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app: gops-economic-calendar
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 1
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app: gops-economic-calendar
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            karpenter.sh/nodepool: batch
+          tolerations:
+            - key: gops.io/dedicated
+              operator: Equal
+              value: batch
+              effect: NoSchedule
+          serviceAccountName: alfaka-market-data-sa
+          containers:
+            - name: economic-calendar
+              image: YOUR_ECR_REPOSITORY/gops-market-processor:latest
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-u", "systems/market-data/jobs/economic-calendar/main.py"]
+              env:
+                - name: ECONOMIC_CALENDAR_PAST_DAYS
+                  value: "7"
+                - name: ECONOMIC_CALENDAR_FUTURE_DAYS
+                  value: "35"
+              envFrom:
+                - configMapRef:
+                    name: alfaka-market-data-config
+                - secretRef:
+                    name: alfaka-order-db-secret
+                    optional: false
+                - secretRef:
+                    name: alfaka-finnhub-secret
+                    optional: true
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi

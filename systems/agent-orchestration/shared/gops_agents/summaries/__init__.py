@@ -1,12 +1,15 @@
-"""종목 AI 요약(D14)과 오늘 시장 요약(D15) 생성기.
+"""종목 AI 요약(D14), 오늘 시장 요약(D15), 캘린더 주간 요약(D28) 생성기.
 
 LLM 호출은 `JsonModelClient` 뒤에 숨긴다. 모델이 꺼져 있거나 실패하면
 결정론적 템플릿 요약으로 대신하므로, 데이터가 있는 종목의 캐시는 비지 않는다.
 """
 
+from .calendar_brief import CalendarBriefGenerator, CalendarBriefInput
 from .keys import (
+    CALENDAR_BRIEF_TTL_SECONDS,
     MARKET_BRIEF_TTL_SECONDS,
     STOCK_SUMMARY_TTL_SECONDS,
+    calendar_brief_key,
     market_brief_key,
     stock_summary_key,
 )
@@ -15,6 +18,9 @@ from .market_brief import MarketBriefGenerator, MarketBriefInput
 from .stock_summary import StockSummaryGenerator, StockSummaryInput
 
 __all__ = [
+    "CALENDAR_BRIEF_TTL_SECONDS",
+    "CalendarBriefGenerator",
+    "CalendarBriefInput",
     "JsonModelClient",
     "MARKET_BRIEF_TTL_SECONDS",
     "MarketBriefGenerator",
@@ -25,6 +31,7 @@ __all__ = [
     "StockSummaryInput",
     "SummaryModelError",
     "build_summary_model_client_from_env",
+    "calendar_brief_key",
     "market_brief_key",
     "stock_summary_key",
 ]

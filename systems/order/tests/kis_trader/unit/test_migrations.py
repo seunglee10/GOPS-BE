@@ -209,3 +209,19 @@ def test_notification_preferences_migration_declares_user_scoped_json_settings()
     assert "user_sub TEXT PRIMARY KEY" in sql
     assert "settings JSONB NOT NULL" in sql
     assert "company_overrides JSONB NOT NULL" in sql
+
+
+def test_rule_source_migration_backfills_alerts_and_trade_conditions():
+    [migration] = [path for path in migration_files() if path.name == "0027_rule_source.sql"]
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ALTER TABLE alerts\n    ADD COLUMN IF NOT EXISTS source TEXT" in sql
+    assert "CONSTRAINT alerts_source_check" in sql
+    assert "source IN ('agent', 'chart', 'user', 'default')" in sql
+    # 옛 출처 값 매핑
+    assert "WHEN proposal_source IS NOT NULL OR created_via = 'ai_coach' THEN 'agent'" in sql
+    assert "WHEN created_via = 'chart' THEN 'chart'" in sql
+    assert "SET source = 'user'\nWHERE source = 'manual'" in sql
+    assert "ALTER TABLE alerts ALTER COLUMN source SET NOT NULL" in sql
+    # 조건주문이 만든 알림은 조건주문 출처를 따른다
+    assert "trade_condition.alert_id = alert.id" in sql

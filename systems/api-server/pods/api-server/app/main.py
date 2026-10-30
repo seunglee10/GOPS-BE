@@ -7,12 +7,14 @@ from fastapi.responses import JSONResponse
 
 from app.alerts.routes import router as alerts_router
 from app.auth_email.routes import router as auth_email_router
+from app.calendar.routes import router as calendar_router
 from app.company_journal.routes import router as company_journal_router
 from app.contracts.chart import AgentChatMessage, AgentChatRequest, ChartProposalRequest
 from app.core.config import CORS_ORIGINS, read_dotenv_value
 from app.market_data.indices.service import start_market_indices_warmer
 from app.market_data.monitor.routes import router as market_monitor_router
 from app.market_data.query.routes import router as market_query_router
+from app.learn.routes import router as learn_router
 from app.me.routes import router as me_router
 from app.review.routes import router as review_router
 from app.news.routes import router as news_router
@@ -119,6 +121,7 @@ def create_app() -> FastAPI:
     app.include_router(news_router)
     app.include_router(me_router)
     app.include_router(review_router)
+    app.include_router(learn_router)
     app.include_router(agents_router)
     app.include_router(llm_router)
     app.include_router(orders_router)
@@ -130,6 +133,7 @@ def create_app() -> FastAPI:
     app.include_router(recommendations_router)
     app.include_router(stock_ai_summary_router)
     app.include_router(market_brief_router)
+    app.include_router(calendar_router)
     app.include_router(streams_router)
 
     log_runtime_config()

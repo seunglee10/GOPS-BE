@@ -1,4 +1,4 @@
-# 종목 AI 요약·오늘 시장 요약
+# 종목 AI 요약·오늘 시장 요약·캘린더 주간 요약
 
 목업의 종목 AI 요약(D14)과 홈 '오늘 시장 요약'(D15)을 미리 만들어 두는 방식이다.
 API 는 저장된 값만 읽고, 생성은 agent-orchestration 의 주기 잡이 맡는다. 응답 형태는 `MOCK_API_CONTRACT.md` D14·D15가 기준이다.
@@ -13,9 +13,12 @@ stock-summary-refresh 잡 (매시 5분, CronJob)
   └─ 미국 장 마감(16:15 ET, 조기 폐장일 13:15 ET) 뒤 첫 실행: 지수·업종·등락 상위·오늘 뉴스 → MarketBriefGenerator
        → Redis gops:market-brief:{YYYY-MM-DD}  (TTL 3일, 날짜는 미국 동부 기준 거래일)
        → S3 market-brief/v1/date={YYYY-MM-DD}/brief.json  (MARKET_BRIEF_S3_BUCKET 이 있을 때만)
+  └─ 매 실행(6시간 제한): 이번 주·다음 주(한국 시간 ISO 주) D28 일정 → CalendarBriefGenerator
+       → Redis gops:calendar-brief:{YYYY-Www}  (TTL 8일)
 
 GET /api/stocks/{symbol}/ai-summary   캐시가 없으면 404 {"detail":{"code":"summary_not_ready"}}
 GET /api/market-brief/today           오늘 → 없으면 3일 안 가장 최근 → 없으면 404 {"detail":{"code":"brief_not_ready"}}
+GET /api/calendar/brief?week=        캐시가 없으면 404 {"detail":{"code":"brief_not_ready"}}
 GET /api/stocks/movers                같은 캐시의 issueLine(없으면 head 첫 문장 24자)·news[0].newsId·chartNote 를 issue·issueNewsId·chartNote 로 쓴다(D5)
 ```
 
@@ -25,6 +28,7 @@ GET /api/stocks/movers                같은 캐시의 issueLine(없으면 head 
 | --- | --- | --- | --- | --- |
 | `gops:stocks:ai-summary:{SYMBOL}` | D14 JSON | 24시간 | 갱신 잡 | D14 API, D5 movers |
 | `gops:market-brief:{YYYY-MM-DD}` | D15 JSON | 3일 | 갱신 잡 | D15 API |
+| `gops:calendar-brief:{YYYY-Www}` | `{week, generatedAt, text}` | 8일 | 갱신 잡 | D28 brief API |
 
 키에는 `REDIS_KEY_PREFIX` 를 붙이지 않는다. 코드 기준은 `gops_agents/summaries/keys.py`.
 잡은 API 서버 워커가 써 둔 `{REDIS_KEY_PREFIX}:indices:snapshot|last`, `{REDIS_KEY_PREFIX}:heatmap:sp500[:last]` 을 재료로 읽는다.
@@ -40,6 +44,10 @@ GET /api/stocks/movers                같은 캐시의 issueLine(없으면 head 
   종목: 전일 대비 등락·20일 평균 대비 거래량·업종 방향 + 최근 기사 제목, `chartNote` 는 20일선 위/아래·거래량 배수·등락 방향.
   `issueLine` 은 가장 큰 이유 하나: 거래량 1.5배 이상이면 "거래량 20일 평균 2.1배", 아니면 24자 이내 기사 제목, "업종 동반 상승", chartNote, 긴 기사 제목 줄임 순.
   시장: 지수 등락, 10년물 금리·VIX 수준, 가장 강한/약한 업종, 등락 상위 종목, 많이 다룬 기사.
+- 캘린더 주간 요약: 그 주의 주요(level=major) 경제지표·실적(시총 상위 50)만 해요체 한두 문장으로 쓴다.
+  재료는 Postgres `economic_events`(DATABASE_URL 이 없으면 빠짐)와 ClickHouse 실적일. 예상치·전망·`%`·매매 권유는 쓰지 않고,
+  입력 일정 이름이 하나도 없으면 버린다. 템플릿: "이번 주에는 29일 FOMC 금리 결정 발표가 있고, 마이크로소프트, 애플 실적 발표도 이어져요."
+  주요 일정이 없으면 그 주 앞쪽 일정 3개로 "큰 일정이 적고, …" 문장을 만들고, 일정이 하나도 없으면 쓰지 않는다(API 404).
 
 ## 실행
 
@@ -50,6 +58,8 @@ docker compose --profile agent-refresh run --rm stock-summary-refresh
 docker compose --profile agent-refresh run --rm stock-summary-refresh python -u /app/systems/agent-orchestration/jobs/stock-summary-refresh/main.py --symbols NVDA,AMD --force
 # 시장 요약만 지금(가장 최근 마감일 기준)
 docker compose --profile agent-refresh run --rm stock-summary-refresh python -u /app/systems/agent-orchestration/jobs/stock-summary-refresh/main.py --brief
+# 캘린더 주간 요약만 지금(6시간 제한 무시)
+docker compose --profile agent-refresh run --rm stock-summary-refresh python -u /app/systems/agent-orchestration/jobs/stock-summary-refresh/main.py --calendar-brief
 ```
 
 EKS 는 `infra/k8s/overlays/aws/scheduled/cronjob-stock-summary-refresh.yaml` (이미지 `gops-agent-orchestrator`, `schedule: "5 * * * *"` UTC).
@@ -70,4 +80,6 @@ EKS 는 `infra/k8s/overlays/aws/scheduled/cronjob-stock-summary-refresh.yaml` (�
 | `STOCK_SUMMARY_MAX_SYMBOLS` | `300` | 한 번 실행에서 다루는 최대 종목 수 |
 | `MARKET_BRIEF_S3_BUCKET` | 비움 | 있으면 시장 요약을 S3 에도 저장. CronJob 은 configmap `S3_BUCKET` |
 | `MARKET_BRIEF_S3_PREFIX` | `market-brief/v1` | S3 경로 앞부분 |
+| `CALENDAR_BRIEF_MIN_INTERVAL_SECONDS` | `21600` | 같은 주 캘린더 요약 재생성 최소 간격 |
+| `DATABASE_URL` 또는 `DATABASE_*` | 비움 | 캘린더 요약이 `economic_events` 를 읽을 때. CronJob 은 `alfaka-order-db-secret`(optional) |
 | `REDIS_URL`, `REDIS_KEY_PREFIX`, `CLICKHOUSE_*` | 공통 | 저장소 접속 |

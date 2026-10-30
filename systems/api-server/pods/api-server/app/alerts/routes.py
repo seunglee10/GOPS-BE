@@ -20,6 +20,7 @@ from app.alerts.preferences import (
     preference_response,
 )
 from app.alerts.projection import AlertProjectionError, RedisAlertProjection
+from app.alerts.source import source_from_legacy, validate_rule_source
 from app.alerts.repository import ACTIVE_ALERT_LIMIT, AlertCreate, InMemoryAlertRepository, PostgresAlertRepository
 from app.auth.dependencies import (
     WebSocketAuthRequired,
@@ -69,6 +70,8 @@ class AlertCreateBody(BaseModel):
     expiresAt: datetime | None = None
     proposalSource: Literal["daily_trade", "entry_habit", "exit_habit", "portfolio_risk"] | None = None
     createdVia: Literal["manual", "chart", "ai_coach", "agent_chat", "trade_condition"] | None = None
+    # D23 규칙 출처. Literal 대신 str로 받아 모르는 값은 422 invalid_source로 돌려준다.
+    source: Any = None
     requestId: str | None = Field(default=None, min_length=1, max_length=128)
 
 
@@ -95,6 +98,7 @@ def create_alert(
     request: Request,
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
+    explicit_source = validate_rule_source(body.source)
     repository = _repository_from_app(request.app)
     request_id = _request_id(body, request)
     if request_id:
@@ -118,6 +122,7 @@ def create_alert(
     repeat_limit = _resolve_repeat_limit(body)
     expires_at = _resolve_expires_at(body.expiresAt, repeat_limit)
     created_via = body.createdVia or ("ai_coach" if body.proposalSource else "manual")
+    source = explicit_source or source_from_legacy(created_via=created_via, proposal_source=body.proposalSource)
     alert = repository.create_alert(
         AlertCreate(
             user_sub=user.sub,
@@ -130,6 +135,7 @@ def create_alert(
             repeat=repeat_limit is None or repeat_limit > 1,
             repeat_limit=repeat_limit,
             proposal_source=body.proposalSource,
+            source=source,
             condition=condition,
             created_via=created_via,
             request_id=request_id,
@@ -216,6 +222,7 @@ def create_alert_from_command(
             repeatLimit=resolution.get("repeatLimit", 1),
             expiresAt=resolution.get("expiresAt"),
             createdVia="agent_chat",
+            source="user",
             requestId=request_id,
         )
     except Exception as exc:

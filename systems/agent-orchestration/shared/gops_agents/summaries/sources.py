@@ -4,6 +4,7 @@
 - 일봉: ClickHouseMarketDataProvider.daily_candles
 - 실적일: ClickHouse yahoo_earnings_estimates(sourceFrame=earnings_dates)
 - 지수·히트맵: API 서버 워커가 Redis 에 써 둔 스냅샷(gops:market:on-demand:v1:indices:*, heatmap:sp500*)
+- 캘린더(주간 요약): Postgres economic_events + ClickHouse yahoo_earnings_estimates(D28 과 같은 항목)
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import date
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -27,6 +29,7 @@ class SummarySource(Protocol):
     def heatmap_items(self) -> list[dict[str, Any]]: ...
     def index_items(self) -> list[dict[str, Any]]: ...
     def top_news(self, hours: int, limit: int) -> list[dict[str, Any]]: ...
+    def calendar_items(self, from_date: date, to_date: date) -> list[dict[str, Any]]: ...
 
 
 class StoreSummarySource:
@@ -142,6 +145,40 @@ class StoreSummarySource:
             note = f"시장 예상 EPS {estimate:.2f}달러" if estimate is not None else ""
             events.append({"title": "실적 발표", "at": str(row.get("at") or ""), "note": note})
         return [event for event in events if event["at"]]
+
+    def calendar_items(self, from_date: date, to_date: date) -> list[dict[str, Any]]:
+        """한국 날짜 from~to 의 D28 항목. 실적은 시총 상위 50만 major 로 표시한다(로그인 사용자 구분 없음)."""
+        from market_data.economic_calendar.items import build_earnings_items, econ_item
+        from market_data.economic_calendar.store import postgres_conninfo, select_events
+
+        from .calendar_brief import seoul_day_utc_bounds
+        from .names import display_name
+
+        items: list[dict[str, Any]] = []
+        conninfo = postgres_conninfo()
+        if conninfo:
+            try:
+                items.extend(econ_item(row) for row in select_events(conninfo, from_date, to_date))
+            except Exception as exc:
+                logger.warning("economic events read failed: %s", exc)
+        start, end = seoul_day_utc_bounds(from_date, to_date)
+        try:
+            rows = list(self.clickhouse.earnings_events_between(start, end) or [])
+        except Exception as exc:
+            logger.warning("calendar earnings read failed: %s", exc)
+            rows = []
+        major = set(top_market_cap(self.heatmap_items(), 50) or seed_market_cap_symbols(50))
+        items.extend(
+            build_earnings_items(
+                rows,
+                name_ko=lambda symbol: next((name for name in [display_name(symbol)] if name != symbol), None),
+                major=major,
+                universe=major,
+                from_date=from_date,
+                to_date=to_date,
+            )
+        )
+        return items
 
     # ---------- Redis 스냅샷 ----------
 

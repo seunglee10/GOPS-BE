@@ -39,10 +39,10 @@ JSON 키는 camelCase, 시각은 UTC ISO 8601(`Z`), 금액은 달러 숫자(원�
 | D26 | 가드레일 g1·g3·g4·비중 25% | 3083~3087 | `GET/PATCH /api/risk/settings` | 있음 + 신규 키 3개 |
 | D27 | 투자 복기 | 2956~3090 | `GET /api/review/monthly`, `PUT /api/review/notes/{orderId}` | 신규 |
 | D28 | 경제·실적 일정, 주간 AI 요약 | 759~793 | `GET /api/calendar`, `GET /api/calendar/brief` | 신규 |
-| D29 | 코스 문제·실제 시세 `COURSE`, `COURSE_CHARTS` | 1408~1491, course-data.js | `GET /api/learn/courses/{courseId}` | 신규 |
+| D29 | 코스 문제·실제 시세 `COURSE`, `COURSE_CHARTS` | 1395~1491, course-data.js | `GET /api/learn/courses/{courseId}` | 신규 |
 | D30 | 코스 진행 | 1472 | `GET/POST /api/learn/progress` | 신규 |
 | D31 | 용어 풀이 `termCard` | 1224~1366 | 없음 (프론트 정적) | — |
-| D32 | 투자 경험 `gops.exp` | 610~617 | `GET/PUT /api/recommendations/profile` | 있음 (`experience` 매핑) |
+| D32 | 투자 경험 `gops.exp` | 610~617 | 저장 `PUT /api/me/preferences`의 `data.experience`(D34), 읽기 `GET /api/auth/me`의 `user.experience` | 있음. `/api/recommendations/profile`은 위험 성향 필드가 필수라 경험만 담을 수 없다 |
 | D33 | 오늘의 추천 | 홈 | `GET /api/recommendations/stocks/latest` | 있음 |
 | D34 | 화면 설정 동기화 | 1777, 2263~2271 | `GET/PUT /api/me/preferences` | 신규 |
 | D35 | 이메일 로그인 | 3196, 3544 | `POST /api/auth/email/login` | 신규 |
@@ -180,6 +180,11 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 
 ### D23 규칙 출처
 `/api/alerts`, `/api/trade-conditions` 항목에 `source: "agent" | "chart" | "user" | "default"` 추가. 생성 시 body로 받고, 없으면 `user`.
+- 목록·생성 응답의 각 항목(`alerts[]`, `conditions[]`, `alert`, `condition`)에 `source`가 들어간다.
+- 모르는 값은 `422 { "detail": { "code": "invalid_source", "allowed": [...] } }`. 앞뒤 공백·대소문자는 맞춰서 받는다.
+- `POST /api/alerts`에서 `source`를 빼면 옛 필드로 정한다: `proposalSource`가 있거나 `createdVia=ai_coach`면 `agent`, `createdVia=chart`면 `chart`, 그 밖에는 `user`.
+- `POST /api/alerts/commands`(사용자가 쓴 문장)는 `user`, `POST /api/trade-conditions/commands`(에이전트 제안 등록)는 `agent`. 조건주문이 만든 알림은 조건주문의 `source`를 따른다.
+- `proposal_source`(코치 제안 세부 분류)와 `created_via`(생성 경로)는 그대로 남는다. `0027_rule_source.sql`이 기존 행을 위 규칙으로 백필하고, `trade_conditions.source`의 옛 값 `manual`은 `user`로 바꾼다.
 
 ### D26 가드레일
 `GET/PATCH /api/risk/settings`에 키 추가:
@@ -187,6 +192,37 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 { "chaseBuyWarnPercent": 3.0, "blockAverageDownWithoutStop": true, "confirmSellOnDropPercent": 2.0, "maxPositionWeightPercent": 25 }
 ```
 `POST /api/paper/risk/pretrade` 응답 `checks[]`에 `code: "chase_buy" | "avg_down_no_stop" | "sell_on_drop" | "position_weight"`가 추가된다.
+
+설정 (`active`에 숫자·불리언으로 나온다. 기존 엔진 한도 키는 문자열 그대로):
+
+| 키 | 기본 | 범위 | 끄기 |
+|---|---|---|---|
+| `chaseBuyWarnPercent` | 3.0 | 0.5 ~ 30 | `null` |
+| `blockAverageDownWithoutStop` | true | true·false | `false` |
+| `confirmSellOnDropPercent` | 2.0 | 0.5 ~ 30 | `null` |
+| `maxPositionWeightPercent` | 25 | 5 ~ 100 | 없음 |
+
+- 변경은 기존 규칙과 같다. 조이는 변경(기준 낮추기, 켜기)은 즉시, 푸는 변경(기준 높이기, 끄기)은 다음 날. `PATCH { "values": { ... } }`.
+- 범위 밖·잘못된 형식은 `422 { "detail": { "code": "risk_setting_out_of_range" | "invalid_risk_setting" | "unknown_risk_setting", "field", "message" } }`. 기존 키 오류도 같은 모양으로 바뀌었다.
+- `maxPositionWeightPercent`는 모의 주문 사전 점검 전용이다. 실계좌 엔진 한도 `singleNameMaxWeight`(0.20)와 별개다.
+
+`checks[]` 항목 모양 (주문 가능 범위 항목 `paper_buying_power`·`paper_position_quantity`가 맨 앞):
+```json
+{ "code": "chase_buy", "severity": "ok|warn|confirm|block", "messageKo": "오늘 +4.2% 오른 종목이에요", "detailKo": "급등일 추격 매수 경고가 켜져 있어요", "value": 4.2, "limit": 3.0 }
+```
+| code | 대상 | 걸리는 조건 | severity | value / limit |
+|---|---|---|---|---|
+| `chase_buy` | 매수 | 오늘 등락률 ≥ `chaseBuyWarnPercent` | warn | 등락률 / 기준 |
+| `avg_down_no_stop` | 매수 | 손실 중인 보유 종목 추가 매수 + 현재가 아래 손절 조건 없음 | block (설정 꺼지면 항목 없음) | 평균 단가 대비 % / null |
+| `sell_on_drop` | 매도 | 오늘 등락률 ≤ −`confirmSellOnDropPercent` | confirm | 등락률 / −기준 |
+| `position_weight` | 매수 | (보유 평가액 + 주문 금액) / 총자산 > `maxPositionWeightPercent` | block | 주문 후 비중 % / 한도 |
+
+- 걸리지 않으면 같은 code로 `severity: "ok"`와 통과 문구가 온다. 규칙이 해당하지 않거나(매도에 매수 규칙), 설정이 꺼졌거나, 등락률·손절 조건을 못 읽으면 항목이 빠진다. 시뮬레이션 모드에서는 등락률 규칙을 넣지 않는다.
+- 손절 조건: 같은 종목의 `watching` 매도 조건주문(현재가보다 낮은 발동가), 또는 직접 건 `active` 하락(`below`) 가격 알림(현재가보다 낮은 목표가).
+- 오늘 등락률은 종목 요약(D9)과 같은 히트맵 projection·실시간가에서 구한다.
+- `block` 항목이 있으면 `risk.verdict`가 `block`이 되고 `risk.triggeredRules`에 `ruleId: code`로 추가된다. warn·confirm은 verdict를 바꾸지 않는다.
+- `POST /api/paper/orders`도 같은 판정을 한다. block 항목(`avg_down_no_stop`, `position_weight`)이 있으면 주문 행·멱등 기록을 만들기 전에 `409 { "detail": { "code": "guardrail_blocked", "checks": [block 항목만] } }`로 거절한다. 거절은 저장되지 않으므로 설정을 바꾼 뒤 같은 `Idempotency-Key`로 다시 보내면 새로 판정한다. 이미 접수된 키의 재전송은 판정 없이 replay된다.
+- 주문 접수에서 warn·confirm은 막지 않는다(프론트가 확인을 받는다). 주문 가능 범위 초과는 기존처럼 422가 먼저다. 입력을 못 읽으면 막지 않고, 시뮬레이션 모드와 조건주문 자동 실행은 이 차단을 건너뛴다.
 
 ### D27 투자 복기
 `GET /api/review/monthly?month=2026-09` (로그인 필요, `month` 생략 시 미국 동부 기준 이번 달, 형식이 틀리면 422 `{"detail":{"code":"invalid_month"}}`)
@@ -222,32 +258,67 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 보낸 키만 바꾼다. `memo: null`·빈 문자열은 복기 메모를 지워 주문 메모로 돌아가고, `habit: null` 은 서버 분류로 돌아간다. 메모 200자 초과 422 `memo_too_long`, 문자열이 아니면 `invalid_memo`, 습관 값이 틀리면 `invalid_habit`. 남의 주문이나 없는 주문은 404 `order_not_found`. 저장은 `order_notes` 테이블(마이그레이션 0031).
 
 ### D28 캘린더
-`GET /api/calendar?from=2026-10-01&to=2026-10-31&kind=econ|earn&region=kr|us`
+`GET /api/calendar?from=2026-10-01&to=2026-10-31&kind=econ|earn&region=kr|us` (공개, 로그인하면 관심·보유 종목 표시)
 ```json
 { "items": [
-  { "id": "e_1", "date": "2026-10-10", "kind": "econ", "region": "us", "title": "9월 소비자물가(CPI)", "level": "major|watch", "at": "21:30", "done": true, "actual": "3.1%", "forecast": "3.0%", "previous": "3.2%" },
-  { "id": "e_2", "date": "2026-10-29", "kind": "earn", "region": "us", "title": "마이크로소프트 실적", "symbol": "MSFT", "nameKo": "마이크로소프트", "call": "장 마감 후" }
+  { "id": "econ:finnhub:us:20261014T1230:3f2a9c1d0b7e", "date": "2026-10-14", "kind": "econ", "region": "us", "title": "소비자물가(CPI) 전년 대비", "level": "major", "at": "21:30", "done": true, "actual": "2.9%", "forecast": "3%", "previous": "2.9%" },
+  { "id": "earn:MSFT:2026-10-29", "date": "2026-10-29", "kind": "earn", "region": "us", "title": "마이크로소프트 실적", "symbol": "MSFT", "nameKo": "마이크로소프트", "call": "장 마감 후", "level": "watch", "done": false }
 ] }
 ```
-`GET /api/calendar/brief?week=2026-W44` → `{ week, text }`
+- `date`·`at`은 한국 시간이다. `at`은 `HH:MM`, 시각을 모르면 `null`. 정렬은 날짜 → 시각(없으면 그날 맨 뒤) → 경제지표 먼저.
+- `from`·`to`는 필수, 둘 다 포함, 최대 62일. 형식 오류 422 `{ code: "invalid_date", field }`, `to < from` 422 `{ code: "invalid_range" }`, 62일 초과 422 `{ code: "range_too_large", maxDays: 62 }`. `kind`·`region` 생략 시 전부.
+- `level`: `"major" | "watch" | null`.
+  - 경제지표: Finnhub `impact` high→major, medium→watch. CPI·비농업 고용·FOMC·한국은행 기준금리·GDP·실업률·근원 PCE는 매핑표가 major 로 올린다.
+  - 실적: 로그인 사용자의 관심 종목·보유 종목은 `watch`, 그 밖에 시총 상위 50은 `major`, 나머지 `null`. 비로그인은 시총 상위 50만 `major`.
+- 경제지표(`kind=econ`): `title`은 한글 지표 이름(매핑표에 없으면 Finnhub 영문 이름). `done`은 발표값이 있으면 `true`. `actual`·`forecast`·`previous`는 단위를 붙인 문자열이고 없으면 `null`. 원천은 Postgres `economic_events`(economic-calendar 잡, 6시간마다).
+- 실적(`kind=earn`): S&P 500 종목만, `region`은 항상 `"us"`(`region=kr`이면 실적 없음). `title`은 `"{nameKo} 실적"`(한글 이름이 없으면 티커), `call`은 `"장 시작 전" | "장 마감 후" | null`, `done`은 발표가 끝났으면 `true`. 원천은 ClickHouse `yahoo_earnings_estimates`(차트 실적 표시와 같음). 국내 실적은 데이터가 없어 v1 범위 밖이다.
+- 실적 원천이 실패해도 경제지표는 돌려준다. 경제지표 저장소가 실패하면 503 `{ code: "calendar_unavailable" }`.
+
+`GET /api/calendar/brief?week=2026-W44` → `{ week, text, generatedAt }`
+- `week`는 한국 시간 ISO 주(`YYYY-Www`), 생략하면 이번 주. 형식 오류 422 `{ code: "invalid_week" }`.
+- `text`는 그 주 주요 일정을 말하는 해요체 한두 문장(예상치·전망·권유 없음). stock-summary-refresh 잡이 이번 주·다음 주를 6시간마다 만들어 Redis `gops:calendar-brief:{week}`(TTL 8일)에 둔다. 없으면 404 `{ code: "brief_not_ready" }`.
+- 두 경로 모두 시뮬레이터 모드에서는 409(발표값이 리플레이 시점 뒤 정보라서 `simulation_guard`가 막는다).
 
 ### D29 코스
-`GET /api/learn/courses/chart-basics`
+`GET /api/learn/courses/chart-basics` (로그인 없이 열림)
 ```json
 { "courseId": "chart-basics", "titleKo": "차트 읽기 첫걸음", "days": [ { "day": 1, "titleKo": "캔들" } ],
-  "questions": [ { "id": "q1", "day": 1, "topic": "candle", "title": "...", "kind": "choice|tap|level", "prompt": "...", "opts": [], "answer": 1, "tolerance": null, "count": null,
-                   "fig": { "chart": "msft_wick", "type": null, "mark": null, "prev": null, "vol": true, "rsi": false, "level": null, "day": null }, "hints": ["...", "..."], "explanation": "..." } ],
-  "charts": { "msft_wick": { "sym": "MSFT", "name": "마이크로소프트", "iv": "일봉", "rows": [["2024-01-02", 370.1, 375.0, 368.2, 374.5, 25000000]] } } }
+  "questions": [ { "id": "c1", "day": 1, "topic": "candle", "title": "...", "kind": "choice|tap|level", "prompt": "...", "opts": ["..."] ,
+                   "answer": 0, "answerSet": null, "band": null, "tolerance": null, "count": null, "bridge": null,
+                   "fig": { "chart": "msft_wick", "mark": "2018-10-11" }, "hints": ["...", "..."], "explanation": "...", "zone": null } ],
+  "charts": { "msft_wick": { "sym": "MSFT", "name": "마이크로소프트", "iv": "일봉", "rows": [["2018-09-24", 113.03, 114.9, 112.22, 114.67, 27334500]] } } }
 ```
-문제·차트는 목업 `COURSE`(1408~1464)와 `course-data.js`를 JSON 시드로 옮긴 것이다. 함수형 정답(`ans()`)은 서버가 평가한 결과를 `answer`/`answerSet`으로 미리 넣는다.
+없는 코스는 404 `{ code: "course_not_found" }`.
 
-### D30 코스 진행
-`GET /api/learn/progress?courseId=chart-basics` → `{ solved: ["q1","q3"], total: 15 }`
-`POST /api/learn/progress` body `{ courseId, questionId, correct }` → 200 `{ solved: [...] }`. 힌트 사용은 기록하지 않는다.
+시드는 `app/learn/data/chart-basics.json`이고 `scripts/learn/convert_mock_course.mjs`로 목업(`gops.js` `COURSE`·`HINTS`·`PZ`·`DAYS` 1395~1491, `course-data.js` `COURSE_CHARTS`)에서 만든다. 손으로 고치지 않고 목업을 바꾼 뒤 스크립트를 다시 돌린다. 함수형 값은 스크립트가 미리 평가한다. 목업 필드와 응답 필드는 이렇게 대응한다.
 
-### D34 화면 설정
-`GET /api/me/preferences` → `{ version: 1, updatedAt, data: { layout, chart, draw, cur, sideW, dwW, brand } }`
-`PUT /api/me/preferences` body `{ version, data }` → 200. `data`는 목업 localStorage 값(`gops.layout`, `gops.chart`, `gops.draw`, `gops.cur`, `gops.side.w`, `gops.dw.w`, `gops.brand`)을 그대로 담는 JSON이다. 서버는 구조를 검사하지 않고 64KB 제한만 둔다.
+| 목업 | 응답 | 비고 |
+|---|---|---|
+| `ans` (숫자) | `answer` | choice 보기 번호. 아니면 null |
+| `ans()` (함수) | `answerSet` | tap 정답 날의 `rows` 번호 목록. 아니면 null |
+| `band()` | `band` | level 정답 가격대 `[아래, 위]`. 아니면 null |
+| `tol` | `tolerance` | tap에서 앞뒤 몇 날까지 정답으로 칠지 |
+| `count`, `bridge`, `opts` | 같은 이름 | 없으면 null |
+| `exp()` | `explanation` | 평가한 문자열 |
+| `HINTS[id]` | `hints` | 없으면 `[]` |
+| `PZ[id]` | `zone` | 좁은 화면에서 보여 줄 구간 `[시작, 끝]`(번호 또는 날짜). 없으면 null. 프론트 `CoursePayload` 타입에는 없는 추가 필드다 |
+
+`zone`을 빼면 프론트 `src/data/mock/course.ts`의 `COURSE`와 값이 같다(문제 15개·차트 11개 비교). 프론트는 `src/api/types.ts`의 `CoursePayload`를 그대로 받고, `answer`/`answerSet`을 `courseChart.ts`의 `ans`로, `band`를 `() => band`로 바꿔 쓴다.
+
+### D30 코스 진행 (로그인 필요)
+`GET /api/learn/progress?courseId=chart-basics` → `{ solved: ["c1","t1"], total: 15 }`. `solved`는 처음 맞힌 순서다.
+`POST /api/learn/progress` body `{ courseId, questionId, correct, answer? }` → 200 `{ solved: [...], total: 15, correct: true }`.
+- 맞혔을 때만 저장한다(`learn_progress`, 문제마다 한 줄, 처음 맞힌 시각). 틀린 시도와 힌트 사용은 기록하지 않는다.
+- `answer`를 같이 보내면 서버가 시드로 다시 채점하고 그 결과(`correct`)를 쓴다. choice는 보기 번호, tap은 고른 날 번호 목록, level은 가격. 프론트 `isCorrect`와 같은 규칙이다. 안 보내면 `correct`를 믿는다.
+- 없는 코스 404 `{ code: "course_not_found" }`, 없는 문제 422 `{ code: "question_not_found" }`, 문제 종류와 맞지 않는 `answer` 422 `{ code: "invalid_answer" }`, 저장소 장애 503 `{ code: "learn_progress_unavailable" }`.
+
+### D34 화면 설정 (로그인 필요)
+`GET /api/me/preferences` → `{ version: 3, updatedAt: "2026-10-30T12:00:00.000Z", data: { layout, chart, draw, cur, sideW, dwW, brand, experience } }`. 저장한 적이 없으면 `{ version: 0, updatedAt: null, data: {} }`.
+`PUT /api/me/preferences` body `{ version, data }` → 200 저장된 값(`version`이 1 오름).
+- `data`는 목업 localStorage 값(`gops.layout`, `gops.chart`, `gops.draw`, `gops.cur`, `gops.side.w`, `gops.dw.w`, `gops.brand`)과 투자 경험(`experience`)을 담는 JSON 객체다. 서버는 구조를 검사하지 않는다. 예외는 두 가지다: UTF-8 JSON으로 64KB(65536바이트)를 넘으면 413 `{ code: "preferences_too_large", maxBytes, bytes }`, `experience`가 `new|some|pro|null`이 아니면 422 `{ code: "invalid_experience" }`.
+- 낙관적 동시성: `version`은 마지막으로 받은 값을 그대로 보낸다(처음엔 0). 지금 값과 다르면 409 `{ code: "version_conflict", current: { version, updatedAt, data } }`. 프론트는 `current`를 받아 합친 뒤 `current.version`으로 다시 보낸다.
+- `data.experience`는 `GET /api/auth/me`의 `user.experience`가 된다(값이 이상하거나 저장소가 안 되면 null).
+- 저장소 장애 503 `{ code: "preferences_unavailable" }`. 테이블 `user_preferences`.
 
 ### D35~D39 이메일 인증
 | 요청 | 성공 | 실패 |
@@ -260,7 +331,7 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 | `POST /api/auth/password/reset` `{ token, password }` | 200 `{ reset: true }` 그 사용자의 세션 전부 삭제 | 400 `{ code: "invalid_token" }`, 410 `{ code: "expired" }`(30분) |
 | `POST /api/auth/consent` `{ tos, privacy, age, mkt }` | 200 `{ needsConsent: false }` | 422 |
 
-`GET /api/auth/me`의 `user`에 `provider: "email"`, `emailVerified`, `needsConsent`, `experience: "new" | "some" | "pro" | null`이 추가된다.
+`GET /api/auth/me`의 `user`에 `provider: "email"`, `emailVerified`, `needsConsent`, `experience: "new" | "some" | "pro" | null`이 추가된다. `experience`는 D34 `data.experience`에서 읽는다.
 메일은 `MAIL_PROVIDER=console|ses`. `console`은 로그에 코드·링크를 찍는다(로컬·테스트).
 
 ## 3. 경로 규칙
