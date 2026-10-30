@@ -30,6 +30,10 @@ CREATE TABLE user_consents (
   age BOOLEAN NOT NULL, mkt BOOLEAN NOT NULL, consented_at DATETIME(3) NOT NULL,
   CONSTRAINT fk_user_consents_user FOREIGN KEY (app_user_id) REFERENCES app_users(app_user_id)
 );
+CREATE TABLE user_preferences (
+  app_user_id CHAR(36) PRIMARY KEY, version INT NOT NULL, data JSON NOT NULL, updated_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_user_preferences_user FOREIGN KEY (app_user_id) REFERENCES app_users(app_user_id)
+);
 CREATE TABLE learn_progress (
   app_user_id CHAR(36) NOT NULL, course_id VARCHAR(64) NOT NULL, question_id VARCHAR(64) NOT NULL,
   solved_at DATETIME(3) NOT NULL,

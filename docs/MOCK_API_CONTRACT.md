@@ -42,7 +42,7 @@ JSON 키는 camelCase, 시각은 UTC ISO 8601(`Z`), 금액은 달러 숫자(원�
 | D29 | 코스 문제·실제 시세 `COURSE`, `COURSE_CHARTS` | 1395~1491, course-data.js | `GET /api/learn/courses/{courseId}` | 신규 |
 | D30 | 코스 진행 | 1472 | `GET/POST /api/learn/progress` | 신규 |
 | D31 | 용어 풀이 `termCard` | 1224~1366 | 없음 (프론트 정적) | — |
-| D32 | 투자 경험 `gops.exp` | 610~617 | `GET/PUT /api/recommendations/profile` | 있음 (`experience` 매핑) |
+| D32 | 투자 경험 `gops.exp` | 610~617 | 저장 `PUT /api/me/preferences`의 `data.experience`(D34), 읽기 `GET /api/auth/me`의 `user.experience` | 있음. `/api/recommendations/profile`은 위험 성향 필드가 필수라 경험만 담을 수 없다 |
 | D33 | 오늘의 추천 | 홈 | `GET /api/recommendations/stocks/latest` | 있음 |
 | D34 | 화면 설정 동기화 | 1777, 2263~2271 | `GET/PUT /api/me/preferences` | 신규 |
 | D35 | 이메일 로그인 | 3196, 3544 | `POST /api/auth/email/login` | 신규 |
@@ -233,9 +233,13 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 - `answer`를 같이 보내면 서버가 시드로 다시 채점하고 그 결과(`correct`)를 쓴다. choice는 보기 번호, tap은 고른 날 번호 목록, level은 가격. 프론트 `isCorrect`와 같은 규칙이다. 안 보내면 `correct`를 믿는다.
 - 없는 코스 404 `{ code: "course_not_found" }`, 없는 문제 422 `{ code: "question_not_found" }`, 문제 종류와 맞지 않는 `answer` 422 `{ code: "invalid_answer" }`, 저장소 장애 503 `{ code: "learn_progress_unavailable" }`.
 
-### D34 화면 설정
-`GET /api/me/preferences` → `{ version: 1, updatedAt, data: { layout, chart, draw, cur, sideW, dwW, brand } }`
-`PUT /api/me/preferences` body `{ version, data }` → 200. `data`는 목업 localStorage 값(`gops.layout`, `gops.chart`, `gops.draw`, `gops.cur`, `gops.side.w`, `gops.dw.w`, `gops.brand`)을 그대로 담는 JSON이다. 서버는 구조를 검사하지 않고 64KB 제한만 둔다.
+### D34 화면 설정 (로그인 필요)
+`GET /api/me/preferences` → `{ version: 3, updatedAt: "2026-10-30T12:00:00.000Z", data: { layout, chart, draw, cur, sideW, dwW, brand, experience } }`. 저장한 적이 없으면 `{ version: 0, updatedAt: null, data: {} }`.
+`PUT /api/me/preferences` body `{ version, data }` → 200 저장된 값(`version`이 1 오름).
+- `data`는 목업 localStorage 값(`gops.layout`, `gops.chart`, `gops.draw`, `gops.cur`, `gops.side.w`, `gops.dw.w`, `gops.brand`)과 투자 경험(`experience`)을 담는 JSON 객체다. 서버는 구조를 검사하지 않는다. 예외는 두 가지다: UTF-8 JSON으로 64KB(65536바이트)를 넘으면 413 `{ code: "preferences_too_large", maxBytes, bytes }`, `experience`가 `new|some|pro|null`이 아니면 422 `{ code: "invalid_experience" }`.
+- 낙관적 동시성: `version`은 마지막으로 받은 값을 그대로 보낸다(처음엔 0). 지금 값과 다르면 409 `{ code: "version_conflict", current: { version, updatedAt, data } }`. 프론트는 `current`를 받아 합친 뒤 `current.version`으로 다시 보낸다.
+- `data.experience`는 `GET /api/auth/me`의 `user.experience`가 된다(값이 이상하거나 저장소가 안 되면 null).
+- 저장소 장애 503 `{ code: "preferences_unavailable" }`. 테이블 `user_preferences`.
 
 ### D35~D39 이메일 인증
 | 요청 | 성공 | 실패 |
@@ -248,7 +252,7 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 | `POST /api/auth/password/reset` `{ token, password }` | 200 `{ reset: true }` 그 사용자의 세션 전부 삭제 | 400 `{ code: "invalid_token" }`, 410 `{ code: "expired" }`(30분) |
 | `POST /api/auth/consent` `{ tos, privacy, age, mkt }` | 200 `{ needsConsent: false }` | 422 |
 
-`GET /api/auth/me`의 `user`에 `provider: "email"`, `emailVerified`, `needsConsent`, `experience: "new" | "some" | "pro" | null`이 추가된다.
+`GET /api/auth/me`의 `user`에 `provider: "email"`, `emailVerified`, `needsConsent`, `experience: "new" | "some" | "pro" | null`이 추가된다. `experience`는 D34 `data.experience`에서 읽는다.
 메일은 `MAIL_PROVIDER=console|ses`. `console`은 로그에 코드·링크를 찍는다(로컬·테스트).
 
 ## 3. 경로 규칙
