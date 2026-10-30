@@ -16,7 +16,7 @@ from gops_agents.summaries.keys import stock_summary_key
 router = APIRouter(prefix="/api/stocks", tags=["stocks"])
 
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9.\-]{1,15}$")
-SUMMARY_FIELDS = ("symbol", "generatedAt", "head", "news", "risks", "events", "chartNote")
+SUMMARY_FIELDS = ("symbol", "generatedAt", "head", "issueLine", "news", "risks", "events", "chartNote")
 
 
 @router.get("/{symbol}/ai-summary")
@@ -31,6 +31,7 @@ def stock_ai_summary(request: Request, symbol: str) -> dict[str, Any]:
         "symbol": normalized,
         "generatedAt": cached.get("generatedAt"),
         "head": cached.get("head"),
+        "issueLine": cached.get("issueLine"),
         "news": _list(cached.get("news")),
         "risks": _list(cached.get("risks")),
         "events": _list(cached.get("events")),

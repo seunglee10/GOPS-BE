@@ -89,7 +89,7 @@ JSON 키는 camelCase, 시각은 UTC ISO 8601(`Z`), 금액은 달러 숫자(원�
     "volumeRatio20d": 2.1, "issue": "데이터센터 수요 전망 상향", "issueNewsId": "n_123", "chartNote": "20일선 위에서 거래량 늘며 상승" }
 ] }
 ```
-`issue`·`chartNote`는 D14 AI 요약 캐시에서 가져온 한 줄. 없으면 `null`.
+`issue`·`chartNote`는 D14 AI 요약 캐시에서 가져온 한 줄. `issue`는 D14 `issueLine`을 쓰고, 예전 캐시처럼 `issueLine`이 없으면 `head` 첫 문장을 24자로 자른다(넘치면 `…`). 캐시가 없으면 `null`.
 
 ### D6 환율
 `GET /api/market/fx?pair=USDKRW`
@@ -124,10 +124,11 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 `GET /api/stocks/{symbol}/ai-summary`
 ```json
 { "symbol": "NVDA", "generatedAt": "...", "head": "데이터센터 수요가 다시 확인되며 거래량이 늘었어요",
+  "issueLine": "데이터센터 수요 전망 상향",
   "news": [ { "text": "...", "newsId": "n_123" } ], "risks": [ { "text": "...", "newsId": "n_124" } ],
   "events": [ { "title": "실적 발표", "at": "2026-11-20", "note": "..." } ], "chartNote": "20일선 위에서 거래량 늘며 상승" }
 ```
-뉴스가 적재될 때 종목별로 미리 생성해 Redis에 저장한다(목업 1083 주석과 같은 설계). 없으면 404 `{"detail":{"code":"summary_not_ready"}}`. 생성 방식은 `STOCK_SUMMARIES.md`.
+뉴스가 적재될 때 종목별로 미리 생성해 Redis에 저장한다(목업 1083 주석과 같은 설계). 없으면 404 `{"detail":{"code":"summary_not_ready"}}`. `issueLine`은 홈 순위표(D5) 한 줄용 명사형 구절(24자 이내, 문장 끝맺음 없음, 목업 `WHY`와 같은 모양). 생성 방식은 `STOCK_SUMMARIES.md`.
 
 ### D15 오늘 시장 요약
 `GET /api/market-brief/today`

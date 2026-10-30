@@ -16,7 +16,7 @@ stock-summary-refresh 잡 (매시 5분, CronJob)
 
 GET /api/stocks/{symbol}/ai-summary   캐시가 없으면 404 {"detail":{"code":"summary_not_ready"}}
 GET /api/market-brief/today           오늘 → 없으면 3일 안 가장 최근 → 없으면 404 {"detail":{"code":"brief_not_ready"}}
-GET /api/stocks/movers                같은 종목 요약 캐시의 head·news[0].newsId·chartNote 를 issue·issueNewsId·chartNote 로 쓴다(D5)
+GET /api/stocks/movers                같은 캐시의 issueLine(없으면 head 첫 문장 24자)·news[0].newsId·chartNote 를 issue·issueNewsId·chartNote 로 쓴다(D5)
 ```
 
 ## Redis 키
@@ -35,8 +35,10 @@ GET /api/stocks/movers                같은 종목 요약 캐시의 head·news[
 - 뉴스도 일봉도 없는 종목은 쓰지 않는다(API 는 404).
 - LLM 은 OpenAI Responses API 의 strict JSON schema 로 부르고, 서버에서 다시 검증한다:
   해요체 문장, 입력에 있는 `newsId`·일정 날짜·참조 값만 허용, 가격 예측·매수/매도 권유 문구 금지.
+  `issueLine` 은 순위표 한 줄용 24자 이내 명사형 구절(끝맺음·마침표 없음).
 - LLM 이 꺼져 있거나 실패·검증 실패하면 결정론적 템플릿으로 만든다.
   종목: 전일 대비 등락·20일 평균 대비 거래량·업종 방향 + 최근 기사 제목, `chartNote` 는 20일선 위/아래·거래량 배수·등락 방향.
+  `issueLine` 은 가장 큰 이유 하나: 거래량 1.5배 이상이면 "거래량 20일 평균 2.1배", 아니면 24자 이내 기사 제목, "업종 동반 상승", chartNote, 긴 기사 제목 줄임 순.
   시장: 지수 등락, 10년물 금리·VIX 수준, 가장 강한/약한 업종, 등락 상위 종목, 많이 다룬 기사.
 
 ## 실행

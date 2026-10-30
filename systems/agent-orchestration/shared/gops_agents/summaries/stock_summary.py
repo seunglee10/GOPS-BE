@@ -1,7 +1,7 @@
 """종목 AI 요약(D14) 생성기.
 
 출력 형태(docs/MOCK_API_CONTRACT.md D14):
-{symbol, generatedAt, head, news:[{text,newsId}], risks:[{text,newsId}], events:[{title,at,note}], chartNote}
+{symbol, generatedAt, head, issueLine, news:[{text,newsId}], risks:[{text,newsId}], events:[{title,at,note}], chartNote}
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ HEAD_MAX_CHARS = 200
 ITEM_MAX_CHARS = 180
 NOTE_MAX_CHARS = 80
 CHART_NOTE_MAX_CHARS = 40
+ISSUE_LINE_MAX_CHARS = 24
 SMA_WINDOW = 20
 
 INSTRUCTIONS = (
@@ -42,7 +43,9 @@ INSTRUCTIONS = (
     "head 는 그날 왜 움직였는지 한두 문장으로 씁니다. news 는 무슨 일이 있었는지, risks 는 걸려 있는 문제를 "
     "기사 하나당 한 문장으로 쓰고 근거 기사의 newsId 를 그대로 붙입니다. "
     "events 는 입력 events 의 title·at 를 그대로 두고 note 에 입력 근거가 있을 때만 짧은 메모를 씁니다(없으면 빈 문자열). "
-    "chartNote 는 '20일선 위에서 거래량 늘며 상승' 처럼 40자 이내의 짧은 구절로 씁니다."
+    "chartNote 는 '20일선 위에서 거래량 늘며 상승' 처럼 40자 이내의 짧은 구절로 씁니다. "
+    "issueLine 은 순위표 한 줄에 들어갈 그날의 핵심 이유를 '데이터센터 수요 전망 상향' 처럼 "
+    "24자 이내 명사형 구절로 씁니다(문장 끝맺음·마침표 없이)."
 )
 
 OUTPUT_SCHEMA: dict[str, Any] = {
@@ -78,8 +81,9 @@ OUTPUT_SCHEMA: dict[str, Any] = {
             },
         },
         "chartNote": {"type": "string"},
+        "issueLine": {"type": "string"},
     },
-    "required": ["head", "news", "risks", "events", "chartNote"],
+    "required": ["head", "issueLine", "news", "risks", "events", "chartNote"],
 }
 
 
@@ -272,13 +276,31 @@ def validate_model_output(
         chart_note = clean_text(output.get("chartNote"), CHART_NOTE_MAX_CHARS + 1)
         if not chart_note or len(chart_note) > CHART_NOTE_MAX_CHARS or contains_forbidden(chart_note):
             chart_note = template_chart_note(facts)
+    issue_line = validate_issue_line(output.get("issueLine"))
     return {
         "head": head,
+        "issueLine": issue_line,
         "news": news_rows,
         "risks": risk_rows,
         "events": validated_events,
         "chartNote": chart_note,
     }
+
+
+def validate_issue_line(value: Any) -> str:
+    """순위표 한 줄: 24자 이내 명사형 구절. 해요체·마침표로 끝나면 안 되고 예측·권유 문구 금지."""
+    if not isinstance(value, str):
+        raise ValueError("issueLine must be a string")
+    text = clean_text(value, ISSUE_LINE_MAX_CHARS + 1)
+    if not text:
+        raise ValueError("issueLine is empty")
+    if len(text) > ISSUE_LINE_MAX_CHARS:
+        raise ValueError("issueLine is too long")
+    if text.endswith((".", "요", "다")):
+        raise ValueError("issueLine must be a noun phrase without a sentence ending")
+    if contains_forbidden(text):
+        raise ValueError("issueLine contains a forecast or recommendation phrase")
+    return text
 
 
 def _validated_refs(value: Any, allowed_ids: set[str], *, field: str, limit: int) -> list[dict[str, str]]:
@@ -309,6 +331,7 @@ def template_summary(
     news_src = [item for item in news if item["newsId"] not in risk_ids][:MAX_NEWS]
     return {
         "head": template_head(data, facts, news),
+        "issueLine": template_issue_line(data, facts, news),
         "news": [{"text": _news_sentence(item["summary"] or item["title"]), "newsId": item["newsId"]} for item in news_src],
         "risks": [
             {"text": _news_sentence(item["concerns"][0] if item["concerns"] else (item["summary"] or item["title"])), "newsId": item["newsId"]}
@@ -346,6 +369,28 @@ def template_head(data: StockSummaryInput, facts: dict[str, Any], news: list[dic
     else:
         parts.append("이 종목만 다룬 새 기사는 없어요.")
     return clean_text(" ".join(parts), HEAD_MAX_CHARS * 2)
+
+
+def template_issue_line(data: StockSummaryInput, facts: dict[str, Any], news: list[dict[str, Any]]) -> str:
+    """그날의 가장 큰 이유 하나를 24자 이내 구절로: 거래량 급증 → 짧은 기사 제목 → 업종 동반 → 차트 → 기사 제목 줄임."""
+    ratio = facts.get("volumeRatio20d") if facts.get("available") else None
+    if ratio is not None and ratio >= 1.5:
+        return f"거래량 20일 평균 {ratio:.1f}배"
+    title = news[0]["title"].rstrip(". ") if news else ""
+    if title and len(title) <= ISSUE_LINE_MAX_CHARS and not contains_forbidden(title):
+        return title
+    change = facts.get("changePercent") if facts.get("available") else None
+    sector_change = finite(data.sector_change_percent)
+    if change is not None and sector_change is not None and abs(change) >= 0.05 and abs(sector_change) >= 0.3:
+        if (change > 0) == (sector_change > 0):
+            return f"업종 동반 {'상승' if change > 0 else '하락'}"
+        return f"업종과 반대로 {'상승' if change > 0 else '하락'}"
+    chart_note = template_chart_note(facts)
+    if chart_note and len(chart_note) <= ISSUE_LINE_MAX_CHARS:
+        return chart_note
+    if title and not contains_forbidden(title):
+        return title[: ISSUE_LINE_MAX_CHARS - 1].rstrip() + "…"
+    return "새 기사 없음"
 
 
 def _news_sentence(text: str) -> str:

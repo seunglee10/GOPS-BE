@@ -37,6 +37,7 @@ SUMMARY = {
     "symbol": "NVDA",
     "generatedAt": "2026-10-30T21:00:00Z",
     "head": "데이터센터 수요가 다시 확인되며 거래량이 늘었어요",
+    "issueLine": "데이터센터 수요 전망 상향",
     "news": [{"text": "TSMC 9월 매출이 39% 늘었어요.", "newsId": "n_123"}],
     "risks": [{"text": "수출 규제 세부안이 연말까지 나와요.", "newsId": "n_124"}],
     "events": [{"title": "실적 발표", "at": "2026-11-20", "note": "시장 예상 EPS 0.85달러"}],

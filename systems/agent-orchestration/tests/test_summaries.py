@@ -81,6 +81,7 @@ def stock_input(**overrides):
 
 VALID_STOCK_OUTPUT = {
     "head": "차세대 GPU 출하가 앞당겨진다는 보고서가 나온 날이에요. 거래가 평소의 두 배 몰렸어요.",
+    "issueLine": "차세대 GPU 출하 앞당겨진다는 보고서",
     "news": [{"text": "공급망 조사에서 출하 시점이 한 분기 이르게 잡혔어요.", "newsId": "n_1"}],
     "risks": [{"text": "수출 규제 세부안이 연말까지 나와요.", "newsId": "n_2"}],
     "events": [{"title": "실적 발표", "at": "2026-11-20", "note": "시장 예상 매출 335억 달러"}],
@@ -98,7 +99,8 @@ class StockSummaryGeneratorTest(unittest.TestCase):
         self.assertEqual(summary["head"], VALID_STOCK_OUTPUT["head"])
         self.assertEqual(summary["news"], VALID_STOCK_OUTPUT["news"])
         self.assertEqual(summary["events"][0]["note"], "시장 예상 매출 335억 달러")
-        self.assertEqual(set(summary), {"symbol", "generatedAt", "head", "news", "risks", "events", "chartNote"})
+        self.assertEqual(summary["issueLine"], "차세대 GPU 출하 앞당겨진다는 보고서")
+        self.assertEqual(set(summary), {"symbol", "generatedAt", "head", "issueLine", "news", "risks", "events", "chartNote"})
         payload = model.calls[0]["payload"]
         self.assertTrue(payload["chart"]["aboveSma20"])
         self.assertEqual(payload["chart"]["volumeRatio20d"], 2.1)
@@ -111,6 +113,10 @@ class StockSummaryGeneratorTest(unittest.TestCase):
             {**VALID_STOCK_OUTPUT, "head": "Shares rose."},  # 해요체 아님
             {**VALID_STOCK_OUTPUT, "head": "앞으로 오를 것으로 보여요."},  # 예측 문장
             {**VALID_STOCK_OUTPUT, "events": [{"title": "x", "at": "2027-01-01", "note": ""}]},
+            {**VALID_STOCK_OUTPUT, "issueLine": "가"*25},  # 24자 초과
+            {**VALID_STOCK_OUTPUT, "issueLine": "출하가 앞당겨졌어요"},  # 문장 끝맺음
+            {**VALID_STOCK_OUTPUT, "issueLine": "메모리 값이 오를 것"},  # 예측
+            {**VALID_STOCK_OUTPUT, "issueLine": ""},
             "not json",
         ]
         for output in cases:
@@ -141,6 +147,23 @@ class StockSummaryGeneratorTest(unittest.TestCase):
         self.assertEqual(summary["chartNote"], "20일선 아래에서 거래량 줄며 하락")
         self.assertIn("내렸고", summary["head"])
         self.assertIn("이 종목만 다룬 새 기사는 없어요.", summary["head"])
+
+    def test_template_issue_line_uses_main_driver(self):
+        generate = StockSummaryGenerator(None, now=lambda: NOW).generate
+        self.assertEqual(generate(stock_input())["issueLine"], "거래량 20일 평균 2.1배")
+        calm = candles(last_close=110.0, last_volume=1000.0)
+        self.assertEqual(generate(stock_input(candles=calm))["issueLine"], "차세대 GPU 출하 앞당겨")
+        self.assertEqual(
+            generate(stock_input(candles=calm, news=[], sector_label_ko="정보기술", sector_change_percent=1.2))["issueLine"],
+            "업종 동반 상승",
+        )
+        self.assertEqual(generate(stock_input(candles=calm, news=[]))["issueLine"], "20일선 위에서 평소 거래량으로 상승")
+        long_title = [{"newsId": "n_9", "title": "아주 긴 기사 제목이 순위표 한 줄보다 훨씬 길게 이어지는 경우", "summary": ""}]
+        line = generate(stock_input(candles=[], news=long_title))["issueLine"]
+        self.assertEqual(len(line), 24)
+        self.assertTrue(line.endswith("…"))
+        for case in (stock_input(), stock_input(candles=calm), stock_input(candles=[], news=long_title)):
+            self.assertLessEqual(len(generate(case)["issueLine"]), 24)
 
     def test_no_candles_gives_null_chart_note(self):
         summary = StockSummaryGenerator(None, now=lambda: NOW).generate(stock_input(candles=[]))

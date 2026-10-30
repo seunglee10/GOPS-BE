@@ -175,6 +175,21 @@ class StockMoversRoutesTest(StocksRoutesTestBase):
         self.assertEqual(items[0]["chartNote"], "20일선 위에서 거래량 늘며 상승")
         self.assertIsNone(items[1]["issue"])
 
+    def test_issue_prefers_issue_line_then_truncated_head(self):
+        self.redis.set("gops:stocks:ai-summary:NVDA", json.dumps({
+            "head": "차세대 GPU 출하가 앞당겨진다는 보고서가 나온 날이에요. 거래가 몰렸어요.",
+            "issueLine": "새 칩 출하가 앞당겨진다는 보고서",
+            "news": [],
+        }, ensure_ascii=False))
+        self.redis.set("gops:stocks:ai-summary:AMD", json.dumps({
+            "head": "차세대 GPU 출하가 앞당겨진다는 보고서가 나온 날이에요. 거래가 몰렸어요.",
+        }, ensure_ascii=False))
+        items = self.client.get("/api/stocks/movers", params={"limit": 2}).json()["items"]
+        self.assertEqual(items[0]["issue"], "새 칩 출하가 앞당겨진다는 보고서")
+        self.assertEqual(len(items[1]["issue"]), 24)
+        self.assertTrue(items[1]["issue"].endswith("…"))
+        self.assertTrue(items[1]["issue"].startswith("차세대 GPU 출하가"))
+
     def test_average_volume_is_batched_and_cached(self):
         self.client.get("/api/stocks/movers", params={"limit": 3})
         self.assertEqual(len(self.volume_calls), 1)
