@@ -5,6 +5,7 @@ import os
 import time
 
 from market_data.common.env import parse_csv, utc_now_iso
+from market_data.news.categorize import categorize_news
 
 
 NEWS_API_URL = "https://data.alpaca.markets/v1beta1/news"
@@ -167,12 +168,15 @@ def build_news_event(article, symbol=None, received_at=None):
     created_at = article.get("created_at") or article.get("createdAt") or article.get("published_at") or received_at
     updated_at = article.get("updated_at") or article.get("updatedAt")
     source_event_id = f"alpaca/news/{normalized_symbol}/{article_id}"
+    headline = str(article.get("headline") or article.get("title") or "Untitled news")
+    article_symbols = normalize_article_symbols(article)
     return {
         "eventType": "NEWS_ARTICLE",
         "symbol": normalized_symbol,
         "articleId": article_id,
-        "headline": str(article.get("headline") or article.get("title") or "Untitled news"),
+        "headline": headline,
         "summary": article.get("summary"),
+        "category": categorize_news(headline, article.get("summary"), article_symbols),
         "content": article.get("content"),
         "url": article.get("url"),
         "source": article.get("source") or "alpaca",
@@ -180,7 +184,7 @@ def build_news_event(article, symbol=None, received_at=None):
         "publishedAt": created_at,
         "updatedAt": updated_at,
         "receivedAt": received_at,
-        "symbols": normalize_article_symbols(article),
+        "symbols": article_symbols,
         "sourceEventId": source_event_id,
         "raw": article,
     }

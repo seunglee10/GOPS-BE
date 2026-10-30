@@ -1009,6 +1009,8 @@ class SimulatorRoutesTest(unittest.TestCase):
             limit=10,
             locale="ko-KR",
             now=datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc),
+            category=None,
+            symbols=[],
         )
 
     def test_simulation_daily_news_uses_the_replay_cursor(self):

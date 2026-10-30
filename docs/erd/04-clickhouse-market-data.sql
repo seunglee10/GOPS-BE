@@ -17,7 +17,8 @@ CREATE TABLE ch_chart_candles (
 );
 CREATE TABLE ch_news_articles (
   symbol VARCHAR(64) NOT NULL, instrument_id CHAR(36), article_id VARCHAR(255) NOT NULL,
-  published_at DATETIME(3) NOT NULL, headline TEXT NOT NULL, inserted_at DATETIME(3) NOT NULL,
+  published_at DATETIME(3) NOT NULL, headline TEXT NOT NULL, category VARCHAR(16) NOT NULL DEFAULT '',
+  inserted_at DATETIME(3) NOT NULL,
   PRIMARY KEY (symbol, published_at, article_id),
   CONSTRAINT fk_cross_news_instrument FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id)
 );

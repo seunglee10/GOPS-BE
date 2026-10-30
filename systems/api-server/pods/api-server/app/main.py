@@ -13,6 +13,8 @@ from app.core.config import CORS_ORIGINS, read_dotenv_value
 from app.market_data.indices.service import start_market_indices_warmer
 from app.market_data.monitor.routes import router as market_monitor_router
 from app.market_data.query.routes import router as market_query_router
+from app.me.routes import router as me_router
+from app.news.routes import router as news_router
 from app.recommendations.routes import router as recommendations_router
 from app.stocks.routes import router as stocks_router
 from app.recommendations.fixed_replay import (
@@ -113,6 +115,8 @@ def create_app() -> FastAPI:
     app.include_router(market_query_router)
     app.include_router(market_monitor_router)
     app.include_router(stocks_router)
+    app.include_router(news_router)
+    app.include_router(me_router)
     app.include_router(agents_router)
     app.include_router(llm_router)
     app.include_router(orders_router)

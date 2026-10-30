@@ -216,7 +216,8 @@ CREATE TABLE IF NOT EXISTS market_data.news_articles
     updated_at Nullable(DateTime64(3, 'UTC')),
     received_at Nullable(DateTime64(3, 'UTC')),
     raw String,
-    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3),
+    category LowCardinality(String) DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(inserted_at)
 PARTITION BY toYYYYMM(published_at)
@@ -250,7 +251,8 @@ CREATE TABLE IF NOT EXISTS market_data.news_article_localizations
     model LowCardinality(String),
     localized_at DateTime64(3, 'UTC'),
     raw String,
-    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3),
+    category LowCardinality(String) DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(localized_at)
 PARTITION BY toYYYYMM(published_at)
