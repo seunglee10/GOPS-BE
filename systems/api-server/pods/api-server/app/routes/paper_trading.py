@@ -21,6 +21,13 @@ from app.auth.models import AuthenticatedUser
 from app.market_data.realtime.subscription_cohorts import RealtimeSubscriptionCohortService
 from app.services.alfaka_market_data import get_market_data_provider
 from app.services.portfolio_market_enrichment import enrich_holdings_with_market_stats
+from app.services.pretrade_guardrails import (
+    GuardrailInput,
+    apply_blocking_checks,
+    evaluate_guardrails,
+    has_protective_stop,
+)
+from app.services.risk_settings import guardrail_values, settings_store_from_app
 from kis_trader.domain.commands import validate_order_request_payload
 from kis_trader.domain.status import OrderContractError
 from kis_trader.paper import InMemoryPaperTradingRepository, PostgresPaperTradingRepository
@@ -112,8 +119,16 @@ async def paper_risk_pretrade(
     payload = await _json_body(request)
     order_request = _validate_paper_order_payload(payload)
     _validate_paper_symbol(request.app, order_request.symbol)
-    risk = paper_repository_from_app(request.app).pretrade(current_user.sub, order_request)
-    return {"symbol": order_request.symbol, "side": order_request.side, "risk": jsonable_encoder(risk)}
+    repository = paper_repository_from_app(request.app)
+    risk = repository.pretrade(current_user.sub, order_request)
+    checks = _pretrade_checks(request.app, repository, current_user.sub, order_request, risk)
+    risk = apply_blocking_checks(dict(risk), checks)
+    return {
+        "symbol": order_request.symbol,
+        "side": order_request.side,
+        "risk": jsonable_encoder(risk),
+        "checks": jsonable_encoder(checks),
+    }
 
 
 @router.post("/api/paper/orders", status_code=status.HTTP_202_ACCEPTED)
@@ -337,6 +352,119 @@ def _paper_portfolio_state_fingerprint(snapshot: dict[str, Any]) -> str:
             for order in snapshot.get("open_orders") or []
         ],
     })
+
+
+def _pretrade_checks(
+    app: Any,
+    repository: PaperTradingRepository,
+    user_id: str,
+    order_request: Any,
+    risk: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """주문 전 점검 항목: 주문 가능 범위 + D26 가드레일."""
+    from app.routes.simulator import simulator_mode_active
+
+    snapshot = repository.account_snapshot(user_id)
+    account = snapshot.get("account") or {}
+    symbol = order_request.symbol.strip().upper()
+    raw_positions = [dict(row) for row in snapshot.get("positions") or []]
+    target = next((row for row in raw_positions if str(row.get("symbol") or "").upper() == symbol), {})
+    position_qty = Decimal(target.get("qty") or 0)
+    available_qty = position_qty - Decimal(target.get("reserved_qty") or 0)
+    available_cash = Decimal(account.get("available_cash") or 0)
+    required = order_request.qty * order_request.price
+    blocked = risk.get("verdict") == "block"
+
+    if order_request.side == "buy":
+        capacity = {
+            "code": "paper_buying_power",
+            "severity": "block" if blocked else "ok",
+            "messageKo": "주문 가능 범위를 넘었어요" if blocked else "주문 가능 금액 안이에요",
+            "detailKo": f"주문 후 현금 ${max(available_cash - required, Decimal('0')):,.2f}",
+            "value": float(required),
+            "limit": float(available_cash),
+        }
+    else:
+        capacity = {
+            "code": "paper_position_quantity",
+            "severity": "block" if blocked else "ok",
+            "messageKo": "주문 가능 범위를 넘었어요" if blocked else "보유 수량 안이에요",
+            "detailKo": f"보유 {available_qty.normalize():f}주",
+            "value": float(order_request.qty),
+            "limit": float(available_qty),
+        }
+
+    simulation_active = simulator_mode_active(app)
+    settings = guardrail_values(settings_store_from_app(app).active_values(user_id))
+    quotes = (
+        _simulation_position_quotes(app, [str(row.get("symbol") or "") for row in raw_positions])
+        if simulation_active and raw_positions
+        else {}
+    )
+
+    def mark(row: dict[str, Any]) -> Decimal:
+        average = Decimal(row.get("average_price") or 0)
+        try:
+            price, _source, _timestamp = _position_price(
+                app, str(row["symbol"]), average, simulation_active=simulation_active, simulation_quotes=quotes,
+            )
+            return price
+        except Exception:
+            return average
+
+    marks = {str(row.get("symbol") or "").upper(): mark(row) for row in raw_positions}
+    equity = Decimal(account.get("cash_balance") or 0) + sum(
+        (Decimal(row.get("qty") or 0) * marks[str(row.get("symbol") or "").upper()] for row in raw_positions),
+        Decimal("0"),
+    )
+    current_price = marks.get(symbol)
+    # 시뮬레이션은 과거 장면을 재생하므로 오늘 실시간 등락률을 쓰지 않는다.
+    day_change = None if simulation_active else _day_change_percent(app, symbol)
+    stop = None
+    if order_request.side == "buy" and position_qty > 0 and current_price is not None:
+        stop = _has_protective_stop(app, user_id, symbol, current_price)
+
+    guardrails = evaluate_guardrails(GuardrailInput(
+        side=order_request.side,
+        symbol=symbol,
+        qty=order_request.qty,
+        price=order_request.price,
+        settings=settings,
+        day_change_percent=day_change,
+        position_qty=position_qty,
+        average_price=Decimal(target.get("average_price") or 0),
+        current_price=current_price,
+        equity=equity,
+        has_protective_stop=stop,
+    ))
+    return [capacity, *guardrails]
+
+
+def _day_change_percent(app: Any, symbol: str) -> float | None:
+    """오늘 등락률(%). 종목 요약(D9)과 같은 히트맵 projection·실시간가를 쓴다."""
+    try:
+        from app.stocks.service import get_stocks_service
+
+        service = getattr(app.state, "stocks_service", None) or get_stocks_service()
+        payload = service.day_change(symbol)
+    except Exception:
+        logger.debug("pretrade day change unavailable: %s", symbol, exc_info=True)
+        return None
+    value = (payload or {}).get("changePercent")
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def _has_protective_stop(app: Any, user_id: str, symbol: str, current_price: Decimal) -> bool | None:
+    try:
+        from app.alerts.routes import _repository_from_app as alert_repository_from_app
+        from app.trade_conditions.routes import _repository_from_app as trade_condition_repository_from_app
+
+        conditions = trade_condition_repository_from_app(app).list_conditions(user_id)
+        alerts = alert_repository_from_app(app).list_alerts(user_id)
+    except Exception:
+        logger.debug("pretrade stop lookup unavailable: %s", symbol, exc_info=True)
+        return None
+    return has_protective_stop(symbol, current_price, trade_conditions=conditions, alerts=alerts)
 
 
 def _validate_paper_order_payload(payload: dict[str, Any]):

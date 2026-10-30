@@ -120,12 +120,9 @@ class StocksService:
         item = item or {}
         latest = candles[-1] if candles else {}
 
-        price = self._live_price(symbol) or read_float(item.get("lastPrice")) or read_float(latest.get("close"))
-        previous_close = read_positive(item.get("previousClose"))
-        if previous_close is None and len(candles) >= 2:
-            previous_close = read_positive(candles[-2].get("close"))
-        change = round(price - previous_close, 4) if price is not None and previous_close is not None else None
-        change_percent = round(change / previous_close * 100, 2) if change is not None else None
+        price, previous_close, change, change_percent = price_change(
+            self._live_price(symbol), item, candles,
+        )
 
         day_low = read_float(latest.get("low"))
         day_high = read_float(latest.get("high"))
@@ -197,6 +194,24 @@ class StocksService:
             ],
             "asOf": payload_as_of(heatmap) or read_text(latest.get("timestamp")),
         }
+
+    # ---------- 오늘 등락 (주문 전 점검) ----------
+
+    def day_change(self, symbol: str) -> dict[str, Any] | None:
+        """현재가·전일 종가·오늘 등락률. 종목 요약과 같은 규칙이고, 일봉은 전일 종가가 없을 때만 읽는다."""
+        symbol = normalize_symbol(symbol)
+        items = self._heatmap_payload().get("items") or []
+        item = next((
+            row for row in items
+            if isinstance(row, dict) and str(row.get("symbol") or "").upper() == symbol
+        ), None) or {}
+        candles: list[dict[str, Any]] = []
+        if read_positive(item.get("previousClose")) is None or read_float(item.get("lastPrice")) is None:
+            candles = self._daily_candles(symbol)
+        price, previous_close, change, change_percent = price_change(self._live_price(symbol), item, candles)
+        if change_percent is None:
+            return None
+        return {"symbol": symbol, "price": price, "previousClose": previous_close, "change": change, "changePercent": change_percent}
 
     def _daily_candles(self, symbol: str) -> list[dict[str, Any]]:
         if self.daily_candles_reader is None:
@@ -398,6 +413,22 @@ def price_earnings(price: float | None, eps: float | None) -> float | None:
     if price is None or eps is None or eps <= 0:
         return None
     return round(price / eps, 2)
+
+
+def price_change(
+    live_price: float | None,
+    item: dict[str, Any],
+    candles: list[dict[str, Any]],
+) -> tuple[float | None, float | None, float | None, float | None]:
+    """(현재가, 전일 종가, 등락, 등락률%). 실시간가 → 히트맵 lastPrice → 마지막 일봉 종가 순."""
+    latest = candles[-1] if candles else {}
+    price = live_price or read_float(item.get("lastPrice")) or read_float(latest.get("close"))
+    previous_close = read_positive(item.get("previousClose"))
+    if previous_close is None and len(candles) >= 2:
+        previous_close = read_positive(candles[-2].get("close"))
+    change = round(price - previous_close, 4) if price is not None and previous_close is not None else None
+    change_percent = round(change / previous_close * 100, 2) if change is not None else None
+    return price, previous_close, change, change_percent
 
 
 def normalize_symbol(value: Any) -> str:
