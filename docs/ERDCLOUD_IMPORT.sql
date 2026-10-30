@@ -294,6 +294,7 @@ CREATE TABLE alerts (
     triggered_count INT NOT NULL,
     notifications_enabled BOOLEAN NOT NULL,
     proposal_source VARCHAR(64),
+    source VARCHAR(16) NOT NULL,
     condition_version SMALLINT NOT NULL,
     `condition` JSON NOT NULL,
     created_via VARCHAR(32) NOT NULL,

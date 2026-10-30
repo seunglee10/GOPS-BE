@@ -31,6 +31,7 @@ class AlertCreate:
     status: str = "active"
     notifications_enabled: bool = True
     proposal_source: str | None = None
+    source: str = "user"
     condition: dict[str, Any] | None = None
     condition_version: int = 1
     created_via: str = "manual"
@@ -154,10 +155,10 @@ class PostgresAlertRepository(AlertRepository):
                 INSERT INTO alerts (
                     user_sub, symbol, type, direction, target_price, change_pct,
                     window_min, repeat, repeat_limit, status, notifications_enabled,
-                    proposal_source, condition, condition_version, created_via,
+                    proposal_source, source, condition, condition_version, created_via,
                     request_id, expires_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_sub, request_id) WHERE request_id IS NOT NULL
                 DO UPDATE SET request_id = EXCLUDED.request_id
                 RETURNING *
@@ -175,6 +176,7 @@ class PostgresAlertRepository(AlertRepository):
                     alert.status,
                     alert.notifications_enabled,
                     alert.proposal_source,
+                    alert.source,
                     Jsonb(_json_ready(alert.condition or {})),
                     alert.condition_version,
                     alert.created_via,
@@ -482,6 +484,7 @@ class InMemoryAlertRepository(AlertRepository):
             "status": alert.status,
             "notifications_enabled": alert.notifications_enabled,
             "proposal_source": alert.proposal_source,
+            "source": alert.source,
             "condition": deepcopy(alert.condition or {}),
             "condition_version": alert.condition_version,
             "created_via": alert.created_via,

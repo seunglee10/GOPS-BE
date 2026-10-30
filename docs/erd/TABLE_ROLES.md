@@ -23,9 +23,9 @@
 | `dlq_events` | PostgreSQL | 처리 실패 메시지와 원본 payload | 재처리 운영 |
 | `reconciliation_runs` | PostgreSQL | 내부 주문과 브로커 상태 대사 실행 결과 | 주문 운영 |
 | `audit_logs` | PostgreSQL | 관리자·외부 주문 작업 감사 스냅샷 | 외부 `order_id`는 의도적으로 FK 없음 |
-| `alerts` | PostgreSQL | 사용자 종목 알림 조건 | 사용자, 종목 |
+| `alerts` | PostgreSQL | 사용자 종목 알림 조건. `source`(agent·chart·user·default)는 규칙 출처, `proposal_source`는 코치 제안 세부 분류 | 사용자, 종목 |
 | `notifications` | PostgreSQL | 알림 발송 결과와 상태 | `alerts` |
-| `trade_conditions` | PostgreSQL | 조건 충족 시 모의주문을 실행하는 규칙 | 사용자, alert/`paper_orders`를 통한 종목 연결 |
+| `trade_conditions` | PostgreSQL | 조건 충족 시 모의주문을 실행하는 규칙. `source`는 alerts와 같은 규칙 출처 | 사용자, alert/`paper_orders`를 통한 종목 연결 |
 | `user_notification_preferences` | PostgreSQL | 사용자별 알림 채널·시간 설정 | `app_users` |
 
 ## 추천·개인화·주문 코칭

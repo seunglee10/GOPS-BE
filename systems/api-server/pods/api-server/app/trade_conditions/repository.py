@@ -13,6 +13,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from app.alerts.repository import AlertCreate, AlertRepository
+from app.alerts.source import normalize_stored_source
 from kis_trader.persistence.user_context import apply_postgres_user_context
 
 
@@ -227,10 +228,10 @@ class PostgresTradeConditionRepository(TradeConditionRepository):
                     INSERT INTO alerts (
                         user_sub, symbol, type, direction, target_price, repeat,
                         repeat_limit, status, notifications_enabled, condition,
-                        condition_version, created_via, expires_at
+                        condition_version, created_via, source, expires_at
                     ) VALUES (
                         %s, %s, 'price_cross', %s, %s, false, 1, 'active', %s,
-                        %s, %s, %s, %s
+                        %s, %s, %s, %s, %s
                     )
                     RETURNING *
                     """,
@@ -243,6 +244,7 @@ class PostgresTradeConditionRepository(TradeConditionRepository):
                         Jsonb(_alert_condition(condition)),
                         1,
                         "trade_condition",
+                        normalize_stored_source(condition.source),
                         condition.expires_at,
                     ),
                 ).fetchone()
@@ -422,6 +424,7 @@ def _alert_create(condition: TradeConditionCreate) -> AlertCreate:
         notifications_enabled=condition.alerts_enabled,
         condition=_alert_condition(condition),
         created_via="trade_condition",
+        source=normalize_stored_source(condition.source),
         expires_at=condition.expires_at,
     )
 
@@ -456,11 +459,14 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, dict):
-        return {
+        ready = {
             key: _json_ready(item)
             for key, item in value.items()
             if key not in {"app_user_id", "instrument_id", "paper_order_id"}
         }
+        if "source" in ready and "alert_id" in ready:
+            ready["source"] = normalize_stored_source(ready["source"])
+        return ready
     if isinstance(value, list):
         return [_json_ready(item) for item in value]
     return value

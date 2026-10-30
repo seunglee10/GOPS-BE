@@ -162,6 +162,11 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 
 ### D23 규칙 출처
 `/api/alerts`, `/api/trade-conditions` 항목에 `source: "agent" | "chart" | "user" | "default"` 추가. 생성 시 body로 받고, 없으면 `user`.
+- 목록·생성 응답의 각 항목(`alerts[]`, `conditions[]`, `alert`, `condition`)에 `source`가 들어간다.
+- 모르는 값은 `422 { "detail": { "code": "invalid_source", "allowed": [...] } }`. 앞뒤 공백·대소문자는 맞춰서 받는다.
+- `POST /api/alerts`에서 `source`를 빼면 옛 필드로 정한다: `proposalSource`가 있거나 `createdVia=ai_coach`면 `agent`, `createdVia=chart`면 `chart`, 그 밖에는 `user`.
+- `POST /api/alerts/commands`(사용자가 쓴 문장)는 `user`, `POST /api/trade-conditions/commands`(에이전트 제안 등록)는 `agent`. 조건주문이 만든 알림은 조건주문의 `source`를 따른다.
+- `proposal_source`(코치 제안 세부 분류)와 `created_via`(생성 경로)는 그대로 남는다. `0027_rule_source.sql`이 기존 행을 위 규칙으로 백필하고, `trade_conditions.source`의 옛 값 `manual`은 `user`로 바꾼다.
 
 ### D26 가드레일
 `GET/PATCH /api/risk/settings`에 키 추가:
