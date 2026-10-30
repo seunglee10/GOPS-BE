@@ -134,6 +134,7 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 ```json
 { "marketDate": "2026-10-30", "generatedAt": "...", "paragraphs": [ { "text": "반도체가 지수 상승을 이끌었어요.", "refs": [ { "kind": "symbol", "value": "NVDA" } ] } ] }
 ```
+`refs[].kind`는 `symbol`(티커)·`news`(뉴스 id)·`macro`(지수 심볼, 예: `^GSPC`). 오늘(미국 동부 기준) 요약이 없으면 3일 안의 가장 최근 요약을 `marketDate`와 함께 돌려주고, 그것도 없으면 404 `{"detail":{"code":"brief_not_ready"}}`.
 
 ### D16 AI 대화
 기존 `POST /api/agents/analyze` 요청에 `context: { page, symbol, chips: [] }`를 추가로 받는다. 리포트 응답에 `view` 필드를 추가한다.
