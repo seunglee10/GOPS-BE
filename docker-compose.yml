@@ -1430,6 +1430,39 @@ services:
       - app_net
       - data_net
 
+  stock-summary-refresh:
+    image: gops-agent-orchestrator
+    profiles: ["agent-refresh"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.gops-agent-orchestrator
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      clickhouse-migrations:
+        condition: service_completed_successfully
+    environment:
+      REDIS_URL: "redis://redis:6379/0"
+      REDIS_KEY_PREFIX: "gops:market:on-demand:v1"
+      CLICKHOUSE_HTTP_URL: "http://clickhouse:8123"
+      CLICKHOUSE_DATABASE: "market_data"
+      CLICKHOUSE_USER: "alfaka"
+      CLICKHOUSE_PASSWORD: "alfaka"
+      # 로컬 기본은 템플릿 요약만. OpenAI 로 만들려면 true 와 OPENAI_API_KEY 를 함께 준다.
+      STOCK_SUMMARY_LLM_ENABLED: "${STOCK_SUMMARY_LLM_ENABLED:-false}"
+      STOCK_SUMMARY_MODEL: "${STOCK_SUMMARY_MODEL:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-5.2}"
+      STOCK_SUMMARY_SYMBOLS: "${STOCK_SUMMARY_SYMBOLS:-}"
+      MARKET_BRIEF_S3_BUCKET: "${MARKET_BRIEF_S3_BUCKET:-}"
+    command: ["python", "-u", "/app/systems/agent-orchestration/jobs/stock-summary-refresh/main.py"]
+    restart: "no"
+    networks:
+      - app_net
+      - data_net
+
   retrieval-latency-benchmark:
     image: gops-agent-orchestrator
     profiles: ["agent-eval"]

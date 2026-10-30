@@ -21,6 +21,8 @@ from app.recommendations.fixed_replay import (
     prepare_fixed_replay_provider,
 )
 from app.trade_conditions.routes import router as trade_conditions_router
+from app.stocks.ai_summary_routes import router as stock_ai_summary_router
+from app.market_brief.routes import router as market_brief_router
 from app.routes.account import account_holdings, account_performance, router as account_router
 from app.routes.auth import router as auth_router
 from app.routes.agents import agent_alerts, agent_report, agent_report_stream, analyze_agents, router as agents_router
@@ -120,6 +122,8 @@ def create_app() -> FastAPI:
     app.include_router(company_journal_router)
     app.include_router(trade_conditions_router)
     app.include_router(recommendations_router)
+    app.include_router(stock_ai_summary_router)
+    app.include_router(market_brief_router)
     app.include_router(streams_router)
 
     log_runtime_config()
