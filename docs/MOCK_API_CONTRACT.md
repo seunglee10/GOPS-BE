@@ -140,13 +140,25 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 `refs[].kind`는 `symbol`(티커)·`news`(뉴스 id)·`macro`(지수 심볼, 예: `^GSPC`). 오늘(미국 동부 기준) 요약이 없으면 3일 안의 가장 최근 요약을 `marketDate`와 함께 돌려주고, 그것도 없으면 404 `{"detail":{"code":"brief_not_ready"}}`.
 
 ### D16 AI 대화
-기존 `POST /api/agents/analyze` 요청에 `context: { page, symbol, chips: [] }`를 추가로 받는다. 리포트 응답에 `view` 필드를 추가한다.
+기존 `POST /api/agents/analyze` 요청에 선택 필드 `context: { page, symbol, chips: [] }`와 `threadId`를 추가로 받는다.
+- `context.symbol`은 요청 `symbol`이 비었을 때만 채운다. `page`·`chips`는 `uiContext.pageContext`로 에이전트에 넘긴다. 모르는 키가 있으면 422.
+- `threadId`(영숫자로 시작, 64자 이내)가 없으면 서버가 `thr_<uuid>`를 만든다. 응답에 `threadId`가 실린다.
+
+리포트 응답(`POST /api/agents/analyze` 완료 응답, `GET /api/agents/reports/{id}`, SSE `report` 이벤트)에 `view` 필드를 추가한다. 리포트의 기존 필드에서 결정적으로 만들며, 아직 내용이 없는 대기 상태 리포트에는 없다.
 ```json
 { "view": { "conclusion": "...", "sections": [ { "title": "거래량", "body": "...", "evidence": [ { "kind": "news", "ref": "n_123" }, { "kind": "chart", "ref": "volume" } ] } ],
-  "kv": [ { "k": "20일 평균 대비", "v": "2.1배" } ], "steps": [ "질문 이해", "뉴스 4건 확인", "차트 해석" ], "confidence": "높음",
-  "suggestions": [ { "kind": "rule", "label": "137.70 아래로 가면 알리기", "payload": {} }, { "kind": "compare", "symbols": ["NVDA","AMD"] } ] } }
+  "kv": [ { "k": "20일 평균 대비 거래량", "v": "2.1배" } ], "steps": [ "질문 이해", "뉴스 4건 확인", "차트 해석" ], "confidence": "높음",
+  "suggestions": [ { "kind": "rule", "label": "137.70 아래로 가면 알리기", "payload": { "symbol": "NVDA", "direction": "below", "triggerPrice": 137.7, "proposalId": "..." } },
+                   { "kind": "compare", "label": "NVDA · AMD 비교", "symbols": ["NVDA","AMD"], "payload": { "symbols": ["NVDA","AMD"] } },
+                   { "kind": "watch", "label": "[[NVDA]] 관심 종목에 추가", "payload": { "symbol": "NVDA" } } ] } }
 ```
-`GET /api/agents/threads` → `{ items: [ { threadId, title, symbol, updatedAt } ] }`.
+- `sections`: 분석 역할별(차트·뉴스·재무·시장 흐름·기업 관계·위험 점검·특이 움직임 순). `body`는 평문이고 RichText `**굵게**`, `[[TICKER]]`만 쓴다. HTML은 없다.
+- `evidence.kind`: `news`(ref = 뉴스 id, D13 `GET /api/news/{id}`), `chart`(ref = 지표 이름), `fin`(ref = 재무 항목). 자료가 없던 근거는 싣지 않는다.
+- `confidence`: 리포트 신뢰도 0.7 이상 `높음`, 0.45 이상 `보통`, 그 밖 `낮음`. 일부 자료가 빠졌으면 `높음`은 `보통`으로 낮춘다.
+- `suggestions`: `rule`은 리포트의 가격 조건 제안에서, `compare`는 함께 언급된 종목에서, `watch`는 질문 종목에서 만든다. 사고팔라는 문구나 앞으로의 주가 전망은 넣지 않는다.
+
+`GET /api/agents/threads` → `{ items: [ { threadId, title, symbol, updatedAt } ] }` (최근 50개, 최신순, `title`은 첫 질문 40자)
+`GET /api/agents/threads/{threadId}` → `{ threadId, title, symbol, updatedAt, messages: [ { question, analysisId, status, view } ] }`. 남의 대화나 없는 대화는 404 `{"detail":{"code":"thread_not_found"}}`. 리포트가 만료됐으면 `status: "missing"`, `view: null`.
 
 ### D18 최근 본 종목
 `GET /api/me/recent-symbols` → `{ items: [ { symbol, nameKo, viewedAt } ] }` (최근 50개, 최신순)
@@ -213,18 +225,37 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 - 주문 접수에서 warn·confirm은 막지 않는다(프론트가 확인을 받는다). 주문 가능 범위 초과는 기존처럼 422가 먼저다. 입력을 못 읽으면 막지 않고, 시뮬레이션 모드와 조건주문 자동 실행은 이 차단을 건너뛴다.
 
 ### D27 투자 복기
-`GET /api/review/monthly?month=2026-09`
+`GET /api/review/monthly?month=2026-09` (로그인 필요, `month` 생략 시 미국 동부 기준 이번 달, 형식이 틀리면 422 `{"detail":{"code":"invalid_month"}}`)
 ```json
-{ "month": "2026-09", "kpi": { "realizedPnl": 412.5, "returnPercent": 1.9, "winRate": 57.1, "tradeCount": 14, "missedProfit": 120.0 },
-  "prevMonth": { "realizedPnl": -80.0, "returnPercent": -0.4, "winRate": 42.9, "tradeCount": 7 },
-  "benchmark": { "spxReturnPercent": 2.3 },
-  "byHabit": [ { "habit": "plan|chase|rush|avg|news|exit", "labelKo": "계획대로", "pnl": 300.0, "count": 5 } ],
-  "bySymbol": [ { "symbol": "NVDA", "nameKo": "엔비디아", "pnl": 210.0 } ],
-  "trades": [ { "orderId": "...", "at": "...", "symbol": "NVDA", "side": "buy", "qty": 10, "price": 140.1, "avgPriceAtSell": null, "pnl": null, "returnPercent": null,
-                "habit": "chase", "memo": "급등해서 따라 샀다", "priceAfter": { "d1": 141.0, "d5": 145.2 } } ] }
+{ "month": "2026-09",
+  "kpi": { "realizedPnl": 230.0, "evalPnl": 610.0, "returnPercent": 0.61, "winRate": 83.33, "winCount": 5, "tradeCount": 6,
+           "avgWin": 126.0, "avgLoss": 20.0, "payoffRatio": 6.3, "mistakePnl": 250.0, "mistakeCount": 2, "missedProfit": 130.0 },
+  "prevMonth": { "realizedPnl": 0.0, "evalPnl": 40.0, "returnPercent": 0.04, "winRate": 100.0, "tradeCount": 1, "...": "kpi 와 같은 키" },
+  "benchmark": { "spxReturnPercent": 2.0, "prevSpxReturnPercent": 2.04 },
+  "byHabit": [ { "habit": "plan", "labelKo": "계획한 주문", "pnl": 100.0, "count": 1, "winCount": 1, "missedProfit": 0.0 } ],
+  "bySymbol": [ { "symbol": "NVDA", "nameKo": "엔비디아", "pnl": 550.0, "count": 3 } ],
+  "trades": [ { "orderId": "...", "at": "2026-09-15T15:00:00Z", "symbol": "NVDA", "nameKo": "엔비디아", "side": "sell", "orderType": "limit",
+                "qty": 10, "price": 120.0, "avgPriceAtSell": 95.0, "pnl": 250.0, "returnPercent": 26.32,
+                "markPrice": 110.0, "evalPnl": 250.0, "evalReturnPercent": 26.32, "missedProfit": 100.0,
+                "habit": "exit", "habitAuto": "exit", "habitSource": "auto", "memo": "목표가 도달", "orderMemo": "목표가 도달",
+                "priceAfter": { "d1": 125.0, "d5": 119.0 } } ] }
 ```
-습관 분류 규칙(서버): `chase` 당일 +3% 이상에서 매수, `rush` 장 시작 10분 내 시장가, `avg` 손실 중 추가 매수, `news` 주문 1시간 내 관련 뉴스, `exit` 수익 중 매도, 그 외 `plan`. 사용자가 메모에서 바꾸면 사용자 값 우선.
-`PUT /api/review/notes/{orderId}` body `{ memo, habit }` → 200
+- 대상: 현재 계좌 세대의 페이퍼 체결. 주문 단위로 묶고, 첫 체결 시각(미국 동부 날짜)이 그달인 주문만 싣는다. `trades` 는 시간 오름차순.
+- 평균 단가: 페이퍼 보유 종목과 같은 이동평균. 체결을 처음부터 다시 쌓아 매도 직전 평균(`avgPriceAtSell`)을 구한다.
+- `pnl`·`returnPercent`: 판 주문의 확정 손익. 산 주문은 `null`.
+- `evalPnl`·`evalReturnPercent`: 판 주문은 `pnl`과 같고, 산 주문은 최근 종가(`markPrice`) 기준. 목업의 "판 주문은 확정 손익, 들고 있는 주문은 오늘 가격 기준" 숫자다. `byHabit.pnl`, `bySymbol.pnl`, `kpi.evalPnl`, `winRate`, `avgWin`·`avgLoss`·`payoffRatio`(손익비)는 이 값으로 계산한다.
+- `returnPercent`(kpi): `evalPnl` ÷ 계좌 시작 금액 × 100. `benchmark.spxReturnPercent`: S&P 500(`^GSPC`, 없으면 `SPY`) 일봉 종가 기준 그달 수익률(전달 마지막 종가 대비).
+- `mistakePnl`·`mistakeCount`: 습관이 `chase`·`avg` 인 주문의 손익 합과 건수.
+- `missedProfit`: 판 주문만. max(0, 판 뒤 5거래일 종가 중 최고값 − 판 가격) × 수량. kpi·byHabit 는 그 합.
+- `priceAfter.d1`·`d5`: 체결일 다음 1번째·5번째 거래일 종가. 아직 없으면 `null`.
+- `memo`: 복기 메모가 있으면 그것, 없으면 주문 메모(`orderMemo`, D21).
+- 체크리스트를 몇 개 채웠는지 같은 점수는 싣지 않는다.
+
+습관 분류 규칙(서버, 위에서부터 먼저 걸리는 값): `rush` 장 시작(9:30 ET) 10분 안의 시장가 주문, `chase` 체결일 종가가 직전 거래일보다 +3% 이상 오른 날의 매수, `avg` 들고 있는 종목을 평균 단가보다 싸게(손실 중) 더 산 매수, `news` 주문 전 1시간 안에 그 종목 관련 뉴스가 있었던 주문, `exit` 확정 손익이 플러스인 매도, 그 외 `plan`. 사용자가 고른 값(`habitSource: "user"`)이 있으면 그 값이 우선이고, 서버 값은 `habitAuto` 에 남는다.
+`labelKo`: plan `계획한 주문`, exit `수익 내고 판 주문`, news `뉴스 보고 바로 낸 주문`, rush `장 시작 직후 시장가 주문`, chase `급등일 추격 매수`, avg `손실 중 물타기`. `byHabit` 은 이 순서로 6개 모두 싣는다(0건 포함).
+
+`PUT /api/review/notes/{orderId}` body `{ memo?, habit? }` → 200 `{ orderId, memo, habit, habitSource, updatedAt }`
+보낸 키만 바꾼다. `memo: null`·빈 문자열은 복기 메모를 지워 주문 메모로 돌아가고, `habit: null` 은 서버 분류로 돌아간다. 메모 200자 초과 422 `memo_too_long`, 문자열이 아니면 `invalid_memo`, 습관 값이 틀리면 `invalid_habit`. 남의 주문이나 없는 주문은 404 `order_not_found`. 저장은 `order_notes` 테이블(마이그레이션 0031).
 
 ### D28 캘린더
 `GET /api/calendar?from=2026-10-01&to=2026-10-31&kind=econ|earn&region=kr|us` (공개, 로그인하면 관심·보유 종목 표시)

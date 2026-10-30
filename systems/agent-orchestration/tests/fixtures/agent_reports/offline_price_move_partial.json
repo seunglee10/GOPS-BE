@@ -1,0 +1,1158 @@
+{
+ "analysisId": "analysis-4939a8aff42ca04b",
+ "symbol": "NVDA",
+ "intent": "엔비디아 왜 올랐어? 거래량이랑 차트도 봐줘",
+ "status": "completed",
+ "createdAt": "2026-10-30T04:43:27.086919Z",
+ "summary": "제 의견은 NVDA 가격 움직임을 확인된 차트·뉴스·관계 신호를 종합해 해석해야 한다는 것입니다.",
+ "rationale": "요청 의도에 맞춰 필요한 에이전트와 데이터 근거를 조합했습니다.",
+ "findings": [
+  {
+   "agentId": "chart-agent",
+   "role": "chart-analysis",
+   "summary": "NVDA 시장 snapshot cache가 없습니다.",
+   "rationale": "NVDA 시장 snapshot cache가 없습니다. / warnings=market_snapshot_unavailable / freshness=2026-10-30T04:43:27.047327Z",
+   "confidence": 0.35,
+   "evidence": [],
+   "tags": [
+    "chart",
+    "snapshot-provider",
+    "market_snapshot",
+    "partial"
+   ]
+  },
+  {
+   "agentId": "news-agent",
+   "role": "news-analysis",
+   "summary": "NVDA 관련 저장 뉴스가 없습니다.",
+   "rationale": "NVDA 관련 저장 뉴스가 없습니다. / warnings=no_relevant_news_found / freshness=2026-10-30T04:43:27.081306Z",
+   "confidence": 0.35,
+   "evidence": [
+    {
+     "provider": "news",
+     "status": "no-data",
+     "title": "News provider not available",
+     "summary": "뉴스 ClickHouse provider 미연결 또는 조회 실패: HTTPConnectionPool(host='localhost', port=8123): Max retries exceeded with url: /?query=... (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8123): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+     "observedAt": "2026-10-30T04:43:27.081306Z",
+     "url": null,
+     "raw": {}
+    }
+   ],
+   "tags": [
+    "news",
+    "snapshot-provider",
+    "news_snapshot",
+    "partial"
+   ]
+  },
+  {
+   "agentId": "macro-agent",
+   "role": "macro-analysis",
+   "summary": "NVDA 시장 snapshot cache가 없습니다.",
+   "rationale": "NVDA 시장 snapshot cache가 없습니다. / warnings=market_snapshot_unavailable / freshness=2026-10-30T04:43:27.047327Z",
+   "confidence": 0.35,
+   "evidence": [],
+   "tags": [
+    "macro",
+    "snapshot-provider",
+    "market_snapshot",
+    "partial"
+   ]
+  },
+  {
+   "agentId": "ontology-agent",
+   "role": "company-relationship-analysis",
+   "summary": "NVDA 관련 명확한 그래프 관계 경로를 확인하지 못했습니다.",
+   "rationale": "NVDA 관련 명확한 그래프 관계 경로를 확인하지 못했습니다. / warnings=no_clear_relationship_path / freshness=2026-10-30T04:43:27.080024Z",
+   "confidence": 0.3,
+   "evidence": [
+    {
+     "provider": "ontology",
+     "status": "no-data",
+     "title": "GraphDB 연결 실패",
+     "summary": "GraphDB 온톨로지 조회에 실패했습니다: ConnectionError",
+     "observedAt": "2026-10-30T04:43:27.080024Z",
+     "url": null,
+     "raw": {
+      "relationType": "graphdb-unavailable",
+      "errorType": "ConnectionError"
+     }
+    }
+   ],
+   "tags": [
+    "ontology",
+    "snapshot-provider",
+    "relationship_snapshot",
+    "partial"
+   ]
+  },
+  {
+   "agentId": "unusual-event-explainer-agent",
+   "role": "unusual-event-explanation",
+   "summary": "No unusual market event was supplied.",
+   "rationale": "The explainer only expands detected events and stays quiet when the event detector has no signal.",
+   "confidence": 0.5,
+   "evidence": [],
+   "tags": [
+    "event-explainer"
+   ]
+  },
+  {
+   "agentId": "market-summary-agent",
+   "role": "market-summary",
+   "summary": "NVDA analysis combined 5 role findings.",
+   "rationale": "2 provider evidence source(s) are intentionally empty in v1.",
+   "confidence": 0.6,
+   "evidence": [],
+   "tags": [
+    "summary"
+   ]
+  },
+  {
+   "agentId": "verification-guardrail-agent",
+   "role": "verification-guardrail",
+   "summary": "No trading-action guardrail violation detected.",
+   "rationale": "The verification agent checks for unsupported order execution language and no-data provider transparency.",
+   "confidence": 0.8,
+   "evidence": [],
+   "tags": [
+    "verification",
+    "guardrail"
+   ]
+  }
+ ],
+ "marketEvents": [],
+ "providerEvidence": [
+  {
+   "provider": "news",
+   "status": "no-data",
+   "title": "News provider not available",
+   "summary": "뉴스 ClickHouse provider 미연결 또는 조회 실패: HTTPConnectionPool(host='localhost', port=8123): Max retries exceeded with url: /?query=... (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8123): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+   "observedAt": "2026-10-30T04:43:27.081306Z",
+   "url": null,
+   "raw": {}
+  },
+  {
+   "provider": "ontology",
+   "status": "no-data",
+   "title": "GraphDB 연결 실패",
+   "summary": "GraphDB 온톨로지 조회에 실패했습니다: ConnectionError",
+   "observedAt": "2026-10-30T04:43:27.080024Z",
+   "url": null,
+   "raw": {
+    "relationType": "graphdb-unavailable",
+    "errorType": "ConnectionError"
+   }
+  }
+ ],
+ "route": {
+  "source": "rule+ui-parser",
+  "intentType": "market-move+chart",
+  "selectedRoles": [
+   "chart",
+   "news",
+   "macro",
+   "ontology"
+  ],
+  "confidence": 0.9,
+  "reason": "Merged parallel query understanding into analysis route."
+ },
+ "finalAnswer": {
+  "title": "NVDA 주가 변동 원인 분석",
+  "summary": "제 의견은 NVDA 가격 움직임을 확인된 차트·뉴스·관계 신호를 종합해 해석해야 한다는 것입니다.",
+  "sections": [
+   {
+    "title": "핵심 판단",
+    "bullets": [
+     "현재 자료 근거만으로는 단일 원인을 확정하기 어렵습니다."
+    ]
+   },
+   {
+    "title": "분석한 지표",
+    "bullets": [
+     "뉴스",
+     "기업 관계·테마"
+    ]
+   }
+  ],
+  "citations": [],
+  "limitations": []
+ },
+ "notificationDecision": null,
+ "layoutProposal": {
+  "title": "UI layout request",
+  "rationale": "요청한 패널들을 다시 배치했습니다.",
+  "commands": [
+   {
+    "id": "layout-command-5c09ad4028c37eb7",
+    "type": "layout.panel.add",
+    "actor": "llm",
+    "payload": {
+     "panelId": "panel-chart-primary",
+     "panelType": "chart",
+     "placement": {
+      "group": "workspace",
+      "zone": "main",
+      "col": 1,
+      "row": 1,
+      "colSpan": 3,
+      "rowSpan": 3
+     },
+     "layoutWeight": 100,
+     "props": {
+      "symbol": "NVDA"
+     },
+     "symbol": "NVDA"
+    },
+    "createdAt": "2026-10-30T04:43:27.086663Z",
+    "target": {
+     "panelId": "panel-chart-primary"
+    }
+   },
+   {
+    "id": "layout-command-681ba95aa3ac9d39",
+    "type": "layout.panel.priority.set",
+    "actor": "llm",
+    "payload": {
+     "panelId": "panel-chart-primary",
+     "layoutWeight": 100
+    },
+    "createdAt": "2026-10-30T04:43:27.086672Z",
+    "target": {
+     "panelId": "panel-chart-primary"
+    }
+   },
+   {
+    "id": "layout-command-b4d27da08b8dbb29",
+    "type": "layout.panels.arrange",
+    "actor": "llm",
+    "payload": {
+     "reason": "ui-agent-multi-panel-layout-intent",
+     "placements": [
+      {
+       "panelId": "panel-chart-primary",
+       "placement": {
+        "group": "workspace",
+        "zone": "main",
+        "col": 1,
+        "row": 1,
+        "colSpan": 3,
+        "rowSpan": 3
+       },
+       "layoutWeight": 100
+      }
+     ]
+    },
+    "createdAt": "2026-10-30T04:43:27.086677Z",
+    "target": {
+     "panelIds": [
+      "panel-chart-primary"
+     ]
+    }
+   },
+   {
+    "id": "layout-command-c3969f449a81ec4f",
+    "type": "layout.reflow",
+    "actor": "llm",
+    "payload": {
+     "reason": "ui-agent-multi-panel-layout-intent"
+    },
+    "createdAt": "2026-10-30T04:43:27.086686Z"
+   }
+  ],
+  "autoApply": true,
+  "panelPriorities": [
+   {
+    "panelId": "panel-chart-primary",
+    "panelType": "chart",
+    "layoutWeight": 100,
+    "reason": "Target panel for the multi-panel UI request."
+   }
+  ],
+  "createdAt": "2026-10-30T04:43:27.086693Z",
+  "id": "layout-proposal-9eadf02d52df34df"
+ },
+ "chartProposal": null,
+ "tradeConditionProposals": [],
+ "dailySummaries": [],
+ "timing": {
+  "totalMs": 40.524,
+  "queueWaitMs": 0.0,
+  "cacheHit": false,
+  "cacheLayer": "none",
+  "newsFetchMs": 0.0,
+  "routeAndPlanMs": 0.044,
+  "queryUnderstandingMs": 30.52,
+  "entityResolveMs": 20.695,
+  "intentClassifierMs": 0.0,
+  "retrievalContextMs": 0.016,
+  "snapshotFetchMs": 38.128,
+  "crossSignalJoinMs": 0.0,
+  "roleAnalysisMs": 0.016,
+  "finalAnswerMs": 0.235,
+  "guardrailMs": 0.045,
+  "llmCalls": 0,
+  "llmBudgetBlocked": 0,
+  "directNewsCount": 0,
+  "mentionNewsCount": 0,
+  "newsItemsFetched": 0,
+  "crossSignals": 0,
+  "graphExpansionCacheHit": false,
+  "relatedSymbolsRequested": 0,
+  "relatedSymbolsUsed": 0,
+  "themesUsed": 0,
+  "marketPeersRequested": 0,
+  "marketPeersFetched": 0,
+  "fanoutTruncated": false,
+  "hotWorkerSaturation": false,
+  "deepWorkerSaturation": false,
+  "providerBulkheadRejected": 0,
+  "synthesisProvider": "deterministic",
+  "synthesisProviderEnv": "openai",
+  "financialSynthesisProviderEnv": "",
+  "synthesisOpenAIKeyConfigured": false,
+  "synthesisModel": "gpt-5.2",
+  "synthesisTimeoutSeconds": 5.0,
+  "synthesisSkippedReason": "missing_openai_api_key",
+  "synthesisFallbackReason": "missing_openai_api_key",
+  "llmCallLabels": []
+ },
+ "routePlan": {
+  "run_id": "run-bcae10c8b362ef84",
+  "intent": "investment_opinion",
+  "route_confidence": 0.9,
+  "entity_candidates": [
+   "NVDA"
+  ],
+  "snapshot_bundle": [
+   "market_snapshot",
+   "news_snapshot",
+   "relationship_snapshot",
+   "risk_policy_snapshot"
+  ],
+  "execution_mode": "parallel_snapshots",
+  "llm_calls_allowed": 2,
+  "analysisQueryType": "price_move_cause",
+  "priority": "P0",
+  "anchorMode": "price_move",
+  "compositionStrategy": "price_news_market_relationship",
+  "answerPolicy": {
+   "start_with_conclusion": true,
+   "max_evidence_bullets": 3,
+   "allowed_sections": [
+    "핵심 판단",
+    "판단 근거",
+    "반대로 볼 점",
+    "분석한 지표"
+   ],
+   "forbid_user_todo_sections": true,
+   "do_not_delegate_missing_data": true,
+   "show_used_indicators": true,
+   "hide_internal_terms": [
+    "GraphDB",
+    "ClickHouse",
+    "Redis",
+    "providerEvidence",
+    "Provider status",
+    "snapshot",
+    "스냅샷"
+   ],
+   "prohibit_direct_investment_command": true,
+   "analysis_query_type": "price_move_cause",
+   "composition_strategy": "price_news_market_relationship"
+  }
+ },
+ "resolvedEntities": [
+  {
+   "raw_name": "엔비디아",
+   "canonical_name": "Nvidia",
+   "ticker": "NVDA",
+   "market": "US",
+   "asset_type": "stock",
+   "graph_node_id": "company:NVDA",
+   "aliases": [
+    "엔비디아"
+   ],
+   "confidence": 0.96
+  }
+ ],
+ "snapshots": [
+  {
+   "snapshot_id": "snapshot-a74266dc8953207d",
+   "run_id": "run-bcae10c8b362ef84",
+   "snapshot_type": "market_snapshot",
+   "status": "partial",
+   "source": "computed",
+   "cache_hit": false,
+   "freshness": {
+    "generated_at": "2026-10-30T04:43:27.047327Z",
+    "stale": false
+   },
+   "summary": "NVDA 시장 snapshot cache가 없습니다.",
+   "signals": [
+    {
+     "target": "NVDA",
+     "direction": "unknown",
+     "horizon": "intraday",
+     "strength": "low",
+     "reasoning": "Visible chart change: unknown."
+    }
+   ],
+   "evidence": [],
+   "data_quality": "low",
+   "confidence": 0.35,
+   "latency_ms": 0.032,
+   "warnings": [
+    "market_snapshot_unavailable"
+   ]
+  },
+  {
+   "snapshot_id": "snapshot-1dda7d05cd7bdf4e",
+   "run_id": "run-bcae10c8b362ef84",
+   "snapshot_type": "news_snapshot",
+   "status": "partial",
+   "source": "database",
+   "cache_hit": false,
+   "freshness": {
+    "generated_at": "2026-10-30T04:43:27.081306Z",
+    "stale": false
+   },
+   "summary": "NVDA 관련 저장 뉴스가 없습니다.",
+   "signals": [],
+   "evidence": [
+    {
+     "provider": "news",
+     "status": "no-data",
+     "title": "News provider not available",
+     "summary": "뉴스 ClickHouse provider 미연결 또는 조회 실패: HTTPConnectionPool(host='localhost', port=8123): Max retries exceeded with url: /?query=... (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8123): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+     "observedAt": "2026-10-30T04:43:27.081306Z",
+     "url": null,
+     "raw": {}
+    }
+   ],
+   "data_quality": "low",
+   "confidence": 0.35,
+   "latency_ms": 34.494,
+   "warnings": [
+    "no_relevant_news_found"
+   ]
+  },
+  {
+   "snapshot_id": "snapshot-fd0058c50c4f2f10",
+   "run_id": "run-bcae10c8b362ef84",
+   "snapshot_type": "relationship_snapshot",
+   "status": "partial",
+   "source": "computed",
+   "cache_hit": false,
+   "freshness": {
+    "generated_at": "2026-10-30T04:43:27.080024Z",
+    "stale": false
+   },
+   "summary": "NVDA 관련 명확한 그래프 관계 경로를 확인하지 못했습니다.",
+   "signals": [],
+   "evidence": [
+    {
+     "provider": "ontology",
+     "status": "no-data",
+     "title": "GraphDB 연결 실패",
+     "summary": "GraphDB 온톨로지 조회에 실패했습니다: ConnectionError",
+     "observedAt": "2026-10-30T04:43:27.080024Z",
+     "url": null,
+     "raw": {
+      "relationType": "graphdb-unavailable",
+      "errorType": "ConnectionError"
+     }
+    }
+   ],
+   "data_quality": "low",
+   "confidence": 0.3,
+   "latency_ms": 29.854,
+   "warnings": [
+    "no_clear_relationship_path"
+   ]
+  },
+  {
+   "snapshot_id": "snapshot-2168e5f4bdd60a1e",
+   "run_id": "run-bcae10c8b362ef84",
+   "snapshot_type": "risk_policy_snapshot",
+   "status": "success",
+   "source": "computed",
+   "cache_hit": false,
+   "freshness": {
+    "generated_at": "2026-10-30T04:43:27.085331Z",
+    "stale": false
+   },
+   "summary": "투자 권유 제한, partial data, stale data 정책을 적용합니다.",
+   "signals": [],
+   "evidence": [
+    {
+     "provider": "policy",
+     "status": "available",
+     "title": "투자 조언 제한",
+     "summary": "최종 응답은 투자 판단 보조 정보이며 직접적인 매수/매도 명령을 제공하지 않습니다.",
+     "observedAt": "2026-10-30T04:43:27.085321Z",
+     "url": null,
+     "raw": {
+      "source_type": "policy_rule",
+      "warnings": [
+       "investment_advice_limited",
+       "market_snapshot_unavailable",
+       "no_relevant_news_found",
+       "no_clear_relationship_path",
+       "partial_data_used"
+      ]
+     }
+    }
+   ],
+   "data_quality": "high",
+   "confidence": 0.85,
+   "latency_ms": 0.016,
+   "warnings": [
+    "investment_advice_limited",
+    "market_snapshot_unavailable",
+    "no_relevant_news_found",
+    "no_clear_relationship_path",
+    "partial_data_used"
+   ]
+  }
+ ],
+ "synthesisInput": {
+  "run_id": "run-bcae10c8b362ef84",
+  "original_prompt": "엔비디아 왜 올랐어? 거래량이랑 차트도 봐줘",
+  "intent": "investment_opinion",
+  "entities": [
+   {
+    "raw_name": "엔비디아",
+    "canonical_name": "Nvidia",
+    "ticker": "NVDA",
+    "market": "US",
+    "asset_type": "stock",
+    "graph_node_id": "company:NVDA",
+    "aliases": [
+     "엔비디아"
+    ],
+    "confidence": 0.96
+   }
+  ],
+  "snapshots": [
+   {
+    "snapshot_id": "snapshot-a74266dc8953207d",
+    "run_id": "run-bcae10c8b362ef84",
+    "snapshot_type": "market_snapshot",
+    "status": "partial",
+    "source": "computed",
+    "cache_hit": false,
+    "freshness": {
+     "generated_at": "2026-10-30T04:43:27.047327Z",
+     "stale": false
+    },
+    "summary": "NVDA 시장 snapshot cache가 없습니다.",
+    "signals": [
+     {
+      "target": "NVDA",
+      "direction": "unknown",
+      "horizon": "intraday",
+      "strength": "low",
+      "reasoning": "Visible chart change: unknown."
+     }
+    ],
+    "evidence": [],
+    "data_quality": "low",
+    "confidence": 0.35,
+    "latency_ms": 0.032,
+    "warnings": [
+     "market_snapshot_unavailable"
+    ]
+   },
+   {
+    "snapshot_id": "snapshot-1dda7d05cd7bdf4e",
+    "run_id": "run-bcae10c8b362ef84",
+    "snapshot_type": "news_snapshot",
+    "status": "partial",
+    "source": "database",
+    "cache_hit": false,
+    "freshness": {
+     "generated_at": "2026-10-30T04:43:27.081306Z",
+     "stale": false
+    },
+    "summary": "NVDA 관련 저장 뉴스가 없습니다.",
+    "signals": [],
+    "evidence": [
+     {
+      "provider": "news",
+      "status": "no-data",
+      "title": "News provider not available",
+      "summary": "뉴스 ClickHouse provider 미연결 또는 조회 실패: HTTPConnectionPool(host='localhost', port=8123): Max retries exceeded with url: /?query=... (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8123): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+      "observedAt": "2026-10-30T04:43:27.081306Z",
+      "url": null,
+      "raw": {}
+     }
+    ],
+    "data_quality": "low",
+    "confidence": 0.35,
+    "latency_ms": 34.494,
+    "warnings": [
+     "no_relevant_news_found"
+    ]
+   },
+   {
+    "snapshot_id": "snapshot-fd0058c50c4f2f10",
+    "run_id": "run-bcae10c8b362ef84",
+    "snapshot_type": "relationship_snapshot",
+    "status": "partial",
+    "source": "computed",
+    "cache_hit": false,
+    "freshness": {
+     "generated_at": "2026-10-30T04:43:27.080024Z",
+     "stale": false
+    },
+    "summary": "NVDA 관련 명확한 그래프 관계 경로를 확인하지 못했습니다.",
+    "signals": [],
+    "evidence": [
+     {
+      "provider": "ontology",
+      "status": "no-data",
+      "title": "GraphDB 연결 실패",
+      "summary": "GraphDB 온톨로지 조회에 실패했습니다: ConnectionError",
+      "observedAt": "2026-10-30T04:43:27.080024Z",
+      "url": null,
+      "raw": {
+       "relationType": "graphdb-unavailable",
+       "errorType": "ConnectionError"
+      }
+     }
+    ],
+    "data_quality": "low",
+    "confidence": 0.3,
+    "latency_ms": 29.854,
+    "warnings": [
+     "no_clear_relationship_path"
+    ]
+   },
+   {
+    "snapshot_id": "snapshot-2168e5f4bdd60a1e",
+    "run_id": "run-bcae10c8b362ef84",
+    "snapshot_type": "risk_policy_snapshot",
+    "status": "success",
+    "source": "computed",
+    "cache_hit": false,
+    "freshness": {
+     "generated_at": "2026-10-30T04:43:27.085331Z",
+     "stale": false
+    },
+    "summary": "투자 권유 제한, partial data, stale data 정책을 적용합니다.",
+    "signals": [],
+    "evidence": [],
+    "data_quality": "high",
+    "confidence": 0.85,
+    "latency_ms": 0.016,
+    "warnings": [
+     "investment_advice_limited",
+     "market_snapshot_unavailable",
+     "no_relevant_news_found",
+     "no_clear_relationship_path",
+     "partial_data_used"
+    ]
+   }
+  ],
+  "crossSignals": [],
+  "missing_data": [
+   "market_snapshot_unavailable",
+   "no_relevant_news_found",
+   "no_clear_relationship_path",
+   "partial_data_used"
+  ],
+  "risk_warnings": [
+   "investment_advice_limited",
+   "market_snapshot_unavailable",
+   "no_relevant_news_found",
+   "no_clear_relationship_path",
+   "partial_data_used"
+  ],
+  "output_policy": {
+   "start_with_conclusion": true,
+   "max_evidence_bullets": 3,
+   "allowed_sections": [
+    "핵심 판단",
+    "판단 근거",
+    "반대로 볼 점",
+    "분석한 지표"
+   ],
+   "forbid_user_todo_sections": true,
+   "do_not_delegate_missing_data": true,
+   "show_used_indicators": true,
+   "hide_internal_terms": [
+    "GraphDB",
+    "ClickHouse",
+    "Redis",
+    "providerEvidence",
+    "Provider status",
+    "snapshot",
+    "스냅샷"
+   ],
+   "prohibit_direct_investment_command": true,
+   "analysis_query_type": "price_move_cause",
+   "composition_strategy": "price_news_market_relationship",
+   "priority": "P0",
+   "anchor_mode": "price_move",
+   "max_output_tokens": 350,
+   "require_uncertainty_disclosure": true
+  }
+ },
+ "finalResponse": {
+  "run_id": "run-bcae10c8b362ef84",
+  "answer_type": "investment_opinion",
+  "summary": "제 의견은 NVDA 가격 움직임을 확인된 차트·뉴스·관계 신호를 종합해 해석해야 한다는 것입니다.",
+  "key_points": [
+   "현재 자료 근거만으로는 단일 원인을 확정하기 어렵습니다.",
+   "뉴스",
+   "기업 관계·테마"
+  ],
+  "bullish_points": [],
+  "bearish_points": [],
+  "relationship_impacts": [],
+  "risk_warnings": [
+   "investment_advice_limited",
+   "partial_data_used"
+  ],
+  "data_freshness_warnings": [
+   "market_snapshot_unavailable",
+   "no_relevant_news_found",
+   "no_clear_relationship_path"
+  ],
+  "partial_data_used": true,
+  "confidence": 0.3,
+  "final_stance": "watch",
+  "latency_ms": 40.524,
+  "llm_calls_used": 0
+ },
+ "latencyTrace": {
+  "run_id": "run-bcae10c8b362ef84",
+  "total_latency_ms": 40.524,
+  "llm_calls_used": 0,
+  "stages": [
+   {
+    "stage": "route_and_plan",
+    "latency_ms": 0.044,
+    "status": "success"
+   },
+   {
+    "stage": "entity_resolve",
+    "latency_ms": 20.695,
+    "status": "success"
+   },
+   {
+    "stage": "snapshot_fetch",
+    "latency_ms": 34.494,
+    "status": "partial",
+    "cache_hit": false
+   },
+   {
+    "stage": "retrieval_context",
+    "latency_ms": 0.016,
+    "status": "success",
+    "cache_hit": false
+   },
+   {
+    "stage": "cross_signal_join",
+    "latency_ms": 0.0,
+    "status": "success"
+   },
+   {
+    "stage": "synthesis_llm",
+    "latency_ms": 0.235,
+    "status": "success"
+   },
+   {
+    "stage": "guardrail",
+    "latency_ms": 0.045,
+    "status": "success"
+   }
+  ]
+ },
+ "agentAnswers": [],
+ "agentTrace": {
+  "visibleSnapshots": [
+   {
+    "snapshot_id": "snapshot-a74266dc8953207d",
+    "run_id": "run-bcae10c8b362ef84",
+    "snapshot_type": "market_snapshot",
+    "status": "partial",
+    "source": "computed",
+    "cache_hit": false,
+    "freshness": {
+     "generated_at": "2026-10-30T04:43:27.047327Z",
+     "stale": false
+    },
+    "summary": "NVDA 시장 snapshot cache가 없습니다.",
+    "signals": [
+     {
+      "target": "NVDA",
+      "direction": "unknown",
+      "horizon": "intraday",
+      "strength": "low",
+      "reasoning": "Visible chart change: unknown."
+     }
+    ],
+    "evidence": [],
+    "data_quality": "low",
+    "confidence": 0.35,
+    "latency_ms": 0.032,
+    "warnings": [
+     "market_snapshot_unavailable"
+    ]
+   },
+   {
+    "snapshot_id": "snapshot-1dda7d05cd7bdf4e",
+    "run_id": "run-bcae10c8b362ef84",
+    "snapshot_type": "news_snapshot",
+    "status": "partial",
+    "source": "database",
+    "cache_hit": false,
+    "freshness": {
+     "generated_at": "2026-10-30T04:43:27.081306Z",
+     "stale": false
+    },
+    "summary": "NVDA 관련 저장 뉴스가 없습니다.",
+    "signals": [],
+    "evidence": [
+     {
+      "provider": "news",
+      "status": "no-data",
+      "title": "News provider not available",
+      "summary": "뉴스 ClickHouse provider 미연결 또는 조회 실패: HTTPConnectionPool(host='localhost', port=8123): Max retries exceeded with url: /?query=... (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8123): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+      "observedAt": "2026-10-30T04:43:27.081306Z",
+      "url": null,
+      "raw": {}
+     }
+    ],
+    "data_quality": "low",
+    "confidence": 0.35,
+    "latency_ms": 34.494,
+    "warnings": [
+     "no_relevant_news_found"
+    ]
+   },
+   {
+    "snapshot_id": "snapshot-fd0058c50c4f2f10",
+    "run_id": "run-bcae10c8b362ef84",
+    "snapshot_type": "relationship_snapshot",
+    "status": "partial",
+    "source": "computed",
+    "cache_hit": false,
+    "freshness": {
+     "generated_at": "2026-10-30T04:43:27.080024Z",
+     "stale": false
+    },
+    "summary": "NVDA 관련 명확한 그래프 관계 경로를 확인하지 못했습니다.",
+    "signals": [],
+    "evidence": [
+     {
+      "provider": "ontology",
+      "status": "no-data",
+      "title": "GraphDB 연결 실패",
+      "summary": "GraphDB 온톨로지 조회에 실패했습니다: ConnectionError",
+      "observedAt": "2026-10-30T04:43:27.080024Z",
+      "url": null,
+      "raw": {
+       "relationType": "graphdb-unavailable",
+       "errorType": "ConnectionError"
+      }
+     }
+    ],
+    "data_quality": "low",
+    "confidence": 0.3,
+    "latency_ms": 29.854,
+    "warnings": [
+     "no_clear_relationship_path"
+    ]
+   }
+  ],
+  "hiddenSnapshots": [
+   "risk_policy_snapshot"
+  ],
+  "warnings": [
+   "market_snapshot_unavailable",
+   "no_relevant_news_found",
+   "no_clear_relationship_path",
+   "investment_advice_limited",
+   "market_snapshot_unavailable",
+   "no_relevant_news_found",
+   "no_clear_relationship_path",
+   "partial_data_used"
+  ],
+  "retrievalContext": {
+   "run_id": "run-bcae10c8b362ef84",
+   "primary_symbol": "NVDA",
+   "intent": "investment_opinion",
+   "time_window": "1d",
+   "route_confidence": 0.9,
+   "graph_expansion": {
+    "source": "none",
+    "cache_hit": false,
+    "generated_at": null,
+    "relation_version": null,
+    "related_symbols": [],
+    "themes": [],
+    "keywords": [],
+    "warnings": [
+     "graph_expansion_primary_only"
+    ]
+   },
+   "fanout_policy": {
+    "max_related_symbols": 3,
+    "max_themes": 2,
+    "max_news_items_total": 12,
+    "max_market_peers": 3,
+    "graph_cache_deadline_ms": 80,
+    "expanded_retrieval_deadline_ms": 350,
+    "snapshot_total_deadline_ms": 900
+   }
+  },
+  "entityResolution": {
+   "status": "confirmed",
+   "symbol": "NVDA",
+   "canonicalName": "Nvidia",
+   "confidence": 0.96,
+   "matchType": "alias_exact",
+   "matchedText": "엔비디아",
+   "matchedAlias": "엔비디아",
+   "needsClarification": false,
+   "reason": "matched exact catalog alias",
+   "entityType": "company",
+   "entityId": "company:NVDA",
+   "catalogSource": "reviewed-seed",
+   "themeName": null,
+   "themeSymbols": [],
+   "themeCategory": null,
+   "candidates": [
+    {
+     "symbol": "NVDA",
+     "canonical_name": "Nvidia",
+     "matched_text": "엔비디아",
+     "matched_alias": "엔비디아",
+     "match_type": "alias_exact",
+     "score": 0.98,
+     "confidence": 0.96,
+     "source": "reviewed-seed",
+     "entityType": "company",
+     "entityId": "company:NVDA",
+     "themeName": null,
+     "themeSymbols": [],
+     "themeCategory": null
+    }
+   ]
+  },
+  "queryUnderstanding": {
+   "originalQuery": "엔비디아 왜 올랐어? 거래량이랑 차트도 봐줘",
+   "normalizedQuery": "엔비디아 왜 올랐어? 거래량이랑 차트도 봐줘",
+   "routeMode": "hybrid",
+   "intentType": "market-move+chart",
+   "selectedRoles": [
+    "chart",
+    "news",
+    "macro",
+    "ontology"
+   ],
+   "contentTasks": [
+    {
+     "taskType": "market_move",
+     "confidence": 0.9,
+     "source": "rule",
+     "reason": "Merged route signals for market-move+chart.",
+     "targetEntityText": null,
+     "roles": [
+      "chart",
+      "news",
+      "macro",
+      "ontology"
+     ]
+    },
+    {
+     "taskType": "chart",
+     "confidence": 0.9,
+     "source": "rule",
+     "reason": "Merged route signals for market-move+chart.",
+     "targetEntityText": null,
+     "roles": [
+      "chart"
+     ]
+    }
+   ],
+   "uiTasks": [
+    {
+     "action": "arrange",
+     "confidence": 0.86,
+     "source": "ui-parser",
+     "reason": "UI parser matched panel '차트' with layout operation in clause '거래량이랑 차트도 봐줘'.",
+     "targetPanelType": "chart",
+     "targetPanelId": null,
+     "targetPanelTypes": [
+      "chart"
+     ],
+     "targetPanelIds": [],
+     "targetAll": false,
+     "replacePanelType": null,
+     "replacePanelId": null,
+     "anchorPanelType": null,
+     "anchorPanelId": null,
+     "relationIntent": null,
+     "layoutPreset": null,
+     "presetId": null,
+     "presetName": null,
+     "presetKind": null,
+     "sizeIntent": null,
+     "sizeFraction": null,
+     "positionIntent": null,
+     "chartAction": "add",
+     "symbol": null
+    }
+   ],
+   "entities": [
+    {
+     "status": "confirmed",
+     "symbol": "NVDA",
+     "canonicalName": "Nvidia",
+     "confidence": 0.96,
+     "matchType": "alias_exact",
+     "matchedText": "엔비디아",
+     "matchedAlias": "엔비디아",
+     "needsClarification": false,
+     "reason": "matched exact catalog alias",
+     "entityType": "company",
+     "entityId": "company:NVDA",
+     "catalogSource": "reviewed-seed",
+     "themeName": null,
+     "themeSymbols": [],
+     "themeCategory": null,
+     "candidates": [
+      {
+       "symbol": "NVDA",
+       "canonical_name": "Nvidia",
+       "matched_text": "엔비디아",
+       "matched_alias": "엔비디아",
+       "match_type": "alias_exact",
+       "score": 0.98,
+       "confidence": 0.96,
+       "source": "reviewed-seed",
+       "entityType": "company",
+       "entityId": "company:NVDA",
+       "themeName": null,
+       "themeSymbols": [],
+       "themeCategory": null
+      }
+     ]
+    }
+   ],
+   "confidence": 0.9,
+   "source": "rule+ui-parser",
+   "needsClarification": false,
+   "warnings": [],
+   "resolvedSymbol": "NVDA",
+   "resolvedSymbolSource": "query_company",
+   "newsTopic": null,
+   "newsSymbols": [],
+   "timings": {
+    "totalMs": 30.52
+   },
+   "subjectValidation": {
+    "status": "supported",
+    "subjectType": "company",
+    "symbol": "NVDA",
+    "source": "query_company",
+    "catalog": {
+     "source": "systems/market-data/config/sp500-universe.json",
+     "version": "systems/market-data/config/sp500-universe.json:[REDACTED_PHONE]",
+     "strict": false,
+     "symbolCount": 503
+    }
+   },
+   "operationIR": {
+    "version": 1,
+    "source": "operation-extractor",
+    "operations": [],
+    "entities": {
+     "symbols": [
+      "NVDA"
+     ],
+     "dates": [],
+     "layers": [],
+     "priceSources": []
+    },
+    "references": [],
+    "contextWindow": {
+     "anchors": [],
+     "dateHints": [],
+     "requiredSnapshots": [],
+     "chart": {
+      "symbol": null,
+      "timeframe": null
+     },
+     "policy": {
+      "preferExplicitReferences": true,
+      "llmReceivesEvidenceOnly": true
+     }
+    },
+    "ambiguities": [],
+    "suggestedRoles": [],
+    "confidence": 0.0
+   }
+  },
+  "operationIR": {
+   "version": 1,
+   "source": "operation-extractor",
+   "operations": [],
+   "entities": {
+    "symbols": [
+     "NVDA"
+    ],
+    "dates": [],
+    "layers": [],
+    "priceSources": []
+   },
+   "references": [],
+   "contextWindow": {
+    "anchors": [],
+    "dateHints": [],
+    "requiredSnapshots": [],
+    "chart": {
+     "symbol": null,
+     "timeframe": null
+    },
+    "policy": {
+     "preferExplicitReferences": true,
+     "llmReceivesEvidenceOnly": true
+    }
+   },
+   "ambiguities": [],
+   "suggestedRoles": [],
+   "confidence": 0.0
+  },
+  "analysisPolicy": {
+   "analysisQueryType": "price_move_cause",
+   "priority": "P0",
+   "anchorMode": "price_move",
+   "compositionStrategy": "price_news_market_relationship",
+   "snapshotBundle": [
+    "market_snapshot",
+    "news_snapshot",
+    "relationship_snapshot",
+    "risk_policy_snapshot"
+   ]
+  },
+  "analysisMode": "auto",
+  "synthesis": {
+   "providerEnv": "openai",
+   "openaiKeyConfigured": false,
+   "model": "gpt-5.2",
+   "timeoutSeconds": 5.0,
+   "provider": "deterministic",
+   "skippedReason": "missing_openai_api_key",
+   "fallbackReason": "missing_openai_api_key",
+   "llmCallLabels": [],
+   "llmSynthesisAttempted": false
+  }
+ },
+ "chartExplanation": null,
+ "coachReport": null
+}

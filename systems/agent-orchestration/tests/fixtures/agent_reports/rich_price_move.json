@@ -1,0 +1,357 @@
+{
+ "analysisId": "analysis-rich-1",
+ "symbol": "NVDA",
+ "intent": "엔비디아 왜 올랐어?",
+ "status": "completed",
+ "createdAt": "2026-10-29T20:05:00Z",
+ "summary": "거래량이 크게 늘며 올랐어요.",
+ "rationale": "차트·뉴스·재무 근거를 묶었습니다.",
+ "findings": [
+  {
+   "agentId": "chart-agent",
+   "role": "chart-analysis",
+   "summary": "<b>거래량</b>이 20일 평균의 **2.1배**로 늘었어요.",
+   "rationale": "",
+   "confidence": 0.8,
+   "evidence": [
+    {
+     "provider": "market-data",
+     "status": "available",
+     "title": "NVDA 일봉 거래량",
+     "summary": "거래량이 20일 평균의 2.1배",
+     "observedAt": "2026-10-29T20:05:00Z",
+     "url": null,
+     "raw": {
+      "kind": "volume"
+     }
+    }
+   ],
+   "tags": [
+    "chart"
+   ]
+  },
+  {
+   "agentId": "news-agent",
+   "role": "news-analysis",
+   "summary": "[[NVDA]] 데이터센터 매출 기사 4건이 이어졌어요.",
+   "rationale": "",
+   "confidence": 0.75,
+   "evidence": [
+    {
+     "provider": "news",
+     "status": "available",
+     "title": "엔비디아 데이터센터 매출 기사 1",
+     "summary": "요약",
+     "observedAt": "2026-10-29T20:05:00Z",
+     "url": "https://example.com/n1",
+     "raw": {
+      "articleId": "n_121",
+      "symbol": "NVDA"
+     }
+    },
+    {
+     "provider": "news",
+     "status": "available",
+     "title": "엔비디아 데이터센터 매출 기사 2",
+     "summary": "요약",
+     "observedAt": "2026-10-29T20:05:00Z",
+     "url": "https://example.com/n2",
+     "raw": {
+      "articleId": "n_122",
+      "symbol": "NVDA"
+     }
+    },
+    {
+     "provider": "news",
+     "status": "available",
+     "title": "엔비디아 데이터센터 매출 기사 3",
+     "summary": "요약",
+     "observedAt": "2026-10-29T20:05:00Z",
+     "url": "https://example.com/n3",
+     "raw": {
+      "articleId": "n_123",
+      "symbol": "NVDA"
+     }
+    },
+    {
+     "provider": "news",
+     "status": "available",
+     "title": "엔비디아 데이터센터 매출 기사 4",
+     "summary": "요약",
+     "observedAt": "2026-10-29T20:05:00Z",
+     "url": "https://example.com/n4",
+     "raw": {
+      "articleId": "n_124",
+      "symbol": "NVDA"
+     }
+    }
+   ],
+   "tags": [
+    "news"
+   ]
+  },
+  {
+   "agentId": "financial-agent",
+   "role": "financial-analysis",
+   "summary": "최근 분기 매출이 전년보다 늘었어요.",
+   "rationale": "",
+   "confidence": 0.7,
+   "evidence": [
+    {
+     "provider": "financial",
+     "status": "available",
+     "title": "NVDA 분기 매출",
+     "summary": "분기 매출 증가",
+     "observedAt": "2026-10-29T20:05:00Z",
+     "url": null,
+     "raw": {
+      "metric": "revenue"
+     }
+    }
+   ],
+   "tags": [
+    "financial"
+   ]
+  },
+  {
+   "agentId": "ontology-agent",
+   "role": "company-relationship-analysis",
+   "summary": "AMD 와 같은 반도체 테마로 묶여요.",
+   "rationale": "",
+   "confidence": 0.6,
+   "evidence": [
+    {
+     "provider": "ontology",
+     "status": "no-data",
+     "title": "Graph unavailable",
+     "summary": "GraphDB 미연결",
+     "observedAt": "2026-10-30T04:43:27.446798Z",
+     "url": null,
+     "raw": {}
+    }
+   ],
+   "tags": [
+    "ontology"
+   ]
+  },
+  {
+   "agentId": "market-summary-agent",
+   "role": "market-summary",
+   "summary": "NVDA analysis combined 4 role findings.",
+   "rationale": "",
+   "confidence": 0.6,
+   "evidence": [],
+   "tags": []
+  },
+  {
+   "agentId": "verification-guardrail-agent",
+   "role": "verification-guardrail",
+   "summary": "No trading-action guardrail violation detected.",
+   "rationale": "",
+   "confidence": 0.8,
+   "evidence": [],
+   "tags": []
+  }
+ ],
+ "marketEvents": [
+  {
+   "eventId": "evt-1",
+   "symbol": "NVDA",
+   "eventType": "volume_spike",
+   "severity": "warning",
+   "sourceTopic": "manual",
+   "observedAt": "2026-10-29T20:05:00Z",
+   "summary": "거래량 급증",
+   "metrics": {
+    "volumeRatio": 2.1,
+    "changePercent": 3.42
+   },
+   "evidence": []
+  }
+ ],
+ "providerEvidence": [
+  {
+   "provider": "news",
+   "status": "available",
+   "title": "엔비디아 데이터센터 매출 기사 1",
+   "summary": "요약",
+   "observedAt": "2026-10-29T20:05:00Z",
+   "url": "https://example.com/n1",
+   "raw": {
+    "articleId": "n_121",
+    "symbol": "NVDA"
+   }
+  },
+  {
+   "provider": "news",
+   "status": "available",
+   "title": "엔비디아 데이터센터 매출 기사 2",
+   "summary": "요약",
+   "observedAt": "2026-10-29T20:05:00Z",
+   "url": "https://example.com/n2",
+   "raw": {
+    "articleId": "n_122",
+    "symbol": "NVDA"
+   }
+  },
+  {
+   "provider": "news",
+   "status": "available",
+   "title": "엔비디아 데이터센터 매출 기사 3",
+   "summary": "요약",
+   "observedAt": "2026-10-29T20:05:00Z",
+   "url": "https://example.com/n3",
+   "raw": {
+    "articleId": "n_123",
+    "symbol": "NVDA"
+   }
+  },
+  {
+   "provider": "news",
+   "status": "available",
+   "title": "엔비디아 데이터센터 매출 기사 4",
+   "summary": "요약",
+   "observedAt": "2026-10-29T20:05:00Z",
+   "url": "https://example.com/n4",
+   "raw": {
+    "articleId": "n_124",
+    "symbol": "NVDA"
+   }
+  },
+  {
+   "provider": "market-data",
+   "status": "available",
+   "title": "NVDA 일봉 거래량",
+   "summary": "거래량이 20일 평균의 2.1배",
+   "observedAt": "2026-10-29T20:05:00Z",
+   "url": null,
+   "raw": {
+    "kind": "volume"
+   }
+  },
+  {
+   "provider": "financial",
+   "status": "available",
+   "title": "NVDA 분기 매출",
+   "summary": "분기 매출 증가",
+   "observedAt": "2026-10-29T20:05:00Z",
+   "url": null,
+   "raw": {
+    "metric": "revenue"
+   }
+  },
+  {
+   "provider": "ontology",
+   "status": "no-data",
+   "title": "Graph unavailable",
+   "summary": "GraphDB 미연결",
+   "observedAt": "2026-10-30T04:43:27.446798Z",
+   "url": null,
+   "raw": {}
+  }
+ ],
+ "route": {
+  "source": "rule",
+  "intentType": "price-move",
+  "selectedRoles": [
+   "chart",
+   "news"
+  ],
+  "confidence": 0.9,
+  "reason": "rule"
+ },
+ "finalAnswer": {
+  "title": "NVDA 주가 변동",
+  "summary": "거래량이 평소의 두 배를 넘으며 <script>x</script>올랐고, 같은 날 데이터센터 기사가 이어졌어요.",
+  "sections": [
+   {
+    "title": "핵심",
+    "bullets": [
+     "거래량 2.1배"
+    ]
+   }
+  ],
+  "citations": [
+   {
+    "provider": "news",
+    "title": "기사 1",
+    "url": "https://example.com/n1",
+    "publishedAt": null
+   }
+  ],
+  "limitations": []
+ },
+ "notificationDecision": null,
+ "layoutProposal": null,
+ "chartProposal": null,
+ "tradeConditionProposals": [
+  {
+   "proposalId": "tcp-1",
+   "analysisId": "analysis-rich-1",
+   "symbol": "NVDA",
+   "exchange": "NASD",
+   "side": "sell",
+   "direction": "below",
+   "triggerPrice": 137.7,
+   "limitPrice": null,
+   "quantity": null,
+   "executionEnabled": true,
+   "alertsEnabled": true,
+   "validity": "DAY",
+   "missingFields": [],
+   "rationale": "",
+   "createdAt": "2026-10-30T04:43:27.446933Z",
+   "expiresAt": null
+  }
+ ],
+ "dailySummaries": [],
+ "timing": {},
+ "routePlan": null,
+ "resolvedEntities": [
+  {
+   "raw_name": "엔비디아",
+   "canonical_name": "NVIDIA",
+   "ticker": "NVDA",
+   "market": "US",
+   "asset_type": "stock",
+   "graph_node_id": null,
+   "aliases": [],
+   "confidence": 0.5
+  },
+  {
+   "raw_name": "AMD",
+   "canonical_name": "AMD",
+   "ticker": "AMD",
+   "market": "US",
+   "asset_type": "stock",
+   "graph_node_id": null,
+   "aliases": [],
+   "confidence": 0.5
+  }
+ ],
+ "snapshots": [],
+ "synthesisInput": null,
+ "finalResponse": {
+  "run_id": "run-rich",
+  "answer_type": "price_move",
+  "summary": "거래량이 평소의 두 배를 넘었어요.",
+  "key_points": [],
+  "bullish_points": [
+   "상승 여력"
+  ],
+  "bearish_points": [],
+  "relationship_impacts": [],
+  "risk_warnings": [],
+  "data_freshness_warnings": [],
+  "partial_data_used": false,
+  "confidence": 0.78,
+  "final_stance": "watch",
+  "latency_ms": 0.0,
+  "llm_calls_used": 0
+ },
+ "latencyTrace": null,
+ "agentAnswers": [],
+ "agentTrace": {},
+ "chartExplanation": null,
+ "coachReport": null
+}

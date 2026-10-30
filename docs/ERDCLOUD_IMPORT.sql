@@ -772,6 +772,18 @@ CREATE TABLE paper_order_events (
     CONSTRAINT fk_paper_order_events_execution FOREIGN KEY (execution_id) REFERENCES paper_executions(execution_id)
 );
 
+CREATE TABLE order_notes (
+    order_id VARCHAR(128) NOT NULL,
+    app_user_id CHAR(36),
+    memo VARCHAR(200),
+    habit VARCHAR(16),
+    habit_source VARCHAR(16) NOT NULL,
+    updated_at DATETIME(3) NOT NULL,
+    PRIMARY KEY (order_id),
+    CONSTRAINT fk_order_notes_order FOREIGN KEY (order_id) REFERENCES paper_orders(order_id),
+    CONSTRAINT fk_order_notes_user FOREIGN KEY (app_user_id) REFERENCES app_users(app_user_id)
+);
+
 CREATE TABLE paper_cash_ledger (
     entry_id VARCHAR(128) NOT NULL,
     user_id VARCHAR(255) NOT NULL,

@@ -16,6 +16,7 @@ from app.market_data.monitor.routes import router as market_monitor_router
 from app.market_data.query.routes import router as market_query_router
 from app.learn.routes import router as learn_router
 from app.me.routes import router as me_router
+from app.review.routes import router as review_router
 from app.news.routes import router as news_router
 from app.recommendations.routes import router as recommendations_router
 from app.stocks.routes import router as stocks_router
@@ -119,6 +120,7 @@ def create_app() -> FastAPI:
     app.include_router(stocks_router)
     app.include_router(news_router)
     app.include_router(me_router)
+    app.include_router(review_router)
     app.include_router(learn_router)
     app.include_router(agents_router)
     app.include_router(llm_router)
