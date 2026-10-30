@@ -1,13 +1,14 @@
-"""사용자 본인 데이터 API(/api/me). D18 최근 본 종목. 이후 D34 preferences 도 여기에 둡니다."""
+"""사용자 본인 데이터 API(/api/me). D18 최근 본 종목, D34 화면 설정."""
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.auth.dependencies import require_current_user
 from app.auth.models import AuthenticatedUser
@@ -17,6 +18,13 @@ from app.me.repository import (
     RecentSymbolsRepository,
     RedisRecentSymbolsRepository,
 )
+from app.me.preferences import (
+    EXPERIENCE_VALUES,
+    PreferencesRepositoryError,
+    UserPreferences,
+    VersionConflict,
+    preferences_repository_from_app,
+)
 from app.services.instrument_names import name_ko
 
 router = APIRouter(prefix="/api/me", tags=["me"])
@@ -24,8 +32,16 @@ router = APIRouter(prefix="/api/me", tags=["me"])
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9.\-]{1,16}$")
 
 
+PREFERENCES_MAX_BYTES = 64 * 1024
+
+
 class RecentSymbolBody(BaseModel):
     symbol: str
+
+
+class PreferencesBody(BaseModel):
+    version: int = Field(ge=0)
+    data: dict[str, Any]
 
 
 def recent_symbols_repository_from_app(app: Any) -> RecentSymbolsRepository:
@@ -91,3 +107,58 @@ def add_recent_symbol(
     except Exception as exc:
         raise HTTPException(status_code=503, detail={"code": "recent_symbols_unavailable"}) from exc
     return Response(status_code=204)
+
+
+def _preferences_payload(prefs: UserPreferences) -> dict[str, Any]:
+    return {
+        "version": prefs.version,
+        "updatedAt": _iso(prefs.updated_at) if prefs.updated_at else None,
+        "data": prefs.data,
+    }
+
+
+def _preferences_repository(request: Request):
+    try:
+        return preferences_repository_from_app(request.app)
+    except PreferencesRepositoryError as exc:
+        raise HTTPException(status_code=503, detail={"code": "preferences_unavailable"}) from exc
+
+
+@router.get("/preferences")
+def get_preferences(
+    request: Request,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    try:
+        prefs = _preferences_repository(request).get(_user_key(user))
+    except PreferencesRepositoryError as exc:
+        raise HTTPException(status_code=503, detail={"code": "preferences_unavailable"}) from exc
+    return _preferences_payload(prefs)
+
+
+@router.put("/preferences")
+def put_preferences(
+    body: PreferencesBody,
+    request: Request,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    size = len(json.dumps(body.data, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    if size > PREFERENCES_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail={"code": "preferences_too_large", "maxBytes": PREFERENCES_MAX_BYTES, "bytes": size},
+        )
+    experience = body.data.get("experience")
+    if experience is not None and experience not in EXPERIENCE_VALUES:
+        raise HTTPException(status_code=422, detail={"code": "invalid_experience"})
+    repository = _preferences_repository(request)
+    try:
+        saved = repository.save(_user_key(user), body.version, body.data, _now(request.app))
+    except VersionConflict as conflict:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "version_conflict", "current": _preferences_payload(conflict.current)},
+        ) from None
+    except PreferencesRepositoryError as exc:
+        raise HTTPException(status_code=503, detail={"code": "preferences_unavailable"}) from exc
+    return _preferences_payload(saved)
