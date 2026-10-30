@@ -87,6 +87,15 @@ CREATE TABLE user_consents (
     CONSTRAINT fk_user_consents_user FOREIGN KEY (app_user_id) REFERENCES app_users(app_user_id)
 );
 
+CREATE TABLE learn_progress (
+    app_user_id CHAR(36) NOT NULL,
+    course_id VARCHAR(64) NOT NULL,
+    question_id VARCHAR(64) NOT NULL,
+    solved_at DATETIME(3) NOT NULL,
+    PRIMARY KEY (app_user_id, course_id, question_id),
+    CONSTRAINT fk_learn_progress_user FOREIGN KEY (app_user_id) REFERENCES app_users(app_user_id)
+);
+
 CREATE TABLE user_identity_tokens (
     provider VARCHAR(64) NOT NULL,
     provider_subject VARCHAR(255) NOT NULL,
