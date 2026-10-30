@@ -20,6 +20,8 @@ UNSAFE_SIMULATION_PREFIXES = (
     "/api/charts/volume-profile-bins",
     "/api/charts/watchlist",
     "/api/recommendations/stocks",
+    # 홈 순위표·종목 요약은 현재 시세를 그대로 쓰므로 리플레이 시점 밖 데이터다.
+    "/api/stocks/",
 )
 
 SAFE_SIMULATION_READ_PATHS = frozenset({
