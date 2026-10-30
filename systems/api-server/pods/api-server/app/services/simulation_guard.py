@@ -5,6 +5,7 @@ import re
 
 UNSAFE_SIMULATION_PREFIXES = (
     "/api/market/",
+    "/api/market-brief/",
     "/api/agent/",
     "/api/agents/",
     "/api/ai-coach/",

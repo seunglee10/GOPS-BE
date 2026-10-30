@@ -406,6 +406,7 @@ systems/agent-orchestration/
     roles/                logical role agents and AgentContext
     synthesis/            final answer synthesis
     events/               market event detection and notifications
+    summaries/            stock AI summary (D14) and market brief (D15) generators, see STOCK_SUMMARIES.md
   pods/                   runtime entrypoint wrappers
   jobs/                   smoke, refresh, benchmark, eval entrypoints
   tests/                  unit and contract tests
