@@ -107,7 +107,9 @@ JSON 키는 camelCase, 시각은 UTC ISO 8601(`Z`), 금액은 달러 숫자(원�
   "peers": [ { "symbol": "AMD", "nameKo": "AMD", "per": 42.1 }, { "symbol": "AVGO", "nameKo": "브로드컴", "per": 35.0 } ],
   "asOf": "2026-10-30T20:00:00Z" }
 ```
-PER은 SEC 파생지표(`sec_derived_metrics`)의 최근 EPS와 현재가로 계산. 없으면 `null`. `peers`는 같은 섹터에서 시총 상위 3개.
+PER은 현재가 ÷ 최근 12개월 EPS. EPS는 `sec_derived_metrics`에 없어서 `sec_financial_facts`의 `eps`(최근 4개 분기 합, 최근 연간 값이 더 새로우면 연간 값)를 쓴다. EPS가 없거나 0 이하면 `null`. `sectorPer`는 같은 섹터 시총 상위 30개 중 PER이 있는 종목의 중앙값(없으면 `null`). `peers`는 같은 섹터에서 자기 자신을 뺀 시총 상위 3개. 모르는 종목은 404 `{ code: "symbol_not_found" }`. 응답은 60초 캐시.
+
+D5·D9(`/api/stocks/`)는 현재 시세를 쓰므로 시뮬레이터 모드에서는 `/api/market/`처럼 409 `simulation_data_unavailable`.
 
 ### D13 뉴스
 `GET /api/market/news/latest?category=market|corp|earn|rate|etf|global&symbols=NVDA,AMD&limit=20`

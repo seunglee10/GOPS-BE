@@ -14,6 +14,7 @@ from app.market_data.indices.service import start_market_indices_warmer
 from app.market_data.monitor.routes import router as market_monitor_router
 from app.market_data.query.routes import router as market_query_router
 from app.recommendations.routes import router as recommendations_router
+from app.stocks.routes import router as stocks_router
 from app.recommendations.fixed_replay import (
     FixedReplayProviderError,
     fixed_replay_provider,
@@ -109,6 +110,7 @@ def create_app() -> FastAPI:
     app.include_router(chart_presets_router)
     app.include_router(market_query_router)
     app.include_router(market_monitor_router)
+    app.include_router(stocks_router)
     app.include_router(agents_router)
     app.include_router(llm_router)
     app.include_router(orders_router)
