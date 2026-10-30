@@ -43,7 +43,7 @@ POST /api/auth/consent          { tos, privacy, age, mkt } -> 200 { needsConsent
 - 재설정 토큰은 32바이트 url-safe, 해시만 저장, 30분. 성공하면 그 사용자의 세션을 전부 지운다
   (세션 저장소의 `delete_sessions_for_user`). 재설정 메일을 받은 것은 이메일 소유 증명이라
   미인증 계정도 인증 완료로 바꾼다.
-- `GET /api/auth/me` 의 `user` 에 `emailVerified`, `needsConsent`, `experience`(지금은 항상 null)
+- `GET /api/auth/me` 의 `user` 에 `emailVerified`, `needsConsent`, `experience`(D34 `GET/PUT /api/me/preferences` 의 `data.experience`, 없으면 null)
   가 붙는다. `needsConsent` 는 `user_consents` 행이 없을 때 true 다. 이메일 가입은 가입 때
   저장되고, Google·Kakao 첫 가입은 `POST /api/auth/consent` 로 채운다.
 

@@ -17,6 +17,7 @@ from app.auth.session_store import SessionStoreError, session_store_from_app
 from app.auth.tokens import TokenStoreError, token_store_from_app
 from app.auth_email.repository import EmailAuthRepositoryError
 from app.auth_email.routes import email_auth_service_from_app
+from app.me.preferences import PreferencesRepositoryError, experience_of, preferences_repository_from_app
 
 
 router = APIRouter(tags=["auth"])
@@ -213,16 +214,26 @@ async def auth_me(request: Request) -> dict[str, Any]:
         needs_consent = await run_in_threadpool(_needs_consent, request, config, user)
     except EmailAuthRepositoryError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    experience = await run_in_threadpool(_experience, request, user)
     return {
         "authEnabled": config.enabled,
         "user": {
             **user.to_public(),
             "emailVerified": user.email_verified,
             "needsConsent": needs_consent,
-            # 투자 경험(new|some|pro)은 아직 저장하는 곳이 없다. 자리만 둔다.
-            "experience": None,
+            # 투자 경험(new|some|pro). D34 화면 설정의 data.experience 를 읽는다.
+            "experience": experience,
         },
     }
+
+
+def _experience(request: Request, user: AuthenticatedUser) -> str | None:
+    # 화면 설정 저장소가 안 될 때도 로그인 상태 확인은 막지 않는다. 경험만 null 로 둔다.
+    try:
+        prefs = preferences_repository_from_app(request.app).get(str(user.app_user_id or user.sub))
+    except PreferencesRepositoryError:
+        return None
+    return experience_of(prefs)
 
 
 def _needs_consent(request: Request, config: AuthConfig, user: AuthenticatedUser) -> bool:

@@ -39,10 +39,10 @@ JSON 키는 camelCase, 시각은 UTC ISO 8601(`Z`), 금액은 달러 숫자(원�
 | D26 | 가드레일 g1·g3·g4·비중 25% | 3083~3087 | `GET/PATCH /api/risk/settings` | 있음 + 신규 키 3개 |
 | D27 | 투자 복기 | 2956~3090 | `GET /api/review/monthly`, `PUT /api/review/notes/{orderId}` | 신규 |
 | D28 | 경제·실적 일정, 주간 AI 요약 | 759~793 | `GET /api/calendar`, `GET /api/calendar/brief` | 신규 |
-| D29 | 코스 문제·실제 시세 `COURSE`, `COURSE_CHARTS` | 1408~1491, course-data.js | `GET /api/learn/courses/{courseId}` | 신규 |
+| D29 | 코스 문제·실제 시세 `COURSE`, `COURSE_CHARTS` | 1395~1491, course-data.js | `GET /api/learn/courses/{courseId}` | 신규 |
 | D30 | 코스 진행 | 1472 | `GET/POST /api/learn/progress` | 신규 |
 | D31 | 용어 풀이 `termCard` | 1224~1366 | 없음 (프론트 정적) | — |
-| D32 | 투자 경험 `gops.exp` | 610~617 | `GET/PUT /api/recommendations/profile` | 있음 (`experience` 매핑) |
+| D32 | 투자 경험 `gops.exp` | 610~617 | 저장 `PUT /api/me/preferences`의 `data.experience`(D34), 읽기 `GET /api/auth/me`의 `user.experience` | 있음. `/api/recommendations/profile`은 위험 성향 필드가 필수라 경험만 담을 수 없다 |
 | D33 | 오늘의 추천 | 홈 | `GET /api/recommendations/stocks/latest` | 있음 |
 | D34 | 화면 설정 동기화 | 1777, 2263~2271 | `GET/PUT /api/me/preferences` | 신규 |
 | D35 | 이메일 로그인 | 3196, 3544 | `POST /api/auth/email/login` | 신규 |
@@ -237,22 +237,45 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 `GET /api/calendar/brief?week=2026-W44` → `{ week, text }`
 
 ### D29 코스
-`GET /api/learn/courses/chart-basics`
+`GET /api/learn/courses/chart-basics` (로그인 없이 열림)
 ```json
 { "courseId": "chart-basics", "titleKo": "차트 읽기 첫걸음", "days": [ { "day": 1, "titleKo": "캔들" } ],
-  "questions": [ { "id": "q1", "day": 1, "topic": "candle", "title": "...", "kind": "choice|tap|level", "prompt": "...", "opts": [], "answer": 1, "tolerance": null, "count": null,
-                   "fig": { "chart": "msft_wick", "type": null, "mark": null, "prev": null, "vol": true, "rsi": false, "level": null, "day": null }, "hints": ["...", "..."], "explanation": "..." } ],
-  "charts": { "msft_wick": { "sym": "MSFT", "name": "마이크로소프트", "iv": "일봉", "rows": [["2024-01-02", 370.1, 375.0, 368.2, 374.5, 25000000]] } } }
+  "questions": [ { "id": "c1", "day": 1, "topic": "candle", "title": "...", "kind": "choice|tap|level", "prompt": "...", "opts": ["..."] ,
+                   "answer": 0, "answerSet": null, "band": null, "tolerance": null, "count": null, "bridge": null,
+                   "fig": { "chart": "msft_wick", "mark": "2018-10-11" }, "hints": ["...", "..."], "explanation": "...", "zone": null } ],
+  "charts": { "msft_wick": { "sym": "MSFT", "name": "마이크로소프트", "iv": "일봉", "rows": [["2018-09-24", 113.03, 114.9, 112.22, 114.67, 27334500]] } } }
 ```
-문제·차트는 목업 `COURSE`(1408~1464)와 `course-data.js`를 JSON 시드로 옮긴 것이다. 함수형 정답(`ans()`)은 서버가 평가한 결과를 `answer`/`answerSet`으로 미리 넣는다.
+없는 코스는 404 `{ code: "course_not_found" }`.
 
-### D30 코스 진행
-`GET /api/learn/progress?courseId=chart-basics` → `{ solved: ["q1","q3"], total: 15 }`
-`POST /api/learn/progress` body `{ courseId, questionId, correct }` → 200 `{ solved: [...] }`. 힌트 사용은 기록하지 않는다.
+시드는 `app/learn/data/chart-basics.json`이고 `scripts/learn/convert_mock_course.mjs`로 목업(`gops.js` `COURSE`·`HINTS`·`PZ`·`DAYS` 1395~1491, `course-data.js` `COURSE_CHARTS`)에서 만든다. 손으로 고치지 않고 목업을 바꾼 뒤 스크립트를 다시 돌린다. 함수형 값은 스크립트가 미리 평가한다. 목업 필드와 응답 필드는 이렇게 대응한다.
 
-### D34 화면 설정
-`GET /api/me/preferences` → `{ version: 1, updatedAt, data: { layout, chart, draw, cur, sideW, dwW, brand } }`
-`PUT /api/me/preferences` body `{ version, data }` → 200. `data`는 목업 localStorage 값(`gops.layout`, `gops.chart`, `gops.draw`, `gops.cur`, `gops.side.w`, `gops.dw.w`, `gops.brand`)을 그대로 담는 JSON이다. 서버는 구조를 검사하지 않고 64KB 제한만 둔다.
+| 목업 | 응답 | 비고 |
+|---|---|---|
+| `ans` (숫자) | `answer` | choice 보기 번호. 아니면 null |
+| `ans()` (함수) | `answerSet` | tap 정답 날의 `rows` 번호 목록. 아니면 null |
+| `band()` | `band` | level 정답 가격대 `[아래, 위]`. 아니면 null |
+| `tol` | `tolerance` | tap에서 앞뒤 몇 날까지 정답으로 칠지 |
+| `count`, `bridge`, `opts` | 같은 이름 | 없으면 null |
+| `exp()` | `explanation` | 평가한 문자열 |
+| `HINTS[id]` | `hints` | 없으면 `[]` |
+| `PZ[id]` | `zone` | 좁은 화면에서 보여 줄 구간 `[시작, 끝]`(번호 또는 날짜). 없으면 null. 프론트 `CoursePayload` 타입에는 없는 추가 필드다 |
+
+`zone`을 빼면 프론트 `src/data/mock/course.ts`의 `COURSE`와 값이 같다(문제 15개·차트 11개 비교). 프론트는 `src/api/types.ts`의 `CoursePayload`를 그대로 받고, `answer`/`answerSet`을 `courseChart.ts`의 `ans`로, `band`를 `() => band`로 바꿔 쓴다.
+
+### D30 코스 진행 (로그인 필요)
+`GET /api/learn/progress?courseId=chart-basics` → `{ solved: ["c1","t1"], total: 15 }`. `solved`는 처음 맞힌 순서다.
+`POST /api/learn/progress` body `{ courseId, questionId, correct, answer? }` → 200 `{ solved: [...], total: 15, correct: true }`.
+- 맞혔을 때만 저장한다(`learn_progress`, 문제마다 한 줄, 처음 맞힌 시각). 틀린 시도와 힌트 사용은 기록하지 않는다.
+- `answer`를 같이 보내면 서버가 시드로 다시 채점하고 그 결과(`correct`)를 쓴다. choice는 보기 번호, tap은 고른 날 번호 목록, level은 가격. 프론트 `isCorrect`와 같은 규칙이다. 안 보내면 `correct`를 믿는다.
+- 없는 코스 404 `{ code: "course_not_found" }`, 없는 문제 422 `{ code: "question_not_found" }`, 문제 종류와 맞지 않는 `answer` 422 `{ code: "invalid_answer" }`, 저장소 장애 503 `{ code: "learn_progress_unavailable" }`.
+
+### D34 화면 설정 (로그인 필요)
+`GET /api/me/preferences` → `{ version: 3, updatedAt: "2026-10-30T12:00:00.000Z", data: { layout, chart, draw, cur, sideW, dwW, brand, experience } }`. 저장한 적이 없으면 `{ version: 0, updatedAt: null, data: {} }`.
+`PUT /api/me/preferences` body `{ version, data }` → 200 저장된 값(`version`이 1 오름).
+- `data`는 목업 localStorage 값(`gops.layout`, `gops.chart`, `gops.draw`, `gops.cur`, `gops.side.w`, `gops.dw.w`, `gops.brand`)과 투자 경험(`experience`)을 담는 JSON 객체다. 서버는 구조를 검사하지 않는다. 예외는 두 가지다: UTF-8 JSON으로 64KB(65536바이트)를 넘으면 413 `{ code: "preferences_too_large", maxBytes, bytes }`, `experience`가 `new|some|pro|null`이 아니면 422 `{ code: "invalid_experience" }`.
+- 낙관적 동시성: `version`은 마지막으로 받은 값을 그대로 보낸다(처음엔 0). 지금 값과 다르면 409 `{ code: "version_conflict", current: { version, updatedAt, data } }`. 프론트는 `current`를 받아 합친 뒤 `current.version`으로 다시 보낸다.
+- `data.experience`는 `GET /api/auth/me`의 `user.experience`가 된다(값이 이상하거나 저장소가 안 되면 null).
+- 저장소 장애 503 `{ code: "preferences_unavailable" }`. 테이블 `user_preferences`.
 
 ### D35~D39 이메일 인증
 | 요청 | 성공 | 실패 |
@@ -265,7 +288,7 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 | `POST /api/auth/password/reset` `{ token, password }` | 200 `{ reset: true }` 그 사용자의 세션 전부 삭제 | 400 `{ code: "invalid_token" }`, 410 `{ code: "expired" }`(30분) |
 | `POST /api/auth/consent` `{ tos, privacy, age, mkt }` | 200 `{ needsConsent: false }` | 422 |
 
-`GET /api/auth/me`의 `user`에 `provider: "email"`, `emailVerified`, `needsConsent`, `experience: "new" | "some" | "pro" | null`이 추가된다.
+`GET /api/auth/me`의 `user`에 `provider: "email"`, `emailVerified`, `needsConsent`, `experience: "new" | "some" | "pro" | null`이 추가된다. `experience`는 D34 `data.experience`에서 읽는다.
 메일은 `MAIL_PROVIDER=console|ses`. `console`은 로그에 코드·링크를 찍는다(로컬·테스트).
 
 ## 3. 경로 규칙
