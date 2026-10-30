@@ -689,6 +689,7 @@ CREATE TABLE paper_orders (
     virtual_submitted_at DATETIME(3),
     virtual_filled_at DATETIME(3),
     seed_profile VARCHAR(128),
+    memo VARCHAR(200),
     created_at DATETIME(3) NOT NULL,
     updated_at DATETIME(3) NOT NULL,
     filled_at DATETIME(3),

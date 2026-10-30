@@ -155,12 +155,14 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 ```json
 { "items": [ { "at": "...", "kind": "fill|rule|dividend|deposit", "symbol": "NVDA", "nameKo": "엔비디아", "text": "엔비디아 10주 매수 체결 $142.30", "ref": { "orderId": "..." } } ] }
 ```
+`fill` 은 `paper_executions`, `rule` 은 사용자 알림 규칙(`alert.*`) 알림, `dividend`·`deposit` 은 `paper_cash_ledger` 에서 온다. 현재 계좌 세대만 싣는다.
 
 ### D21 주문 메모
 `POST /api/paper/orders` body에 `memo: string | null`(200자) 추가. 주문·체결 조회 응답에도 `memo`가 실린다.
 
 ### D22 주문 내역
 `GET /api/paper/orders?status=all|pending|filled|cancelled&page=1&size=20` → `{ items: [], total: 38, page: 1, size: 20 }`
+상태 대응: `pending` = pending·partially_filled, `filled` = filled, `cancelled` = cancelled·rejected. 예전 `order_status`·`limit`·`include_previous` 파라미터와 `orders` 키(= `items`)는 Phase 5 정리 전까지 남겨 둔다.
 
 ### D23 규칙 출처
 `/api/alerts`, `/api/trade-conditions` 항목에 `source: "agent" | "chart" | "user" | "default"` 추가. 생성 시 body로 받고, 없으면 `user`.
