@@ -97,7 +97,9 @@ class AgentRoutesTest(unittest.TestCase):
             response = self.client.post("/api/agents/analyze", json={"symbol": "NVDA", "intent": "analysis"})
 
         self.assertEqual(response.status_code, 202)
-        self.assertEqual(response.json(), {"request_id": "agent-request-1", "status": "queued"})
+        body = response.json()
+        self.assertTrue(body.pop("threadId").startswith("thr_"))
+        self.assertEqual(body, {"request_id": "agent-request-1", "status": "queued"})
 
     def test_layout_resolve_delegates_to_orchestrator_gateway(self):
         expected = {
@@ -188,6 +190,8 @@ class AgentAuthenticatedRoutesTest(unittest.TestCase):
                 self.client.get("/api/agents/reports/analysis-1"),
                 self.client.post("/api/agents/reports/analysis-1/cancel"),
                 self.client.get("/api/agents/reports/analysis-1/stream"),
+                self.client.get("/api/agents/threads"),
+                self.client.get("/api/agents/threads/thr_1"),
             ]
 
         self.assertEqual([response.status_code for response in responses], [401] * len(responses))

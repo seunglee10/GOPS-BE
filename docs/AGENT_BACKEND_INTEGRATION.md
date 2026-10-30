@@ -354,8 +354,20 @@ GET  /api/agents/entities/resolve
 GET  /api/agents/reports/{analysis_id}
 POST /api/agents/reports/{analysis_id}/cancel
 GET  /api/agents/reports/{analysis_id}/stream
+GET  /api/agents/threads
+GET  /api/agents/threads/{thread_id}
 WS   /ws/agent-alerts
 ```
+
+대화 목록(D16): `POST /api/agents/analyze`는 선택 필드 `threadId`와
+`context: {page, symbol, chips[]}`를 받는다. `threadId`는 오케스트레이터 payload에 싣지
+않고 API가 사용자별 Redis에 기록한다(`gops:agent:threads:v1:{user_sub}` sorted set,
+최근 50개, 대화별 hash `...:t:{threadId}`에 title·symbol·messages[analysisId, question]).
+없으면 `thr_<uuid>`를 만들어 응답 `threadId`로 돌려준다. 저장 실패는 분석 응답을 막지 않는다.
+`context.symbol`은 요청 `symbol`이 비었을 때만 채우고, 나머지는 `uiContext.pageContext`로 넘긴다.
+리포트 응답(sync analyze, `GET /reports/{id}`, SSE `report` 이벤트, thread 상세)에는
+`gops_agents.contracts.view.build_report_view`가 만든 `view`가 붙는다. 보여 줄 내용이 없는
+queued 상태 리포트에는 붙지 않는다.
 
 기업 비교 패널은 별도 read path를 사용한다.
 

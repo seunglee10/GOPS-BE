@@ -140,13 +140,25 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 `refs[].kind`는 `symbol`(티커)·`news`(뉴스 id)·`macro`(지수 심볼, 예: `^GSPC`). 오늘(미국 동부 기준) 요약이 없으면 3일 안의 가장 최근 요약을 `marketDate`와 함께 돌려주고, 그것도 없으면 404 `{"detail":{"code":"brief_not_ready"}}`.
 
 ### D16 AI 대화
-기존 `POST /api/agents/analyze` 요청에 `context: { page, symbol, chips: [] }`를 추가로 받는다. 리포트 응답에 `view` 필드를 추가한다.
+기존 `POST /api/agents/analyze` 요청에 선택 필드 `context: { page, symbol, chips: [] }`와 `threadId`를 추가로 받는다.
+- `context.symbol`은 요청 `symbol`이 비었을 때만 채운다. `page`·`chips`는 `uiContext.pageContext`로 에이전트에 넘긴다. 모르는 키가 있으면 422.
+- `threadId`(영숫자로 시작, 64자 이내)가 없으면 서버가 `thr_<uuid>`를 만든다. 응답에 `threadId`가 실린다.
+
+리포트 응답(`POST /api/agents/analyze` 완료 응답, `GET /api/agents/reports/{id}`, SSE `report` 이벤트)에 `view` 필드를 추가한다. 리포트의 기존 필드에서 결정적으로 만들며, 아직 내용이 없는 대기 상태 리포트에는 없다.
 ```json
 { "view": { "conclusion": "...", "sections": [ { "title": "거래량", "body": "...", "evidence": [ { "kind": "news", "ref": "n_123" }, { "kind": "chart", "ref": "volume" } ] } ],
-  "kv": [ { "k": "20일 평균 대비", "v": "2.1배" } ], "steps": [ "질문 이해", "뉴스 4건 확인", "차트 해석" ], "confidence": "높음",
-  "suggestions": [ { "kind": "rule", "label": "137.70 아래로 가면 알리기", "payload": {} }, { "kind": "compare", "symbols": ["NVDA","AMD"] } ] } }
+  "kv": [ { "k": "20일 평균 대비 거래량", "v": "2.1배" } ], "steps": [ "질문 이해", "뉴스 4건 확인", "차트 해석" ], "confidence": "높음",
+  "suggestions": [ { "kind": "rule", "label": "137.70 아래로 가면 알리기", "payload": { "symbol": "NVDA", "direction": "below", "triggerPrice": 137.7, "proposalId": "..." } },
+                   { "kind": "compare", "label": "NVDA · AMD 비교", "symbols": ["NVDA","AMD"], "payload": { "symbols": ["NVDA","AMD"] } },
+                   { "kind": "watch", "label": "[[NVDA]] 관심 종목에 추가", "payload": { "symbol": "NVDA" } } ] } }
 ```
-`GET /api/agents/threads` → `{ items: [ { threadId, title, symbol, updatedAt } ] }`.
+- `sections`: 분석 역할별(차트·뉴스·재무·시장 흐름·기업 관계·위험 점검·특이 움직임 순). `body`는 평문이고 RichText `**굵게**`, `[[TICKER]]`만 쓴다. HTML은 없다.
+- `evidence.kind`: `news`(ref = 뉴스 id, D13 `GET /api/news/{id}`), `chart`(ref = 지표 이름), `fin`(ref = 재무 항목). 자료가 없던 근거는 싣지 않는다.
+- `confidence`: 리포트 신뢰도 0.7 이상 `높음`, 0.45 이상 `보통`, 그 밖 `낮음`. 일부 자료가 빠졌으면 `높음`은 `보통`으로 낮춘다.
+- `suggestions`: `rule`은 리포트의 가격 조건 제안에서, `compare`는 함께 언급된 종목에서, `watch`는 질문 종목에서 만든다. 사고팔라는 문구나 앞으로의 주가 전망은 넣지 않는다.
+
+`GET /api/agents/threads` → `{ items: [ { threadId, title, symbol, updatedAt } ] }` (최근 50개, 최신순, `title`은 첫 질문 40자)
+`GET /api/agents/threads/{threadId}` → `{ threadId, title, symbol, updatedAt, messages: [ { question, analysisId, status, view } ] }`. 남의 대화나 없는 대화는 404 `{"detail":{"code":"thread_not_found"}}`. 리포트가 만료됐으면 `status: "missing"`, `view: null`.
 
 ### D18 최근 본 종목
 `GET /api/me/recent-symbols` → `{ items: [ { symbol, nameKo, viewedAt } ] }` (최근 50개, 최신순)

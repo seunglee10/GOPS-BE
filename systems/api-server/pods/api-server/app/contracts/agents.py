@@ -25,6 +25,16 @@ class CoachAnalysisRequest(BaseModel):
     tradingDate: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
+class AgentPageContext(BaseModel):
+    """질문을 보낸 화면 정보 (D16). 페이지 이름, 보고 있던 종목, 눌러 둔 칩."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: str | None = Field(default=None, max_length=32)
+    symbol: str | None = Field(default=None, max_length=32)
+    chips: list[Annotated[str, Field(max_length=64)]] = Field(default_factory=list, max_length=20)
+
+
 class AgentAnalysisRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -50,6 +60,8 @@ class AgentAnalysisRequest(BaseModel):
     analysisMode: str | None = Field(default=None, max_length=32)
     priority: str | None = Field(default=None, max_length=32)
     responseMode: str | None = Field(default=None, max_length=32)
+    context: AgentPageContext | None = None
+    threadId: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
     @model_validator(mode="after")
     def validate_total_request_size(self) -> "AgentAnalysisRequest":

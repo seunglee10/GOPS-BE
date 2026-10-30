@@ -1,7 +1,11 @@
 import asyncio
 import json
+import logging
+import os
 import re
 import time
+import uuid
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any
 
@@ -26,9 +30,12 @@ from app.services.agent_gateway import cancel_agent_analysis, get_agent_report, 
 from app.services.agent_rate_limit import enforce_agent_rate_limit
 from gops_agents.query_understanding import EntityResolution, KoreanEntityResolver, extract_relationship_symbols_from_intent
 from gops_agents.query_understanding.korean_text import compact_text
+from gops_agents.contracts.view import build_report_view
 from gops_agents.runtime.coach_snapshot_archive import CoachReportArchive, CoachSnapshotArchiveError
+from app.services.agent_threads import AgentThreadStore, InMemoryAgentThreadStore, RedisAgentThreadStore
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 AGENT_ALERTS_CHANNEL = "agent.alerts"
 AGENT_REPORTS_CHANNEL = "agent.reports"
 CHART_SHORTCUT_MODE = "chartShortcut"
@@ -200,14 +207,25 @@ def analyze_agents(
     idempotency_key = http_request.headers.get("Idempotency-Key")
     if idempotency_key is not None and len(idempotency_key) > 128:
         raise HTTPException(status_code=400, detail="Idempotency-Key must be 128 characters or fewer.")
+    payload = trusted_agent_payload(request)
     result = request_agent_analysis(
-        trusted_agent_payload(request),
+        payload,
         idempotency_key=idempotency_key,
         user_id=user.sub,
         app_user_id=user.app_user_id,
     )
     response.status_code = int(result.pop("_status_code", 200))
-    return result
+    thread_id = record_agent_thread(
+        http_request.app,
+        user.sub,
+        thread_id=request.threadId,
+        question=agent_question(request),
+        symbol=payload.get("symbol") or result.get("symbol"),
+        analysis_id=str(result.get("analysisId") or result.get("request_id") or "").strip(),
+    )
+    if thread_id:
+        result["threadId"] = thread_id
+    return with_report_view(result)
 
 
 @router.post("/api/agents/layout/resolve")
@@ -250,7 +268,55 @@ def agent_report(
     analysis_id: str = Path(min_length=1, max_length=128, pattern=AGENT_ANALYSIS_ID_PATTERN),
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> dict[str, Any]:
-    return get_agent_report(analysis_id, user_id=user.sub)
+    return with_report_view(get_agent_report(analysis_id, user_id=user.sub))
+
+
+@router.get("/api/agents/threads")
+def agent_threads(
+    http_request: Request,
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    store = agent_thread_store_from_app(http_request.app)
+    try:
+        items = store.list(user.sub)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail={"code": "agent_threads_unavailable"}) from exc
+    return {"items": items}
+
+
+@router.get("/api/agents/threads/{thread_id}")
+def agent_thread(
+    http_request: Request,
+    thread_id: str = Path(min_length=1, max_length=64, pattern=AGENT_ANALYSIS_ID_PATTERN),
+    user: AuthenticatedUser = Depends(require_current_user),
+) -> dict[str, Any]:
+    store = agent_thread_store_from_app(http_request.app)
+    try:
+        thread = store.get(user.sub, thread_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail={"code": "agent_threads_unavailable"}) from exc
+    if thread is None:
+        raise HTTPException(status_code=404, detail={"code": "thread_not_found"})
+    messages = []
+    for message in thread.get("messages") or []:
+        analysis_id = str(message.get("analysisId") or "")
+        status, view = "unknown", None
+        try:
+            report = get_agent_report(analysis_id, user_id=user.sub)
+            status = str(report.get("status") or "unknown")
+            view = build_report_view(report)
+        except HTTPException as exc:
+            status = "missing" if exc.status_code == 404 else "unknown"
+        except Exception:
+            logger.warning("agent thread report read failed: %s", analysis_id, exc_info=True)
+        messages.append({"question": message.get("question") or "", "analysisId": analysis_id, "status": status, "view": view})
+    return {
+        "threadId": thread["threadId"],
+        "title": thread.get("title"),
+        "symbol": thread.get("symbol"),
+        "updatedAt": thread.get("updatedAt"),
+        "messages": messages,
+    }
 
 
 @router.post("/api/agents/reports/{analysis_id}/cancel")
@@ -358,7 +424,7 @@ async def stream_agent_report_updates(analysis_id: str, *, user_id: str):
                     if report.get("analysisId") == analysis_id:
                         status = str(report.get("status") or "unknown")
                         last_status = status
-                        yield sse_event("report", report)
+                        yield sse_event("report", with_report_view(report))
                         if status in terminal_statuses:
                             return
                         continue
@@ -376,7 +442,7 @@ async def stream_agent_report_updates(analysis_id: str, *, user_id: str):
             status = str(report.get("status") or "unknown")
             if status != last_status or status in terminal_statuses:
                 last_status = status
-                yield sse_event("report", report)
+                yield sse_event("report", with_report_view(report))
             if status in terminal_statuses:
                 return
         yield sse_event("timeout", {"analysisId": analysis_id, "status": last_status or "unknown"})
@@ -393,7 +459,102 @@ def trusted_agent_payload(request: AgentAnalysisRequest) -> dict[str, Any]:
     payload = request.model_dump(mode="python")
     for field in CLIENT_CONTROLLED_AGENT_FIELDS:
         payload.pop(field, None)
+    payload.pop("threadId", None)
+    apply_page_context(payload, payload.pop("context", None))
     return payload
+
+
+def apply_page_context(payload: dict[str, Any], context: Any) -> None:
+    """화면 정보(D16 context)를 요청에 싣는다.
+
+    분석 요청에 같은 뜻의 필드가 있으면 그 필드로(종목 → `symbol`), 없으면
+    `uiContext.pageContext` 에 그대로 담는다. 사용자가 고른 종목(`symbol`)이 있으면 덮어쓰지 않는다.
+    """
+    if not isinstance(context, dict):
+        return
+    symbol = str(context.get("symbol") or "").strip().upper()
+    chips = [str(chip).strip() for chip in context.get("chips") or [] if str(chip).strip()]
+    page = str(context.get("page") or "").strip()
+    if symbol and not str(payload.get("symbol") or "").strip():
+        payload["symbol"] = symbol
+    page_context = {key: value for key, value in {"page": page, "symbol": symbol, "chips": chips}.items() if value}
+    if page_context:
+        ui_context = dict(payload.get("uiContext") or {})
+        ui_context["pageContext"] = page_context
+        payload["uiContext"] = ui_context
+
+
+def with_report_view(report: Any) -> Any:
+    """리포트 응답에 화면용 `view` 를 붙인다. 보여 줄 내용이 없으면 붙이지 않는다."""
+    if not isinstance(report, dict) or "view" in report:
+        return report
+    try:
+        view = build_report_view(report)
+    except Exception:
+        logger.warning("agent report view build failed", exc_info=True)
+        return report
+    if view is None:
+        return report
+    return {**report, "view": view}
+
+
+def agent_question(request: AgentAnalysisRequest) -> str:
+    for message in reversed(request.messages):
+        if message.role == "user" and message.content.strip():
+            return message.content.strip()
+    return request.intent.strip()
+
+
+def agent_thread_store_from_app(app: Any) -> AgentThreadStore:
+    existing = getattr(app.state, "agent_thread_store", None)
+    if existing is not None:
+        return existing
+    mode = (os.getenv("AGENT_THREAD_STORE") or "redis").strip().lower()
+    store: AgentThreadStore
+    if mode == "memory":
+        store = InMemoryAgentThreadStore()
+    else:
+        try:
+            store = RedisAgentThreadStore.from_env()
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail={"code": "agent_threads_unavailable"}) from exc
+    app.state.agent_thread_store = store
+    return store
+
+
+def agent_threads_now(app: Any) -> datetime:
+    provider = getattr(app.state, "agent_threads_now_provider", None)
+    return provider() if callable(provider) else datetime.now(timezone.utc)
+
+
+def record_agent_thread(
+    app: Any,
+    user_key: str,
+    *,
+    thread_id: str | None,
+    question: str,
+    symbol: Any,
+    analysis_id: str,
+) -> str | None:
+    """분석 요청을 대화에 남긴다. 저장소가 안 되어도 분석 응답은 그대로 돌려준다."""
+    if not analysis_id:
+        return thread_id
+    resolved = thread_id or f"thr_{uuid.uuid4().hex}"
+    symbol_text = str(symbol or "").strip().upper() or None
+    if symbol_text in {"MARKET", "UNKNOWN", "PORTFOLIO"}:
+        symbol_text = None
+    try:
+        agent_thread_store_from_app(app).record(
+            user_key,
+            resolved,
+            question=question,
+            symbol=symbol_text,
+            analysis_id=analysis_id,
+            at=agent_threads_now(app),
+        )
+    except Exception as exc:
+        logger.warning("agent thread record failed: %s", exc.__class__.__name__)
+    return resolved
 
 
 def report_update_pubsub(analysis_id: str):
