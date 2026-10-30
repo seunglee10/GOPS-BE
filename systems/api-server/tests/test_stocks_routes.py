@@ -368,5 +368,30 @@ class RecentDailyVolumesQueryTest(unittest.TestCase):
         self.assertIn("is_closed = true", captured["sql"])
 
 
+class RecentDailyClosesQueryTest(unittest.TestCase):
+    def test_batches_symbols_and_returns_dated_closes(self):
+        from market_data.serving.clickhouse_provider import ClickHouseMarketDataProvider
+
+        provider = ClickHouseMarketDataProvider.__new__(ClickHouseMarketDataProvider)
+        provider.database = "market_data"
+        captured = {}
+
+        def query(sql, params):
+            captured["sql"] = sql
+            captured["params"] = params
+            return [
+                {"symbol": "NVDA", "tradingDate": "2026-07-17", "close": "101.5"},
+                {"symbol": "NVDA", "tradingDate": "2026-07-16", "close": 100},
+                {"symbol": "AMD", "tradingDate": "2026-07-17", "close": None},
+            ]
+
+        provider.query_json_each_row = query
+        result = provider.recent_daily_closes(["NVDA", "AMD", "NVDA"], days=23)
+        self.assertEqual(result, {"NVDA": [("2026-07-17", 101.5), ("2026-07-16", 100.0)]})
+        self.assertEqual(captured["params"], {"symbols": ["NVDA", "AMD"]})
+        self.assertIn("LIMIT 23 BY symbol", captured["sql"])
+        self.assertIn("is_closed = true", captured["sql"])
+
+
 if __name__ == "__main__":
     unittest.main()

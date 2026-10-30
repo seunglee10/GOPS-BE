@@ -843,6 +843,45 @@ class ClickHouseMarketDataProvider:
                 volumes_by_symbol.setdefault(symbol, []).append(volume)
         return volumes_by_symbol
 
+    def recent_daily_closes(self, symbols, days=23):
+        """종목별 최근 마감 일봉 종가를 한 번에 조회합니다. 최신 일봉이 앞에 옵니다.
+
+        반환값은 ``{symbol: [(tradingDate "YYYY-MM-DD", close), ...]}`` 입니다.
+        """
+        symbols = list(dict.fromkeys(symbol for symbol in symbols if isinstance(symbol, str) and symbol.strip()))
+        days = max(1, int(days))
+        if not symbols:
+            return {}
+        lookback_days = days * 2 + 14
+        source_query = self.latest_canonical_daily_source(f"""
+            symbol IN {{symbols:Array(String)}}
+            AND interval IN ('1D', '1d')
+            AND is_closed = true
+            AND event_time >= subtractDays(now(), {lookback_days})
+        """)
+        query = f"""
+        SELECT
+          symbol,
+          toString(toDate(event_time, 'America/New_York')) AS tradingDate,
+          close
+        FROM ({source_query})
+        ORDER BY symbol ASC, event_time DESC
+        LIMIT {days} BY symbol
+        FORMAT JSONEachRow
+        """
+        rows = self.query_json_each_row(query, {"symbols": symbols})
+        closes_by_symbol = {}
+        for row in rows:
+            symbol = str(row.get("symbol") or "").strip().upper()
+            trading_date = str(row.get("tradingDate") or "").strip()
+            try:
+                close = float(row.get("close"))
+            except (TypeError, ValueError):
+                continue
+            if symbol and trading_date and close > 0:
+                closes_by_symbol.setdefault(symbol, []).append((trading_date, close))
+        return closes_by_symbol
+
     def _hot_symbols_by_interval_dollar_volume(self, symbols, limit=20, interval="1m"):
         normalized_interval = "1D" if interval in {"1D", "1d"} else "1m"
         interval_filter = "interval IN ('1D', '1d')" if normalized_interval == "1D" else "interval = '1m'"

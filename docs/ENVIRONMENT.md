@@ -765,6 +765,10 @@ request. `HEATMAP_PROJECTION_LOCK_SECONDS` prevents concurrent warmers from
 rebuilding the same payload. The lock stores a unique owner token and only that
 owner may release it; otherwise Redis expiry allows a later worker to recover.
 Responses identify the served layer with `cacheStatus=fresh|stale|seed`.
+Each rebuild also reads the last 23 closed daily candles for every symbol in one
+ClickHouse query and stores `changePercent1w` (vs 5 sessions ago) and
+`changePercent1m` (vs 21 sessions ago) in the projection; they are null when
+history is missing.
 
 The fundamentals store must expose `shares_outstanding` in the summary metrics
 or in `sec_financial_facts`. `companyName`, `sector`, `industry`, `cik`,

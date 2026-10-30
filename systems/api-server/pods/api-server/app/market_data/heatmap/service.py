@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,10 @@ DEFAULT_LAYOUT_REFRESH_SECONDS = 300
 DEFAULT_CACHE_TTL_SECONDS = 70
 DEFAULT_STALE_CACHE_TTL_SECONDS = 900
 DEFAULT_MINIMUM_MARKET_CAP = 1_000_000.0
+PERIOD_CHANGE_SESSIONS = {"changePercent1w": 5, "changePercent1m": 21}
+# 최신 마감 일봉이 현재 가격과 같은 거래일일 수 있어 21거래일 + 여유 2개를 읽습니다.
+DAILY_CLOSE_LOOKBACK_SESSIONS = max(PERIOD_CHANGE_SESSIONS.values()) + 2
+MARKET_TIMEZONE = ZoneInfo("America/New_York")
 LAYOUT_SOURCE_PRIORITY = {
     "minimum": 0,
     "seed": 1,
@@ -73,6 +78,7 @@ class MarketHeatmapService:
         symbols = [item["symbol"] for item in seed_items]
         fundamentals = self.fundamentals_adapter.latest_for_symbols(symbols)
         quote_rows = quote_rows_by_symbol(self.provider, symbols)
+        daily_closes = daily_closes_by_symbol(self.provider, symbols)
         now = utc_now()
         quote_as_of = latest_quote_timestamp(quote_rows.values()) or parse_timestamp(previous.get("quoteAsOf")) or now
         layout_seconds = read_positive_int("HEATMAP_LAYOUT_REFRESH_SECONDS", DEFAULT_LAYOUT_REFRESH_SECONDS)
@@ -87,6 +93,7 @@ class MarketHeatmapService:
                 fundamentals=fundamentals.get(seed_item["symbol"]),
                 previous_item=previous_items.get(seed_item["symbol"]),
                 keep_previous_layout=keep_previous_layout,
+                daily_closes=daily_closes.get(seed_item["symbol"]),
             )
             for seed_item in seed_items
         ]
@@ -153,6 +160,7 @@ def build_heatmap_item(
     fundamentals: FundamentalsRecord | None,
     previous_item: dict[str, Any] | None = None,
     keep_previous_layout: bool = False,
+    daily_closes: list[tuple[str, float]] | None = None,
 ) -> dict[str, Any]:
     symbol = seed_item["symbol"]
     quote_row = quote_row or {}
@@ -207,6 +215,8 @@ def build_heatmap_item(
         previous_close = read_previous_close(quote_row.get("previousClose"))
         change_percent = previous_close_change_percent(last_price, previous_close)
 
+    period_changes = period_change_percents(last_price, price_updated_at, daily_closes)
+
     public_fundamentals = fundamentals.to_public_dict() if fundamentals else {}
     sector_fields = sector_payload_fields(public_fundamentals.get("sector") or seed_item.get("sector") or "Unclassified")
     rsi14 = read_float(quote_row.get("rsi14"))
@@ -221,6 +231,7 @@ def build_heatmap_item(
         "lastPrice": last_price,
         "previousClose": previous_close,
         "changePercent": change_percent,
+        **period_changes,
         "sharesOutstanding": shares_outstanding,
         "marketCap": market_cap,
         "marketCapSource": market_cap_source,
@@ -326,6 +337,65 @@ def quote_rows_by_symbol(provider: Any, symbols: list[str]) -> dict[str, dict[st
             by_symbol.setdefault(normalized, {"symbol": normalized})["rsi14"] = rsi14
     overlay_redis_latest_prices(provider, symbols, by_symbol)
     return by_symbol
+
+
+def daily_closes_by_symbol(provider: Any, symbols: list[str]) -> dict[str, list[tuple[str, float]]]:
+    """Read the last closed daily candles for every symbol in one batched query."""
+    clickhouse_provider = getattr(provider, "clickhouse_provider", None)
+    recent_daily_closes = getattr(clickhouse_provider, "recent_daily_closes", None)
+    if not callable(recent_daily_closes):
+        return {}
+    try:
+        rows = recent_daily_closes(symbols, days=DAILY_CLOSE_LOOKBACK_SESSIONS) or {}
+    except Exception:
+        return {}
+    by_symbol: dict[str, list[tuple[str, float]]] = {}
+    for symbol, points in rows.items():
+        try:
+            normalized = normalize_market_symbol(symbol)
+        except ValueError:
+            continue
+        closes = []
+        for point in points or []:
+            try:
+                trading_date, close = point
+            except (TypeError, ValueError):
+                continue
+            close_value = read_float(close)
+            if isinstance(trading_date, str) and close_value is not None and close_value > 0:
+                closes.append((trading_date, close_value))
+        # 최신 거래일이 앞에 오도록 맞춥니다.
+        closes.sort(key=lambda point: point[0], reverse=True)
+        by_symbol[normalized] = closes
+    return by_symbol
+
+
+def period_change_percents(
+    last_price: float | None,
+    price_updated_at: str | None,
+    daily_closes: list[tuple[str, float]] | None,
+) -> dict[str, float | None]:
+    """Change of ``last_price`` against the close N trading sessions earlier.
+
+    ``daily_closes`` holds closed daily candles, newest first. When the newest
+    closed candle belongs to the same NY trading date as ``last_price`` (after
+    the close), it is the current session and is skipped, so "5 sessions ago"
+    always means five completed sessions before the price's session.
+    """
+    result: dict[str, float | None] = {key: None for key in PERIOD_CHANGE_SESSIONS}
+    if last_price is None or not daily_closes:
+        return result
+    price_time = parse_timestamp(price_updated_at)
+    if price_time is not None:
+        price_date = price_time.astimezone(MARKET_TIMEZONE).date().isoformat()
+        earlier = [close for trading_date, close in daily_closes if trading_date < price_date]
+    else:
+        # 가격 시각을 모르면 최신 마감 일봉을 현재 거래일로 봅니다.
+        earlier = [close for _, close in daily_closes[1:]]
+    for key, sessions in PERIOD_CHANGE_SESSIONS.items():
+        if len(earlier) >= sessions:
+            result[key] = previous_close_change_percent(last_price, earlier[sessions - 1])
+    return result
 
 
 def overlay_redis_latest_prices(provider: Any, symbols: list[str], by_symbol: dict[str, dict[str, Any]]) -> None:
@@ -444,7 +514,7 @@ def compact_heatmap_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "changePercent",
             )
             if key in item
-        })
+        } | {key: item.get(key) for key in PERIOD_CHANGE_SESSIONS})
         for item in payload.get("items", [])
         if isinstance(item, dict)
     ]
