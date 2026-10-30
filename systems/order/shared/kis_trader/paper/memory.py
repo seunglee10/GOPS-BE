@@ -196,6 +196,10 @@ class InMemoryPaperTradingRepository:
             )
             return PaperOrderCreationResult(public_order(row), False)
 
+    def has_idempotent_order(self, user_id: str, idempotency_key_hash: str) -> bool:
+        with self._lock:
+            return (user_id, idempotency_key_hash) in self.idempotency
+
     def pretrade(self, user_id: str, request: OrderRequest) -> dict[str, Any]:
         with self._lock:
             account, run = self._current(user_id)

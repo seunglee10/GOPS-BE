@@ -202,7 +202,9 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 - 걸리지 않으면 같은 code로 `severity: "ok"`와 통과 문구가 온다. 규칙이 해당하지 않거나(매도에 매수 규칙), 설정이 꺼졌거나, 등락률·손절 조건을 못 읽으면 항목이 빠진다. 시뮬레이션 모드에서는 등락률 규칙을 넣지 않는다.
 - 손절 조건: 같은 종목의 `watching` 매도 조건주문(현재가보다 낮은 발동가), 또는 직접 건 `active` 하락(`below`) 가격 알림(현재가보다 낮은 목표가).
 - 오늘 등락률은 종목 요약(D9)과 같은 히트맵 projection·실시간가에서 구한다.
-- `block` 항목이 있으면 `risk.verdict`가 `block`이 되고 `risk.triggeredRules`에 `ruleId: code`로 추가된다. warn·confirm은 verdict를 바꾸지 않는다. 사전 점검은 안내용이라 `POST /api/paper/orders` 접수 자체는 이 규칙으로 막지 않는다.
+- `block` 항목이 있으면 `risk.verdict`가 `block`이 되고 `risk.triggeredRules`에 `ruleId: code`로 추가된다. warn·confirm은 verdict를 바꾸지 않는다.
+- `POST /api/paper/orders`도 같은 판정을 한다. block 항목(`avg_down_no_stop`, `position_weight`)이 있으면 주문 행·멱등 기록을 만들기 전에 `409 { "detail": { "code": "guardrail_blocked", "checks": [block 항목만] } }`로 거절한다. 거절은 저장되지 않으므로 설정을 바꾼 뒤 같은 `Idempotency-Key`로 다시 보내면 새로 판정한다. 이미 접수된 키의 재전송은 판정 없이 replay된다.
+- 주문 접수에서 warn·confirm은 막지 않는다(프론트가 확인을 받는다). 주문 가능 범위 초과는 기존처럼 422가 먼저다. 입력을 못 읽으면 막지 않고, 시뮬레이션 모드와 조건주문 자동 실행은 이 차단을 건너뛴다.
 
 ### D27 투자 복기
 `GET /api/review/monthly?month=2026-09`

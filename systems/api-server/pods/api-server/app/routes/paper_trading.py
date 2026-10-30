@@ -148,10 +148,12 @@ async def create_paper_order(
     order_request = _validate_paper_order_payload(payload)
     _validate_paper_symbol(request.app, order_request.symbol)
     repository = paper_repository_from_app(request.app)
+    key_hash = hash_idempotency_key(f"paper:{current_user.sub}:{idempotency_key}")
+    _enforce_blocking_guardrails(request.app, repository, current_user.sub, order_request, key_hash)
     try:
         result = repository.create_order(
             user_id=current_user.sub,
-            idempotency_key_hash=hash_idempotency_key(f"paper:{current_user.sub}:{idempotency_key}"),
+            idempotency_key_hash=key_hash,
             body_hash=stable_body_hash(payload),
             request=order_request,
         )
@@ -354,6 +356,41 @@ def _paper_portfolio_state_fingerprint(snapshot: dict[str, Any]) -> str:
     })
 
 
+def _enforce_blocking_guardrails(
+    app: Any,
+    repository: PaperTradingRepository,
+    user_id: str,
+    order_request: Any,
+    idempotency_key_hash: str,
+) -> None:
+    """D26 block 규칙(물타기·비중)을 주문 접수에서도 적용한다.
+
+    - 주문 행·멱등 기록을 만들기 전에 409로 거절하므로, 설정을 바꾼 뒤 같은 키로 다시 보내면 새로 판정한다.
+    - 이미 접수된 키의 재전송은 판정하지 않고 저장소의 replay로 넘긴다.
+    - warn·confirm은 안내용(프론트가 확인을 받는다). 입력을 못 읽으면 막지 않고, 시뮬레이션 모드는 건너뛴다.
+    """
+    from app.routes.simulator import simulator_mode_active
+
+    if simulator_mode_active(app):
+        return
+    has_key = getattr(repository, "has_idempotent_order", None)
+    try:
+        if callable(has_key) and has_key(user_id, idempotency_key_hash):
+            return
+        if repository.pretrade(user_id, order_request).get("verdict") == "block":
+            return  # 주문 가능 범위 초과는 기존처럼 create_order 가 422 로 거절한다
+        checks = _guardrail_checks(app, repository, user_id, order_request, with_day_change=False)
+    except Exception:
+        logger.debug("guardrail enforcement inputs unavailable: %s", order_request.symbol, exc_info=True)
+        return
+    blocking = [check for check in checks if check["severity"] == "block"]
+    if blocking:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "guardrail_blocked", "checks": jsonable_encoder(blocking)},
+        )
+
+
 def _pretrade_checks(
     app: Any,
     repository: PaperTradingRepository,
@@ -362,8 +399,6 @@ def _pretrade_checks(
     risk: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """주문 전 점검 항목: 주문 가능 범위 + D26 가드레일."""
-    from app.routes.simulator import simulator_mode_active
-
     snapshot = repository.account_snapshot(user_id)
     account = snapshot.get("account") or {}
     symbol = order_request.symbol.strip().upper()
@@ -394,6 +429,26 @@ def _pretrade_checks(
             "limit": float(available_qty),
         }
 
+    return [capacity, *_guardrail_checks(app, repository, user_id, order_request, snapshot=snapshot)]
+
+
+def _guardrail_checks(
+    app: Any,
+    repository: PaperTradingRepository,
+    user_id: str,
+    order_request: Any,
+    *,
+    snapshot: dict[str, Any] | None = None,
+    with_day_change: bool = True,
+) -> list[dict[str, Any]]:
+    from app.routes.simulator import simulator_mode_active
+
+    snapshot = snapshot if snapshot is not None else repository.account_snapshot(user_id)
+    account = snapshot.get("account") or {}
+    symbol = order_request.symbol.strip().upper()
+    raw_positions = [dict(row) for row in snapshot.get("positions") or []]
+    target = next((row for row in raw_positions if str(row.get("symbol") or "").upper() == symbol), {})
+    position_qty = Decimal(target.get("qty") or 0)
     simulation_active = simulator_mode_active(app)
     settings = guardrail_values(settings_store_from_app(app).active_values(user_id))
     quotes = (
@@ -419,7 +474,7 @@ def _pretrade_checks(
     )
     current_price = marks.get(symbol)
     # 시뮬레이션은 과거 장면을 재생하므로 오늘 실시간 등락률을 쓰지 않는다.
-    day_change = None if simulation_active else _day_change_percent(app, symbol)
+    day_change = None if simulation_active or not with_day_change else _day_change_percent(app, symbol)
     stop = None
     if order_request.side == "buy" and position_qty > 0 and current_price is not None:
         stop = _has_protective_stop(app, user_id, symbol, current_price)
@@ -437,7 +492,7 @@ def _pretrade_checks(
         equity=equity,
         has_protective_stop=stop,
     ))
-    return [capacity, *guardrails]
+    return guardrails
 
 
 def _day_change_percent(app: Any, symbol: str) -> float | None:

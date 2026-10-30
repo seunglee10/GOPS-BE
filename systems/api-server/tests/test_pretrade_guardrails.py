@@ -389,3 +389,63 @@ def _buy_and_fill(app, *, qty: str, price: str) -> None:
     )
     snapshot = repository.account_snapshot(USER)
     assert any(row["symbol"] == "NVDA" and row["qty"] > 0 for row in snapshot["positions"]), snapshot
+
+
+# --- 주문 접수 차단 ---------------------------------------------------------------
+
+
+def _place(app, key, **overrides):
+    return TestClient(app).post("/api/paper/orders", json=_order(**overrides), headers={"Idempotency-Key": key})
+
+
+def _order_count(app):
+    return len(app.state.paper_trading_repository.list_orders(USER, limit=500))
+
+
+def test_order_avg_down_without_stop_is_409_and_creates_no_order(app) -> None:
+    _buy_and_fill(app, qty="5", price="120")
+    before = _order_count(app)
+    response = _place(app, "avg-down-1", qty="1")
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "guardrail_blocked"
+    assert [check["code"] for check in detail["checks"]] == ["avg_down_no_stop"]
+    assert all(check["severity"] == "block" for check in detail["checks"])
+    assert _order_count(app) == before
+
+
+def test_order_retry_after_settings_change_is_not_stuck_on_409(app) -> None:
+    _buy_and_fill(app, qty="5", price="120")
+    assert _place(app, "avg-down-retry", qty="1").status_code == 409
+    store = app.state.risk_settings_store
+    store.apply_change(USER, values={"blockAverageDownWithoutStop": False}, today="2026-10-30")
+    store.resolve(USER, today="2026-10-31")
+    assert _place(app, "avg-down-retry", qty="1").status_code == 202
+
+
+def test_order_over_weight_limit_is_409(app) -> None:
+    before = _order_count(app)
+    response = _place(app, "weight-1", qty="300")
+    assert response.status_code == 409
+    assert response.json()["detail"]["checks"][0]["code"] == "position_weight"
+    assert response.json()["detail"]["checks"][0]["value"] == 30.0
+    assert _order_count(app) == before
+
+
+def test_order_warn_only_is_accepted(app) -> None:
+    app.state.day_change = {"NVDA": 8.0}  # chase_buy warn
+    response = _place(app, "warn-1", qty="10")
+    assert response.status_code == 202
+
+
+def test_order_replay_of_accepted_key_skips_guardrails(app) -> None:
+    assert _place(app, "replay-1", qty="200").status_code == 202  # 20%
+    app.state.risk_settings_store.apply_change(USER, values={"maxPositionWeightPercent": 10}, today="2026-10-30")
+    replay = _place(app, "replay-1", qty="200")
+    assert replay.status_code == 202
+    assert replay.headers["X-Idempotent-Replay"] == "true"
+    assert _place(app, "replay-2", qty="200").status_code == 409
+
+
+def test_order_capacity_error_still_422_before_guardrails(app) -> None:
+    assert _place(app, "cash-1", qty="2000").status_code == 422
