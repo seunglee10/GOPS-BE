@@ -21,6 +21,10 @@ from app.routes.simulator import simulator_gateway_from_app, simulator_mode_acti
 from app.services.risk_context import build_risk_context, risk_pretrade_enabled
 from app.services.risk_settings import (
     ADJUSTABLE_FIELDS,
+    GUARDRAIL_BOOLEANS,
+    GUARDRAIL_DEFAULTS,
+    GUARDRAIL_NULLABLE,
+    GUARDRAIL_RANGES,
     GUARDRAILS,
     PRESETS,
     RiskSettingsError,
@@ -253,10 +257,17 @@ def get_risk_settings(
         "pending": state.get("pending"),
         "history": (state.get("history") or [])[:10],
         "meta": {
-            "adjustable": sorted(ADJUSTABLE_FIELDS),
+            "adjustable": sorted([*ADJUSTABLE_FIELDS, *GUARDRAIL_DEFAULTS]),
             "guardrails": {
-                key: {"min": str(minimum), "max": (str(maximum) if maximum is not None else None)}
-                for key, (minimum, maximum) in GUARDRAILS.items()
+                **{
+                    key: {"min": str(minimum), "max": (str(maximum) if maximum is not None else None)}
+                    for key, (minimum, maximum) in GUARDRAILS.items()
+                },
+                **{
+                    key: {"min": float(minimum), "max": float(maximum), "nullable": key in GUARDRAIL_NULLABLE}
+                    for key, (minimum, maximum) in GUARDRAIL_RANGES.items()
+                },
+                **{key: {"type": "boolean"} for key in GUARDRAIL_BOOLEANS},
             },
             "presets": {name: serialize_values(dict(values)) for name, values in PRESETS.items()},
             "policy": "조이는 변경은 즉시, 푸는 변경은 다음 날부터 적용됩니다.",
@@ -274,7 +285,7 @@ async def patch_risk_settings(
     preset = payload.get("preset")
     values = payload.get("values")
     if values is not None and not isinstance(values, dict):
-        raise HTTPException(status_code=422, detail="values must be an object")
+        raise HTTPException(status_code=422, detail={"code": "invalid_risk_setting", "message": "values must be an object"})
     store = settings_store_from_app(request.app)
     try:
         result = store.apply_change(
@@ -283,7 +294,7 @@ async def patch_risk_settings(
             preset=(str(preset) if preset is not None else None),
         )
     except RiskSettingsError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=exc.detail()) from exc
     return {
         "appliedNow": serialize_values(result.applied_now),
         "scheduled": serialize_values(result.scheduled),

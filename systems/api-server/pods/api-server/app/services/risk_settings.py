@@ -7,6 +7,8 @@
   예산 해제)은 다음 날부터(pending). 자기구속 장치는 풀기 어려워야 한다.
 - 가드레일 밖 값은 거부. 한도 무력화는 불가.
 - 저장: Redis(`gops:risk:settings:<user>`) 또는 인메모리 폴백. 변경 이력 50건.
+- 주문 전 점검 가드레일(D26)도 같은 저장소·같은 비대칭 규칙을 쓴다. 엔진(RiskConfig)에는
+  넘기지 않고 `app.services.pretrade_guardrails`가 모의 주문 사전 점검에서만 읽는다.
 """
 
 from __future__ import annotations
@@ -46,6 +48,22 @@ DEFAULTS = {
     "dailyBuyBudget": None,
 }
 
+# D26 주문 전 점검 가드레일. 엔진 한도(ADJUSTABLE_FIELDS)와 따로 둔다.
+# 퍼센트 값은 0.0~100.0 단위(3.0 = 3%). None은 끔.
+GUARDRAIL_DEFAULTS: dict[str, Any] = {
+    "chaseBuyWarnPercent": Decimal("3.0"),
+    "blockAverageDownWithoutStop": True,
+    "confirmSellOnDropPercent": Decimal("2.0"),
+    "maxPositionWeightPercent": Decimal("25"),
+}
+GUARDRAIL_RANGES: dict[str, tuple[Decimal, Decimal]] = {
+    "chaseBuyWarnPercent": (Decimal("0.5"), Decimal("30")),
+    "confirmSellOnDropPercent": (Decimal("0.5"), Decimal("30")),
+    "maxPositionWeightPercent": (Decimal("5"), Decimal("100")),
+}
+GUARDRAIL_NULLABLE = {"chaseBuyWarnPercent", "confirmSellOnDropPercent"}
+GUARDRAIL_BOOLEANS = {"blockAverageDownWithoutStop"}
+
 PRESETS = {
     "conservative": {
         "singleNameMaxWeight": Decimal("0.15"),
@@ -67,6 +85,17 @@ PRESETS = {
 
 class RiskSettingsError(ValueError):
     """Invalid settings input (guardrail violation, unknown field/preset)."""
+
+    def __init__(self, message: str, *, code: str = "invalid_risk_setting", field: str | None = None):
+        super().__init__(message)
+        self.code = code
+        self.field = field
+
+    def detail(self) -> dict[str, Any]:
+        detail: dict[str, Any] = {"code": self.code, "message": str(self)}
+        if self.field:
+            detail["field"] = self.field
+        return detail
 
 
 @dataclass(frozen=True)
@@ -107,9 +136,9 @@ class RiskSettingsStore:
     def active_values(self, user_sub: str, *, today: str | None = None) -> dict[str, Any]:
         """디폴트 위에 사용자 active를 병합한 최종 값 (API 필드명 기준)."""
         state = self.resolve(user_sub, today=today)
-        merged = dict(DEFAULTS)
+        merged = {**DEFAULTS, **GUARDRAIL_DEFAULTS}
         for key, value in (state.get("active") or {}).items():
-            if key in ADJUSTABLE_FIELDS:
+            if key in ADJUSTABLE_FIELDS or key in GUARDRAIL_DEFAULTS:
                 merged[key] = _parse_stored(key, value)
         return merged
 
@@ -117,7 +146,7 @@ class RiskSettingsStore:
         """RiskConfig 오버라이드(snake_case) — 디폴트와 같은 값은 굳이 넘기지 않음."""
         overrides: dict[str, Any] = {}
         for api_key, value in self.active_values(user_sub, today=today).items():
-            if value != DEFAULTS[api_key]:
+            if api_key in ADJUSTABLE_FIELDS and value != DEFAULTS[api_key]:
                 overrides[ADJUSTABLE_FIELDS[api_key]] = value
         return overrides
 
@@ -179,14 +208,14 @@ class RiskSettingsStore:
         requested: dict[str, Any] = {}
         if preset is not None:
             if preset not in PRESETS:
-                raise RiskSettingsError(f"unknown preset: {preset} (conservative|standard|aggressive)")
+                raise RiskSettingsError(f"unknown preset: {preset} (conservative|standard|aggressive)", code="unknown_preset")
             requested.update(PRESETS[preset])
         for key, raw in (values or {}).items():
-            if key not in ADJUSTABLE_FIELDS:
-                raise RiskSettingsError(f"not adjustable: {key}")
+            if key not in ADJUSTABLE_FIELDS and key not in GUARDRAIL_DEFAULTS:
+                raise RiskSettingsError(f"not adjustable: {key}", code="unknown_risk_setting", field=key)
             requested[key] = _validate_value(key, raw)
         if not requested:
-            raise RiskSettingsError("nothing to change: provide preset or values")
+            raise RiskSettingsError("nothing to change: provide preset or values", code="empty_risk_settings_change")
         return requested
 
     def _load(self, user_sub: str) -> dict[str, Any]:
@@ -285,22 +314,55 @@ def _redis_client():
 # --- value helpers ----------------------------------------------------------------
 
 
-def _validate_value(key: str, raw: Any) -> Decimal | None:
+def _validate_value(key: str, raw: Any) -> Any:
+    if key in GUARDRAIL_DEFAULTS:
+        return _validate_guardrail(key, raw)
     if key == "dailyBuyBudget" and raw is None:
         return None  # 예산 끄기 (풀기 취급 → 다음 날 적용)
     try:
         value = Decimal(str(raw))
     except (InvalidOperation, ValueError) as exc:
-        raise RiskSettingsError(f"{key} must be a number") from exc
+        raise RiskSettingsError(f"{key} must be a number", code="invalid_risk_setting", field=key) from exc
     minimum, maximum = GUARDRAILS[key]
     if value < minimum or (maximum is not None and value > maximum):
         bound = f">= {minimum}" if maximum is None else f"{minimum} ~ {maximum}"
-        raise RiskSettingsError(f"{key} out of range ({bound})")
+        raise RiskSettingsError(f"{key} out of range ({bound})", code="risk_setting_out_of_range", field=key)
     return value
 
 
-def _is_tightening(key: str, current: Decimal | None, new: Decimal | None) -> bool:
+def _validate_guardrail(key: str, raw: Any) -> Decimal | bool | None:
+    if key in GUARDRAIL_BOOLEANS:
+        if not isinstance(raw, bool):
+            raise RiskSettingsError(f"{key} must be true or false", code="invalid_risk_setting", field=key)
+        return raw
+    if raw is None:
+        if key in GUARDRAIL_NULLABLE:
+            return None
+        raise RiskSettingsError(f"{key} cannot be null", code="invalid_risk_setting", field=key)
+    if isinstance(raw, bool):
+        raise RiskSettingsError(f"{key} must be a number", code="invalid_risk_setting", field=key)
+    try:
+        value = Decimal(str(raw))
+    except (InvalidOperation, ValueError) as exc:
+        raise RiskSettingsError(f"{key} must be a number", code="invalid_risk_setting", field=key) from exc
+    if not value.is_finite():
+        raise RiskSettingsError(f"{key} must be a number", code="invalid_risk_setting", field=key)
+    minimum, maximum = GUARDRAIL_RANGES[key]
+    if value < minimum or value > maximum:
+        raise RiskSettingsError(f"{key} out of range ({minimum} ~ {maximum})", code="risk_setting_out_of_range", field=key)
+    return value
+
+
+def _is_tightening(key: str, current: Any, new: Any) -> bool:
     """조이는 변경인가? 조임=즉시, 풀기=다음 날."""
+    if key in GUARDRAIL_BOOLEANS:
+        return new is True  # 켜기 = 조임, 끄기 = 풀기
+    if key in GUARDRAIL_NULLABLE:
+        if current is None:
+            return new is not None  # 꺼진 점검을 켜기 = 조임
+        if new is None:
+            return False  # 끄기 = 풀기
+        return new < current  # 기준을 낮추면 더 자주 걸린다 = 조임
     if key == "dailyBuyBudget":
         if current is None:
             return new is not None  # 예산 신규 설정 = 조임
@@ -311,18 +373,38 @@ def _is_tightening(key: str, current: Decimal | None, new: Decimal | None) -> bo
     return new is not None and current is not None and new < current
 
 
-def _serialize(value: Decimal | None) -> str | None:
-    return None if value is None else str(value)
+def _serialize(value: Any) -> Any:
+    if value is None or isinstance(value, bool):
+        return value
+    return str(value)
 
 
-def _parse_stored(key: str, value: Any) -> Decimal | None:
+def _parse_stored(key: str, value: Any) -> Any:
+    if key in GUARDRAIL_BOOLEANS:
+        return value if isinstance(value, bool) else GUARDRAIL_DEFAULTS[key]
     if value is None:
-        return None
+        return None if key in GUARDRAIL_NULLABLE or key in DEFAULTS else GUARDRAIL_DEFAULTS[key]
     try:
         return Decimal(str(value))
     except (InvalidOperation, ValueError):
-        return DEFAULTS[key]
+        return {**DEFAULTS, **GUARDRAIL_DEFAULTS}[key]
 
 
 def serialize_values(values: dict[str, Any]) -> dict[str, Any]:
-    return {key: _serialize(value) for key, value in values.items()}
+    """API 응답 값. 엔진 한도는 기존처럼 문자열, D26 가드레일은 계약대로 숫자·불리언."""
+    return {
+        key: (_guardrail_json(value) if key in GUARDRAIL_DEFAULTS else _serialize(value))
+        for key, value in values.items()
+    }
+
+
+def _guardrail_json(value: Any) -> Any:
+    if value is None or isinstance(value, bool):
+        return value
+    number = float(value)
+    return int(number) if number.is_integer() and not isinstance(value, float) and "." not in str(value) else number
+
+
+def guardrail_values(values: dict[str, Any]) -> dict[str, Any]:
+    """active_values() 중 D26 가드레일만 꺼낸다 (Decimal·bool·None 그대로)."""
+    return {key: values.get(key, default) for key, default in GUARDRAIL_DEFAULTS.items()}

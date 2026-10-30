@@ -66,6 +66,6 @@ CREATE TABLE paper_cash_ledger (
 );
 CREATE TABLE trade_conditions (
   id BIGINT PRIMARY KEY, app_user_id CHAR(36), alert_id BIGINT NOT NULL,
-  paper_order_id VARCHAR(128), status VARCHAR(32) NOT NULL,
+  source VARCHAR(16) NOT NULL, paper_order_id VARCHAR(128), status VARCHAR(32) NOT NULL,
   CONSTRAINT fk_condition_order FOREIGN KEY (paper_order_id) REFERENCES paper_orders(order_id)
 );

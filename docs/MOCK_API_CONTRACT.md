@@ -168,6 +168,11 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 
 ### D23 규칙 출처
 `/api/alerts`, `/api/trade-conditions` 항목에 `source: "agent" | "chart" | "user" | "default"` 추가. 생성 시 body로 받고, 없으면 `user`.
+- 목록·생성 응답의 각 항목(`alerts[]`, `conditions[]`, `alert`, `condition`)에 `source`가 들어간다.
+- 모르는 값은 `422 { "detail": { "code": "invalid_source", "allowed": [...] } }`. 앞뒤 공백·대소문자는 맞춰서 받는다.
+- `POST /api/alerts`에서 `source`를 빼면 옛 필드로 정한다: `proposalSource`가 있거나 `createdVia=ai_coach`면 `agent`, `createdVia=chart`면 `chart`, 그 밖에는 `user`.
+- `POST /api/alerts/commands`(사용자가 쓴 문장)는 `user`, `POST /api/trade-conditions/commands`(에이전트 제안 등록)는 `agent`. 조건주문이 만든 알림은 조건주문의 `source`를 따른다.
+- `proposal_source`(코치 제안 세부 분류)와 `created_via`(생성 경로)는 그대로 남는다. `0027_rule_source.sql`이 기존 행을 위 규칙으로 백필하고, `trade_conditions.source`의 옛 값 `manual`은 `user`로 바꾼다.
 
 ### D26 가드레일
 `GET/PATCH /api/risk/settings`에 키 추가:
@@ -175,6 +180,37 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 { "chaseBuyWarnPercent": 3.0, "blockAverageDownWithoutStop": true, "confirmSellOnDropPercent": 2.0, "maxPositionWeightPercent": 25 }
 ```
 `POST /api/paper/risk/pretrade` 응답 `checks[]`에 `code: "chase_buy" | "avg_down_no_stop" | "sell_on_drop" | "position_weight"`가 추가된다.
+
+설정 (`active`에 숫자·불리언으로 나온다. 기존 엔진 한도 키는 문자열 그대로):
+
+| 키 | 기본 | 범위 | 끄기 |
+|---|---|---|---|
+| `chaseBuyWarnPercent` | 3.0 | 0.5 ~ 30 | `null` |
+| `blockAverageDownWithoutStop` | true | true·false | `false` |
+| `confirmSellOnDropPercent` | 2.0 | 0.5 ~ 30 | `null` |
+| `maxPositionWeightPercent` | 25 | 5 ~ 100 | 없음 |
+
+- 변경은 기존 규칙과 같다. 조이는 변경(기준 낮추기, 켜기)은 즉시, 푸는 변경(기준 높이기, 끄기)은 다음 날. `PATCH { "values": { ... } }`.
+- 범위 밖·잘못된 형식은 `422 { "detail": { "code": "risk_setting_out_of_range" | "invalid_risk_setting" | "unknown_risk_setting", "field", "message" } }`. 기존 키 오류도 같은 모양으로 바뀌었다.
+- `maxPositionWeightPercent`는 모의 주문 사전 점검 전용이다. 실계좌 엔진 한도 `singleNameMaxWeight`(0.20)와 별개다.
+
+`checks[]` 항목 모양 (주문 가능 범위 항목 `paper_buying_power`·`paper_position_quantity`가 맨 앞):
+```json
+{ "code": "chase_buy", "severity": "ok|warn|confirm|block", "messageKo": "오늘 +4.2% 오른 종목이에요", "detailKo": "급등일 추격 매수 경고가 켜져 있어요", "value": 4.2, "limit": 3.0 }
+```
+| code | 대상 | 걸리는 조건 | severity | value / limit |
+|---|---|---|---|---|
+| `chase_buy` | 매수 | 오늘 등락률 ≥ `chaseBuyWarnPercent` | warn | 등락률 / 기준 |
+| `avg_down_no_stop` | 매수 | 손실 중인 보유 종목 추가 매수 + 현재가 아래 손절 조건 없음 | block (설정 꺼지면 항목 없음) | 평균 단가 대비 % / null |
+| `sell_on_drop` | 매도 | 오늘 등락률 ≤ −`confirmSellOnDropPercent` | confirm | 등락률 / −기준 |
+| `position_weight` | 매수 | (보유 평가액 + 주문 금액) / 총자산 > `maxPositionWeightPercent` | block | 주문 후 비중 % / 한도 |
+
+- 걸리지 않으면 같은 code로 `severity: "ok"`와 통과 문구가 온다. 규칙이 해당하지 않거나(매도에 매수 규칙), 설정이 꺼졌거나, 등락률·손절 조건을 못 읽으면 항목이 빠진다. 시뮬레이션 모드에서는 등락률 규칙을 넣지 않는다.
+- 손절 조건: 같은 종목의 `watching` 매도 조건주문(현재가보다 낮은 발동가), 또는 직접 건 `active` 하락(`below`) 가격 알림(현재가보다 낮은 목표가).
+- 오늘 등락률은 종목 요약(D9)과 같은 히트맵 projection·실시간가에서 구한다.
+- `block` 항목이 있으면 `risk.verdict`가 `block`이 되고 `risk.triggeredRules`에 `ruleId: code`로 추가된다. warn·confirm은 verdict를 바꾸지 않는다.
+- `POST /api/paper/orders`도 같은 판정을 한다. block 항목(`avg_down_no_stop`, `position_weight`)이 있으면 주문 행·멱등 기록을 만들기 전에 `409 { "detail": { "code": "guardrail_blocked", "checks": [block 항목만] } }`로 거절한다. 거절은 저장되지 않으므로 설정을 바꾼 뒤 같은 `Idempotency-Key`로 다시 보내면 새로 판정한다. 이미 접수된 키의 재전송은 판정 없이 replay된다.
+- 주문 접수에서 warn·confirm은 막지 않는다(프론트가 확인을 받는다). 주문 가능 범위 초과는 기존처럼 422가 먼저다. 입력을 못 읽으면 막지 않고, 시뮬레이션 모드와 조건주문 자동 실행은 이 차단을 건너뛴다.
 
 ### D27 투자 복기
 `GET /api/review/monthly?month=2026-09`
