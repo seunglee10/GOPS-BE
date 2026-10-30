@@ -1,5 +1,6 @@
 # 역할: 종목 AI 요약(D14, gops:stocks:ai-summary:{SYMBOL}, TTL 24h)을 매시 갱신하고,
 #       미국 장 마감(16:15 ET) 뒤 첫 실행에서 오늘 시장 요약(D15, gops:market-brief:{date}, TTL 3일)을 한 번 만듭니다.
+#       캘린더 주간 요약(D28, gops:calendar-brief:{week}, TTL 8일)은 이번 주·다음 주를 6시간에 한 번 다시 만듭니다(economic_events 를 읽으려고 DB secret 사용).
 # 종목별로 1시간에 한 번만 다시 만들기 때문에 매시 실행이어도 같은 종목을 두 번 부르지 않습니다.
 # schedule 은 UTC 입니다. 시장 요약 시각 판단은 잡 안에서 America/New_York 기준으로 합니다.
 apiVersion: batch/v1
@@ -63,6 +64,9 @@ spec:
                 - secretRef:
                     name: alfaka-openai-secret
                     optional: false
+                - secretRef:
+                    name: alfaka-order-db-secret
+                    optional: true
               resources:
                 requests:
                   cpu: 100m

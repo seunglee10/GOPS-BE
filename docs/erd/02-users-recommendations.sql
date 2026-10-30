@@ -60,6 +60,12 @@ CREATE TABLE instrument_names_ko (
   symbol VARCHAR(64) PRIMARY KEY, name_ko VARCHAR(255) NOT NULL,
   exchange_ko VARCHAR(32), updated_at DATETIME(3) NOT NULL
 );
+CREATE TABLE economic_events (
+  event_id VARCHAR(128) PRIMARY KEY, event_date DATE NOT NULL, event_time_local VARCHAR(5),
+  region VARCHAR(2) NOT NULL, title_ko VARCHAR(255), title_en VARCHAR(255) NOT NULL,
+  importance VARCHAR(16) NOT NULL, actual VARCHAR(64), forecast VARCHAR(64), previous VARCHAR(64),
+  unit VARCHAR(32), source VARCHAR(32) NOT NULL, updated_at DATETIME(3) NOT NULL
+);
 CREATE TABLE stock_recommendation_model_registry (
   model_version VARCHAR(128) PRIMARY KEY, status VARCHAR(32) NOT NULL,
   training_cutoff DATETIME(3) NOT NULL, weights JSON NOT NULL

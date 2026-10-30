@@ -18,6 +18,7 @@ jobs/symbol-registry-sync/  symbol metadata sync job
 jobs/coverage-repair/       chart coverage and on-demand fill trace audit job
 jobs/news-backfill/         Alpaca News historical raw/archive backfill job
 jobs/news-intelligence-rebuild/ relevance v2 rebuild job for localized news
+jobs/economic-calendar/     Finnhub US/KR economic calendar → Postgres economic_events (D28)
 config/                     market universe and subscription policy
 shared/market_data/              market-data import namespace
 tests/                      market-data tests
@@ -37,6 +38,7 @@ jobs/symbol-registry-sync/main.py               wraps market_data.tools.sync_sym
 jobs/coverage-repair/main.py                    audits /api/charts/candles fill traces
 jobs/news-backfill/main.py                      stores Alpaca News raw payloads once per articleId
 jobs/news-intelligence-rebuild/main.py          rebuilds relevance v2 fields for recent localized news
+jobs/economic-calendar/main.py                  wraps market_data.economic_calendar.ingest (FINNHUB_API_KEY 없으면 건너뜀)
 ```
 
 ## Images

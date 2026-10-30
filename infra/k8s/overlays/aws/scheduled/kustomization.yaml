@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - externalsecret-sec-fundamentals.yaml
+  - externalsecret-finnhub.yaml
   - cronjob-order-flow-daily-rollup.yaml
   - cronjob-chart-geometry-build.yaml
   - cronjob-sec-fundamentals-sync.yaml
@@ -12,3 +13,4 @@ resources:
   - cronjob-company-journal-worker.yaml
   - cronjob-company-journal-post-market.yaml
   - cronjob-stock-summary-refresh.yaml
+  - cronjob-economic-calendar.yaml

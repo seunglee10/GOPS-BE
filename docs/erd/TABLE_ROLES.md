@@ -56,6 +56,7 @@
 | `instruments` | PostgreSQL | 종목의 canonical 식별자·시장·통화 기준정보 | 모든 종목 소유 데이터 |
 | `instrument_aliases` | PostgreSQL | 공급자별 심볼을 canonical 종목으로 매핑 | `instruments` |
 | `instrument_names_ko` | PostgreSQL | 종목 한글 이름·거래소 한글 표기 시드(원본은 `market_data/reference/instrument_names_ko.json`) | `symbol`은 `instruments.canonical_symbol`과 같은 표기, FK 없음 |
+| `economic_events` | PostgreSQL | 미국·한국 경제지표 발표 일정과 발표값(D28 캘린더 `kind=econ`). economic-calendar 잡이 Finnhub 에서 6시간마다 upsert, 날짜·시각은 한국 시간 | 독립 테이블, FK 없음. 실적 일정은 ClickHouse `yahoo_earnings_estimates` 를 읽는다 |
 | `paper_accounts` | PostgreSQL | 사용자별 현재 모의 현금 계좌 | `app_users` |
 | `paper_account_runs` | PostgreSQL | 시뮬레이션 실행별 계좌 상태 | 사용자 |
 | `paper_positions` | PostgreSQL | 사용자별 종목 현재 보유 집계 | 사용자, 종목 |
@@ -63,6 +64,7 @@
 | `paper_executions` | PostgreSQL | 부분 체결을 포함한 불변 체결 원장 | `paper_orders` |
 | `paper_order_events` | PostgreSQL | 모의주문 상태 변경 이력 | 주문, 선택적 체결 |
 | `paper_cash_ledger` | PostgreSQL | 모의 현금 증감 원장 | 주문, 선택적 체결 |
+| `order_notes` | PostgreSQL | 투자 복기에서 고친 주문 메모와 사용자가 고른 습관 분류 | `paper_orders`, 사용자 |
 | `simulation_matcher_checkpoints` | PostgreSQL | 시뮬레이션 matcher 재시작 위치 | replay run |
 
 `paper_orders.filled_qty`와 평균 체결가는 조회용 집계다. 금액·수량의 원장은 각각 `paper_cash_ledger`, `paper_executions`가 담당한다.

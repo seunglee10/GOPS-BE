@@ -437,6 +437,12 @@ tradeConditionProposals[]
 프런트는 이 값을 가격 조건으로 직접 저장하지 않는다. 사용자의 명시적인 후속
 요청이 있을 때 API가 report owner와 proposal ID를 다시 검증해야 한다.
 
+화면용 `view`(D16)는 `gops_agents/contracts/view.py`가 리포트 dict에서 결정적으로 만든다.
+LLM을 다시 부르지 않고 `finalAnswer`·`finalResponse`·`findings`·`providerEvidence`·
+`tradeConditionProposals`·`marketEvents`만 읽는다. 글은 평문(RichText `**굵게**`, `[[TICKER]]`만
+허용)이고 HTML·URL·기술 오류 꼬리는 지운다. `bullish_points`·`bearish_points`·`final_stance`는
+옮기지 않으며, 새로 만드는 글은 단계 이름·지표 이름·알림 규칙 이름("N 아래로 가면 알리기")뿐이다.
+
 Kafka topics:
 
 ```text

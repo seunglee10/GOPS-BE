@@ -154,6 +154,24 @@ CREATE TABLE instrument_names_ko (
     PRIMARY KEY (symbol)
 );
 
+CREATE TABLE economic_events (
+    event_id VARCHAR(128) NOT NULL,
+    event_date DATE NOT NULL,
+    event_time_local VARCHAR(5),
+    region VARCHAR(2) NOT NULL,
+    title_ko VARCHAR(255),
+    title_en VARCHAR(255) NOT NULL,
+    importance VARCHAR(16) NOT NULL,
+    actual VARCHAR(64),
+    forecast VARCHAR(64),
+    previous VARCHAR(64),
+    unit VARCHAR(32),
+    source VARCHAR(32) NOT NULL,
+    updated_at DATETIME(3) NOT NULL,
+    PRIMARY KEY (event_id),
+    KEY idx_economic_events_date_region (event_date, region)
+);
+
 CREATE TABLE orders (
     order_id VARCHAR(128) NOT NULL,
     request_id VARCHAR(128) NOT NULL,
@@ -752,6 +770,18 @@ CREATE TABLE paper_order_events (
     PRIMARY KEY (event_id),
     CONSTRAINT fk_paper_order_events_order FOREIGN KEY (order_id) REFERENCES paper_orders(order_id),
     CONSTRAINT fk_paper_order_events_execution FOREIGN KEY (execution_id) REFERENCES paper_executions(execution_id)
+);
+
+CREATE TABLE order_notes (
+    order_id VARCHAR(128) NOT NULL,
+    app_user_id CHAR(36),
+    memo VARCHAR(200),
+    habit VARCHAR(16),
+    habit_source VARCHAR(16) NOT NULL,
+    updated_at DATETIME(3) NOT NULL,
+    PRIMARY KEY (order_id),
+    CONSTRAINT fk_order_notes_order FOREIGN KEY (order_id) REFERENCES paper_orders(order_id),
+    CONSTRAINT fk_order_notes_user FOREIGN KEY (app_user_id) REFERENCES app_users(app_user_id)
 );
 
 CREATE TABLE paper_cash_ledger (
