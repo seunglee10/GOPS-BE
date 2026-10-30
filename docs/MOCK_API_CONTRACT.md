@@ -153,6 +153,7 @@ items에 `category`, `relatedSymbols: [{symbol, nameKo}]`, `publishedAt`, `sourc
 ```json
 { "items": [ { "at": "...", "kind": "fill|rule|dividend|deposit", "symbol": "NVDA", "nameKo": "엔비디아", "text": "엔비디아 10주 매수 체결 $142.30", "ref": { "orderId": "..." } } ] }
 ```
+`fill` 은 `paper_executions`, `rule` 은 사용자 알림 규칙(`alert.*`) 알림, `dividend`·`deposit` 은 `paper_cash_ledger` 에서 온다. 현재 계좌 세대만 싣는다.
 
 ### D21 주문 메모
 `POST /api/paper/orders` body에 `memo: string | null`(200자) 추가. 주문·체결 조회 응답에도 `memo`가 실린다.
