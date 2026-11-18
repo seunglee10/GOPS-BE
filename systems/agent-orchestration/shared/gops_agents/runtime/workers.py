@@ -11,6 +11,7 @@ from ..orchestrator import AgentOrchestrator
 from ..orchestration.coach_snapshot_builder import CoachInputSnapshotBuilder
 from ..query_understanding import warm_entity_catalog_cache
 from ..synthesis import log_synthesis_runtime_diagnostics
+from ..synthesis.delta_stream import delta_stream_for
 from .queues import AnalysisRequestQueue, build_deep_analysis_request_queue_from_env
 from .report_store import ReportStore, build_report_store_from_env
 from .envelope import (
@@ -67,7 +68,8 @@ class AgentAnalysisWorker:
         try:
             payload = analysis_payload_for_envelope(envelope)
             snapshot_trace = self._prepare_coach_snapshot(envelope, payload)
-            report = self.orchestrator.analyze(payload)
+            with delta_stream_for(envelope.request_id):
+                report = self.orchestrator.analyze(payload)
             if self.store.is_canceled(envelope.request_id) or report.status == REQUEST_STATUS_CANCELED:
                 canceled = self.store.mark_canceled(envelope.request_id, reason="canceled during analysis", user_id=envelope.user_id)
                 publish_agent_outputs(canceled.to_dict())
