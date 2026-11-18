@@ -38,6 +38,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 AGENT_ALERTS_CHANNEL = "agent.alerts"
 AGENT_REPORTS_CHANNEL = "agent.reports"
+AGENT_REPORT_DELTA_CHANNEL = "agent.reports.delta"
 CHART_SHORTCUT_MODE = "chartShortcut"
 AGENT_ANALYSIS_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
 CLIENT_CONTROLLED_AGENT_FIELDS = {
@@ -333,7 +334,12 @@ async def agent_report_stream(
     user: AuthenticatedUser = Depends(require_current_user),
 ) -> StreamingResponse:
     get_agent_report(analysis_id, user_id=user.sub)
-    return StreamingResponse(stream_agent_report_updates(analysis_id, user_id=user.sub), media_type="text/event-stream")
+    return StreamingResponse(
+        stream_agent_report_updates(analysis_id, user_id=user.sub),
+        media_type="text/event-stream",
+        # 프록시가 청크를 모아서 보내지 않도록 한다 (nginx 계열은 X-Accel-Buffering을 따른다).
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
 
 
 @router.websocket("/ws/agent-alerts")
@@ -413,12 +419,24 @@ async def stream_agent_report_updates(analysis_id: str, *, user_id: str):
     deadline = time.monotonic() + max(1, max_seconds)
     last_status = None
     last_poll_at = 0.0
+    last_delta_seq = 0
+    last_event_at = time.monotonic()
+    heartbeat_seconds = float(read_dotenv_value("AGENT_REPORT_STREAM_HEARTBEAT_SECONDS") or "15")
     terminal_statuses = {"completed", "failed", "deep_completed", "canceled"}
     pubsub = report_update_pubsub(analysis_id)
     try:
         while time.monotonic() <= deadline:
             if pubsub is not None:
                 message = await asyncio.to_thread(pubsub.get_message, timeout=0.25)
+                if message and message.get("type") == "message" and str(message.get("channel") or "").startswith(delta_channel_base()):
+                    delta = parse_report_update_payload(message.get("data"))
+                    seq = delta.get("seq")
+                    text = delta.get("text")
+                    if delta.get("analysisId") == analysis_id and isinstance(seq, int) and seq > last_delta_seq and isinstance(text, str):
+                        last_delta_seq = seq
+                        last_event_at = time.monotonic()
+                        yield sse_event("delta", {"analysisId": analysis_id, "seq": seq, "text": text})
+                    continue
                 if message and message.get("type") == "message":
                     report = parse_report_update_payload(message.get("data"))
                     if report.get("analysisId") == analysis_id:
@@ -430,6 +448,10 @@ async def stream_agent_report_updates(analysis_id: str, *, user_id: str):
                         continue
 
             now = time.monotonic()
+            if now - last_event_at >= heartbeat_seconds:
+                # 로드밸런서 idle timeout(ALB 기본 60초)에 연결이 끊기지 않도록 주석 줄을 보낸다.
+                last_event_at = now
+                yield ": keep-alive\n\n"
             if now - last_poll_at < max(0.1, poll_seconds):
                 await asyncio.sleep(0.1)
                 continue
@@ -569,10 +591,14 @@ def report_update_pubsub(analysis_id: str):
         client = redis.from_url(redis_url, decode_responses=True)
         pubsub = client.pubsub(ignore_subscribe_messages=True)
         channel_base = read_dotenv_value("AGENT_REPORT_UPDATES_CHANNEL") or AGENT_REPORTS_CHANNEL
-        pubsub.subscribe(f"{channel_base}:{analysis_id}")
+        pubsub.subscribe(f"{channel_base}:{analysis_id}", f"{delta_channel_base()}:{analysis_id}")
         return pubsub
     except Exception:
         return None
+
+
+def delta_channel_base() -> str:
+    return read_dotenv_value("AGENT_REPORT_DELTA_CHANNEL") or AGENT_REPORT_DELTA_CHANNEL
 
 
 def parse_report_update_payload(payload: Any) -> dict[str, Any]:
