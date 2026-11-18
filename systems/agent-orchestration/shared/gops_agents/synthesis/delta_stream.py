@@ -23,9 +23,8 @@ DEFAULT_DELTA_CHANNEL = "agent.reports.delta"
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 _SUMMARY_KEY = re.compile(r'"summary"\s*:\s*"')
 _TRUE_VALUES = {"1", "true", "yes", "on"}
-_SENTENCE_END = re.compile(r"[.!?。]\s|\n")
 _MAX_LINE_BYTES = 1 << 20
-_MAX_BUFFER_CHARS = 60  # 문장 끝이 안 와도 이 길이를 넘으면 마지막 공백까지 내보낸다
+_HOLD_BACK_CHARS = 64  # 정화 패턴(이메일·전화번호·비밀값)이 완성될 때까지 보류하는 글자 수
 
 
 def delta_channel(analysis_id: str, base: str | None = None) -> str:
@@ -44,7 +43,9 @@ class DeltaPublisher:
         self.analysis_id = analysis_id
         self._redis = redis_client
         self._seq = 0
-        self._pending = ""
+        self._raw = ""
+        self._released = ""
+        self._poisoned = False
         self._channel = delta_channel(analysis_id)
 
     @property
@@ -66,33 +67,36 @@ class DeltaPublisher:
         return self._redis
 
     def feed(self, text: str) -> None:
-        """summary 조각을 모았다가 문장 경계마다 정화(sanitize)해서 내보낸다.
+        """summary 조각을 받아, 정화한 전체 텍스트 중 '안전한 앞부분'만 내보낸다.
 
-        최종 답변은 sanitize_final_answer를 거치므로 델타도 같은 개인정보·비속어 정화를 거쳐야 한다.
-        패턴이 청크 경계에서 쪼개지지 않도록 문장 단위로 모으고, 정화로 바뀐 구간은 보내지 않는다
-        (최종 report 이벤트가 전체를 교체하므로 화면에는 정화된 최종본이 남는다).
+        최종 답변은 sanitize_final_answer를 거치므로 델타도 같은 개인정보·비밀값·비속어 정화를 거쳐야 한다.
+        구간을 따로 정화하면 경계에 걸친 패턴(공백이 낀 전화번호 등)을 놓치므로, 지금까지 받은 전체를
+        매번 정화하고 끝의 _HOLD_BACK_CHARS 글자는 보류한다. 패턴은 보류 구간 안에서 완성되어 정화된다.
+        정화로 앞부분이 바뀌어 이미 보낸 글과 어긋나면 델타를 멈춘다(최종 report가 전체를 교체한다).
         """
-        self._pending += text
-        while True:
-            match = _SENTENCE_END.search(self._pending)
-            cut = match.end() if match else 0
-            if not cut and len(self._pending) >= _MAX_BUFFER_CHARS:
-                cut = self._pending.rfind(" ") + 1
-            if cut <= 0:
-                return
-            segment, self._pending = self._pending[:cut], self._pending[cut:]
-            self._emit_sanitized(segment)
+        if self._poisoned or not text:
+            return
+        self._raw += text
+        self._release(final=False)
 
     def flush(self) -> None:
-        segment, self._pending = self._pending, ""
-        if segment:
-            self._emit_sanitized(segment)
+        if not self._poisoned:
+            self._release(final=True)
 
-    def _emit_sanitized(self, segment: str) -> None:
-        result = sanitize_text(segment)
-        if result.warnings:
+    def _release(self, *, final: bool) -> None:
+        sanitized = str(sanitize_text(self._raw).value)
+        if not sanitized.startswith(self._released):
+            self._poisoned = True
             return
-        self.publish_delta(result.value)
+        end = len(sanitized) if final else len(sanitized) - _HOLD_BACK_CHARS
+        if not final and end > len(self._released):
+            space = sanitized.rfind(" ", len(self._released), end + 1)
+            end = space + 1 if space >= 0 else len(self._released)
+        if end <= len(self._released):
+            return
+        piece = sanitized[len(self._released) : end]
+        self._released = sanitized[:end]
+        self.publish_delta(piece)
 
     def publish_delta(self, text: str) -> None:
         if not text:

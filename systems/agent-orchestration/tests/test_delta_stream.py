@@ -125,18 +125,27 @@ class FetchOpenAIJsonTest(unittest.TestCase):
 
     def test_pii_split_across_chunks_is_never_published(self):
         leaky = dict(ANSWER, summary="문의는 someone@example.com 으로 주세요. 그 외 내용은 안전합니다.")
-        result, redis, _ = self.run_stream(stream_events(chunk_size=2, text=json.dumps(leaky, ensure_ascii=False)))
-        sent = "".join(m["text"] for _, m in redis.messages)
-        self.assertNotIn("someone", sent)
-        self.assertNotIn("example.com", sent)
-        self.assertIn("그 외 내용은 안전합니다.", sent)
-        self.assertEqual(result["summary"], leaky["summary"])  # 최종 JSON은 기존 정화 경로가 처리한다
+        for size in (1, 2, 3, 7):
+            result, redis, _ = self.run_stream(stream_events(chunk_size=size, text=json.dumps(leaky, ensure_ascii=False)))
+            sent = "".join(m["text"] for _, m in redis.messages)
+            self.assertNotIn("someone", sent, size)
+            self.assertNotIn("example.com", sent, size)
+            self.assertIn("그 외 내용은 안전합니다.", sent, size)
+            self.assertEqual(result["summary"], leaky["summary"])  # 최종 JSON은 기존 정화 경로가 처리한다
 
-    def test_sentences_are_published_as_they_complete(self):
+    def test_phone_number_with_spaces_is_not_leaked_at_a_segment_boundary(self):
+        filler = "가나다라마바사아자차카타파하 " * 6  # 보류 구간 경계 근처에서 번호가 시작되도록 한다
+        leaky = dict(ANSWER, summary=f"{filler}연락처는 010 1234 5678 입니다. 이상입니다.")
+        for size in (1, 2, 5, 9):
+            _, redis, _ = self.run_stream(stream_events(chunk_size=size, text=json.dumps(leaky, ensure_ascii=False)))
+            sent = "".join(m["text"] for _, m in redis.messages)
+            self.assertNotIn("1234", sent, size)
+            self.assertNotIn("5678", sent, size)
+
+    def test_text_is_held_back_until_it_is_safe_then_flushed_at_the_end(self):
         _, redis, _ = self.run_stream(stream_events(chunk_size=2))
         texts = [m["text"] for _, m in redis.messages]
-        self.assertGreater(len(texts), 1)
-        self.assertTrue(texts[0].rstrip().endswith("."))
+        self.assertEqual("".join(texts), ANSWER["summary"])
 
     def test_without_publisher_the_legacy_single_response_path_is_used(self):
         body = json.dumps({"output_text": json.dumps(ANSWER, ensure_ascii=False)}).encode()
