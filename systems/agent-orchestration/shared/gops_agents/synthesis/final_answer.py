@@ -21,6 +21,7 @@ from ..contracts import (
 from ..orchestration.routing import parse_openai_text_json
 from ..runtime.analysis_cache import final_answer_from_dict
 from ..security import sanitize_text, sanitize_url, sanitize_value
+from .delta_stream import fetch_openai_json
 
 
 PROHIBITED_FOLLOWUP_SECTION_PATTERNS = (
@@ -364,9 +365,7 @@ class FinalAnswerSynthesizer:
                 timeout_seconds = max(0.001, float(getattr(runtime_context.policy, "synthesis_timeout_ms", 1700)) / 1000)
             if timeout_seconds <= 0:
                 timeout_seconds = 12.0
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                data = json.loads(response.read().decode("utf-8"))
-            answer = final_answer_from_openai_json(parse_openai_text_json(data))
+            answer = final_answer_from_openai_json(fetch_openai_json(request, timeout_seconds=timeout_seconds, timing=timing))
             if answer is None:
                 mark_synthesis_fallback(timing, "openai_invalid_response")
                 return None
@@ -466,9 +465,7 @@ class FinalAnswerSynthesizer:
                 timeout_seconds = max(0.001, float(getattr(runtime_context.policy, "synthesis_timeout_ms", 1700)) / 1000)
             if timeout_seconds <= 0:
                 timeout_seconds = 2.0
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                data = json.loads(response.read().decode("utf-8"))
-            answer = final_answer_from_openai_json(parse_openai_text_json(data))
+            answer = final_answer_from_openai_json(fetch_openai_json(request, timeout_seconds=timeout_seconds, timing=timing))
             if answer is not None:
                 set_cached_financial_final_answer(cache_key, answer)
             else:
