@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -427,7 +428,14 @@ async def stream_agent_report_updates(analysis_id: str, *, user_id: str):
     try:
         while time.monotonic() <= deadline:
             if pubsub is not None:
-                message = await asyncio.to_thread(pubsub.get_message, timeout=0.25)
+                try:
+                    message = await asyncio.to_thread(pubsub.get_message, timeout=0.25)
+                except Exception:
+                    # Redis 구독이 끊기면 델타 없이 기존 폴링만으로 최종 report를 받는다.
+                    with contextlib.suppress(Exception):
+                        pubsub.close()
+                    pubsub = None
+                    continue
                 if message and message.get("type") == "message" and str(message.get("channel") or "").startswith(delta_channel_base()):
                     delta = parse_report_update_payload(message.get("data"))
                     seq = delta.get("seq")
