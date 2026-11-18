@@ -17,10 +17,15 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any
 
+from ..security import sanitize_text
+
 DEFAULT_DELTA_CHANNEL = "agent.reports.delta"
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 _SUMMARY_KEY = re.compile(r'"summary"\s*:\s*"')
 _TRUE_VALUES = {"1", "true", "yes", "on"}
+_SENTENCE_END = re.compile(r"[.!?。]\s|\n")
+_MAX_LINE_BYTES = 1 << 20
+_MAX_BUFFER_CHARS = 60  # 문장 끝이 안 와도 이 길이를 넘으면 마지막 공백까지 내보낸다
 
 
 def delta_channel(analysis_id: str, base: str | None = None) -> str:
@@ -39,6 +44,7 @@ class DeltaPublisher:
         self.analysis_id = analysis_id
         self._redis = redis_client
         self._seq = 0
+        self._pending = ""
         self._channel = delta_channel(analysis_id)
 
     @property
@@ -58,6 +64,35 @@ class DeltaPublisher:
         except Exception:
             return None
         return self._redis
+
+    def feed(self, text: str) -> None:
+        """summary 조각을 모았다가 문장 경계마다 정화(sanitize)해서 내보낸다.
+
+        최종 답변은 sanitize_final_answer를 거치므로 델타도 같은 개인정보·비속어 정화를 거쳐야 한다.
+        패턴이 청크 경계에서 쪼개지지 않도록 문장 단위로 모으고, 정화로 바뀐 구간은 보내지 않는다
+        (최종 report 이벤트가 전체를 교체하므로 화면에는 정화된 최종본이 남는다).
+        """
+        self._pending += text
+        while True:
+            match = _SENTENCE_END.search(self._pending)
+            cut = match.end() if match else 0
+            if not cut and len(self._pending) >= _MAX_BUFFER_CHARS:
+                cut = self._pending.rfind(" ") + 1
+            if cut <= 0:
+                return
+            segment, self._pending = self._pending[:cut], self._pending[cut:]
+            self._emit_sanitized(segment)
+
+    def flush(self) -> None:
+        segment, self._pending = self._pending, ""
+        if segment:
+            self._emit_sanitized(segment)
+
+    def _emit_sanitized(self, segment: str) -> None:
+        result = sanitize_text(segment)
+        if result.warnings:
+            return
+        self.publish_delta(result.value)
 
     def publish_delta(self, text: str) -> None:
         if not text:
@@ -201,9 +236,12 @@ def fetch_openai_json(
     first_delta_at: float | None = None
     with urllib.request.urlopen(_stream_request(request), timeout=timeout_seconds) as response:
         event_name = ""
-        for raw in response:
+        while True:
             if time.perf_counter() - started > max_seconds:
                 raise TimeoutError("synthesis stream exceeded max seconds")
+            raw = response.readline(_MAX_LINE_BYTES)  # 한 줄 길이도 제한한다
+            if not raw:
+                break
             line = raw.decode("utf-8").rstrip("\r\n")
             if line.startswith("event:"):
                 event_name = line[6:].strip()
@@ -223,11 +261,12 @@ def fetch_openai_json(
                 if first_delta_at is None:
                     first_delta_at = time.perf_counter()
                 text_parts.append(piece)
-                publisher.publish_delta(extractor.feed(piece))
+                publisher.feed(extractor.feed(piece))
             elif kind == "response.output_text.done" and isinstance(event.get("text"), str):
                 final_text = event["text"]
             elif kind in {"response.failed", "response.incomplete", "error"}:
                 raise RuntimeError(f"openai stream {kind}")
+    publisher.flush()
     if isinstance(timing, dict):
         timing["synthesisStreamed"] = True
         timing["synthesisDeltaCount"] = publisher.published

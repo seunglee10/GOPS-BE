@@ -123,6 +123,21 @@ class FetchOpenAIJsonTest(unittest.TestCase):
         self.assertEqual(timing["synthesisDeltaCount"], len(seqs))
         self.assertIn("synthesisFirstDeltaMs", timing)
 
+    def test_pii_split_across_chunks_is_never_published(self):
+        leaky = dict(ANSWER, summary="문의는 someone@example.com 으로 주세요. 그 외 내용은 안전합니다.")
+        result, redis, _ = self.run_stream(stream_events(chunk_size=2, text=json.dumps(leaky, ensure_ascii=False)))
+        sent = "".join(m["text"] for _, m in redis.messages)
+        self.assertNotIn("someone", sent)
+        self.assertNotIn("example.com", sent)
+        self.assertIn("그 외 내용은 안전합니다.", sent)
+        self.assertEqual(result["summary"], leaky["summary"])  # 최종 JSON은 기존 정화 경로가 처리한다
+
+    def test_sentences_are_published_as_they_complete(self):
+        _, redis, _ = self.run_stream(stream_events(chunk_size=2))
+        texts = [m["text"] for _, m in redis.messages]
+        self.assertGreater(len(texts), 1)
+        self.assertTrue(texts[0].rstrip().endswith("."))
+
     def test_without_publisher_the_legacy_single_response_path_is_used(self):
         body = json.dumps({"output_text": json.dumps(ANSWER, ensure_ascii=False)}).encode()
         with patch.object(urllib.request, "urlopen", return_value=FakeResponse(body)) as opened:
